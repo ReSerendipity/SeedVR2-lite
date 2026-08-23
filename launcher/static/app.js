@@ -117,7 +117,10 @@ $("btn-torch-skip").onclick = async () => {
   const r = await api("/api/torch/skip", { method: "POST" });
   $("torch-log").textContent = "✅ " + (r.message || JSON.stringify(r));
   $("torch-log").textContent += "\n\n你已选择跳过 torch 安装（未校验依赖）。请自行确认运行环境可用；冒烟测试前会再检测。";
-  await syncState();
+  // 直接跳转下一步（模型下载），不再依赖 status 轮询（因为跳过时 torch_verified=False，syncState 会认为未就绪）
+  setStep(STEP.MODELS);
+  // 刷新一下模型检测结果
+  await api("/api/models/check");
 };
 
 // 模型
