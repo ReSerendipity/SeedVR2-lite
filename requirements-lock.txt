@@ -42,8 +42,8 @@ black==26.5.1
 build==1.2.2.post1
 # NO HASH (run generate_lock.py with network): certifi==2026.5.20
 certifi==2026.5.20
-# NO HASH (run generate_lock.py with network): charset-normalizer==3.4.7
-charset-normalizer==3.4.7
+# NO HASH (run generate_lock.py with network): charset-normalizer==3.5.1
+charset-normalizer==3.5.1
 # NO HASH (run generate_lock.py with network): click==8.4.1
 click==8.4.1
 # NO HASH (run generate_lock.py with network): colorama==0.4.6
