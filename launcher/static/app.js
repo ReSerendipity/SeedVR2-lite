@@ -1,6 +1,9 @@
 /* launcher/static/app.js — 8 步向导：加载后自动环境检测，按状态自动定位下一步 */
 "use strict";
 
+// 用户手动锁定当前步骤，防止 syncState 自动回退
+let userManualStep = null;
+
 const $ = (id) => document.getElementById(id);
 const steps = document.querySelectorAll("#steps li");
 
@@ -34,18 +37,19 @@ function renderModels(m) {
 }
 
 // 读取 /api/status，按持久化状态自动定位到下一步
-async function syncState() {
-  const s = await api("/api/status");
-  renderModels(s.models || {});
-  if (s.torch_ready) $("btn-verify").classList.remove("hidden");
-  if (s.smoke_test_passed) { setStep(STEP.READY); return; }
-  if ((s.models || {}).ready) { setStep(STEP.SMOKE); return; }
-  if (s.torch_ready) { setStep(STEP.MODELS); return; }
+async function syncState(force = false) {
+  if (!force && userManualStep !== null) return; // 用户已手动锁定，不自动回退
+  const st = await api("/api/status");
+  renderModels(st.models || {});
+  if (st.torch_ready) $("btn-verify").classList.remove("hidden");
+  if (st.smoke_test_passed) { setStep(STEP.READY); return; }
+  if ((st.models || {}).ready) { setStep(STEP.SMOKE); return; }
+  if (st.torch_ready) { setStep(STEP.MODELS); return; }
   setStep(STEP.TORCH);
 }
 
 // 环境检测（加载后自动执行，结果展示后自动进入下一步）
-async function runEnv() {
+async function runEnv(doSync = true) {
   $("env-result").textContent = "检测中…";
   try {
     const r = await api("/api/env-check", { method: "POST" });
@@ -61,9 +65,9 @@ async function runEnv() {
   } catch (e) {
     $("env-result").textContent = "环境检测失败：" + e.message;
   }
-  await syncState();
+  if (doSync !== false) await syncState();
 }
-$("btn-env").onclick = runEnv;
+$("btn-env").onclick = () => runEnv(true);
 
 // 运行环境（Python 三选一）：加载可用环境填充下拉，切换时告知后端
 async function loadPythonEnv() {
@@ -117,14 +121,18 @@ $("btn-torch-skip").onclick = async () => {
   const r = await api("/api/torch/skip", { method: "POST" });
   $("torch-log").textContent = "✅ " + (r.message || JSON.stringify(r));
   $("torch-log").textContent += "\n\n你已选择跳过 torch 安装（未校验依赖）。请自行确认运行环境可用；冒烟测试前会再检测。";
-  // 直接跳转下一步（模型下载），不再依赖 status 轮询（因为跳过时 torch_verified=False，syncState 会认为未就绪）
+  userManualStep = STEP.MODELS;
   setStep(STEP.MODELS);
-  // 刷新一下模型检测结果
   await api("/api/models/check");
 };
 
 // 模型
 $("btn-models").onclick = async () => { await syncState(); };
+$("btn-models-skip").onclick = async () => {
+  userManualStep = STEP.SMOKE;
+  setStep(STEP.SMOKE);
+};
+$("btn-verify-models").onclick = async () => { await syncState(); };
 
 // 冒烟测试
 let smokeTimer = null;
@@ -154,7 +162,7 @@ $("btn-open").onclick = async () => {
 (async function init() {
   await syncState();
   await loadPythonEnv();
-  await runEnv();
+  await runEnv(false);
   const rec = await api("/api/models/recommend");
   if (rec && rec.recommended) {
     $("model-recommend").textContent = `推荐主模型：${rec.recommended}（显存 ${rec.vram_gb}GB 档）`;

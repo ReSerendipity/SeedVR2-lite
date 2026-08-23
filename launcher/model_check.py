@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-import re
+import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,7 +22,6 @@ MAIN_MODEL_FILES = [
     "seedvr2_ema_7b_sharp_fp8_e4m3fn.safetensors",
 ]
 
-_SAFETENSORS_MAGIC = b"<safetensors>"
 
 
 def recommend_main_model(vram_gb: float) -> str:
@@ -42,7 +41,14 @@ def _validate_file(path: Path) -> tuple[bool, str]:
         return False, "文件为空"
     if path.suffix == ".safetensors":
         with open(path, "rb") as fh:
-            if fh.read(len(_SAFETENSORS_MAGIC)) != _SAFETENSORS_MAGIC:
+            header_len_bytes = fh.read(8)
+            if len(header_len_bytes) < 8:
+                return False, "safetensors 头无效（文件可能损坏）"
+            header_len = struct.unpack("<Q", header_len_bytes)[0]
+            if header_len == 0 or header_len > 10 * 1024 * 1024:
+                return False, "safetensors 头无效（文件可能损坏）"
+            json_header = fh.read(header_len)
+            if not json_header.startswith(b"{"):
                 return False, "safetensors 头无效（文件可能损坏）"
     return True, f"{size / 1024**3:.2f} GB"
 
