@@ -127,6 +127,12 @@ $("btn-torch-skip").onclick = async () => {
 };
 
 // 模型
+$("btn-models-download").onclick = async () => {
+  $("model-list").textContent = "⏳ 正在准备下载链接，请稍候...";
+  // TODO: 调用后端 /api/models/download 自动下载推荐模型
+  alert("自动下载功能即将上线！目前请手动将模型文件放入 model/ 目录。\n\n推荐模型下载地址:\n- 3B 模型：https://huggingface.co/ReSerendipity/SeedVR2-lite/resolve/main/seedvr2_ema_3b_fp16.safetensors\n- VAE: https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-fp16-fix.safetensors");
+  $("model-list").textContent = "已显示下载提示。请将模型放入 model/ 目录后点击「重新检测」。";
+};
 $("btn-models").onclick = async () => { await syncState(); };
 $("btn-models-skip").onclick = async () => {
   userManualStep = STEP.SMOKE;
@@ -136,6 +142,10 @@ $("btn-verify-models").onclick = async () => { await syncState(); };
 
 // 冒烟测试
 let smokeTimer = null;
+$("btn-smoke-skip").onclick = async () => {
+  userManualStep = STEP.READY;
+  setStep(STEP.READY);
+};
 $("btn-smoke").onclick = async () => {
   $("smoke-result").textContent = "测试进行中（会实际调用 GPU 跑一次修复，约 1-3 分钟），请稍候…";
   await api("/api/smoke-test", { method: "POST" });
