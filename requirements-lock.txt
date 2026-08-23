@@ -104,8 +104,8 @@ librt==0.11.0
 markdown-it-py==4.2.0
 # NO HASH (run generate_lock.py with network): matplotlib-inline==0.2.2
 matplotlib-inline==0.2.2
-# NO HASH (run generate_lock.py with network): matplotlib==3.11.0
-matplotlib==3.11.0
+# NO HASH (run generate_lock.py with network): matplotlib==3.11.1
+matplotlib==3.11.1
 # NO HASH (run generate_lock.py with network): mdurl==0.1.2
 mdurl==0.1.2
 # NO HASH (run generate_lock.py with network): mediapy==1.2.6
