@@ -26,7 +26,7 @@ OutputDir=..\dist
 OutputBaseFilename=SeedVR2-Setup-Full-v{#AppVer}
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
-InfoBeforeMsg=本安装包包含 SeedVR2 程序本体（WinPython + 应用代码）。%n%n安装后还需下载并安装：%n- SeedVR2-Torch-Installer-v{#AppVer}.exe（Torch GPU 依赖，约 2GB）%n%n两个包都必须安装才能运行。
+InfoBeforeFile=installer_full_info.txt
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "首次启动将检测组件完整性"; Flags: nowait postinstall skipifsilent
@@ -52,8 +52,10 @@ Source: "..\.env.example"; DestDir: "{app}"
 Source: "..\dist\SeedVR2.exe"; DestDir: "{app}"
 ; 引导页静态资源
 Source: "..\launcher\static\*"; DestDir: "{app}\launcher\static"; Flags: recursesubdirs
-; 冒烟测试图
-Source: "..\demo\assets\inputs\input-1.jpg"; DestDir: "{app}\launcher\test-assets"; DestName: "test-input.jpg"
+; 冒烟测试图（不存在则跳过，避免编译失败）
+Source: "..\demo\assets\inputs\input-1.jpg"; DestDir: "{app}\launcher\test-assets"; DestName: "test-input.jpg"; Flags: skipifsourcedoesntexist
+Source: "..\demo\assets\inputs\input-2.jpg"; DestDir: "{app}\launcher\test-assets"; DestName: "test-input-2.jpg"; Flags: skipifsourcedoesntexist
+Source: "..\demo\assets\inputs\input-3.jpg"; DestDir: "{app}\launcher\test-assets"; DestName: "test-input-3.jpg"; Flags: skipifsourcedoesntexist
 
 [Dirs]
 Name: "{app}\model"

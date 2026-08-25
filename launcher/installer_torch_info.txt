@@ -1,0 +1,6 @@
+本安装包仅包含 Torch GPU 依赖（约 2GB）。
+
+请先安装主程序：
+- SeedVR2-Setup-Full-<VER>.exe
+
+安装后 torch 将自动集成到 WinPython 环境。

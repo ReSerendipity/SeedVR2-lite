@@ -81,7 +81,7 @@ jobs:
           python -m PyInstaller --noconfirm --onefile --windowed --name SeedVR2 --paths . --add-data "launcher\static;launcher\static" launcher\launcher_main.py
           Get-Item dist\SeedVR2.exe | Select-Object Name, Length
 
-      - name: 构建双安装包（ISCC）
+      - name: 构建安装包（ISCC）
         shell: powershell
         run: |
           # 版本号：tag（v1.2.0 → 1.2.0）优先，手动触发回退到 pyproject
@@ -96,32 +96,28 @@ jobs:
           $iscc = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe","${env:ProgramFiles}\Inno Setup 6\ISCC.exe","${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $iscc) { throw "ISCC.exe not found after install" }
           Write-Output "ISCC: $($iscc.FullName)"
-          
+
           # 1. Full 包 (~350MB): WinPython + app 代码 + 启动器
           Write-Output "Building Full package..."
           & $iscc.FullName "/DAppVer=$appVer" launcher\installer_full.iss
-          
-          # 2. Torch 包 (~2GB): torch + torchvision + torchaudio (cu128)
-          # TODO: 需要先下载 torch wheels 并打包
-          Write-Output "Building Torch package..."
-          & $iscc.FullName "/DAppVer=$appVer" launcher\installer_torch.iss
-          
-          Get-ChildItem dist\SeedVR2-*.exe | Select-Object Name, Length
+          # 2. Torch 包：torch cu128 wheel 单文件 2753MB，打包成 exe 超 GitHub 2GB 限制，
+          #    改为由引导页从国内镜像下载（pip 支持断点续传）。此处不编译。
+
+          Get-ChildItem dist\SeedVR2-Setup-Full-*.exe | Select-Object Name, Length
 
       - name: 生成 SHA256SUMS
         shell: powershell
         run: |
-          Get-ChildItem dist\SeedVR2-Setup-Full-*.exe,dist\SeedVR2-Torch-Installer-*.exe | Get-FileHash -Algorithm SHA256 | ForEach-Object {
+          Get-ChildItem dist\SeedVR2-Setup-Full-*.exe | Get-FileHash -Algorithm SHA256 | ForEach-Object {
             "$($_.Hash.ToLower())  $([System.IO.Path]::GetFileName($_.Path))"
           } | Set-Content dist\SHA256SUMS -Encoding ascii
 
       - name: 上传安装包为 workflow artifact（验证构建）
         uses: actions/upload-artifact@v4
         with:
-          name: SeedVR2-Installers
+          name: SeedVR2-Setup
           path: |
             dist/SeedVR2-Setup-Full-*.exe
-            dist/SeedVR2-Torch-Installer-*.exe
             dist/SHA256SUMS
 
       - name: 打 tag 时上传到 Release
@@ -130,7 +126,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ github.ref_name }}"
-          $exe = Get-ChildItem dist\SeedVR2-Setup-*.exe | Select-Object -First 1
+          $exe = Get-ChildItem dist\SeedVR2-Setup-Full-*.exe | Select-Object -First 1
           # release-please 可能已创建 Release，已存在则忽略
           gh release create $tag --title "$tag" --generate-notes 2>$null
           # 组装发布说明：新手安装指引（顶部）+ 自动 changelog

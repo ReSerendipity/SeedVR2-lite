@@ -24,7 +24,7 @@ OutputDir=..\dist
 OutputBaseFilename=SeedVR2-Torch-Installer-v{#AppVer}
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
-InfoBeforeMsg=⚠️ 本安装包仅包含 Torch GPU 依赖（约 2GB）。%n%n请先安装主程序：%n- SeedVR2-Setup-Full-v{#AppVer}.exe%n%n安装后 torch 将自动集成到 WinPython 环境。
+InfoBeforeFile=installer_torch_info.txt
 
 [Files]
 ; Torch 家族（通过 pip 预装到 portable Python 或解压即用的独立环境）
