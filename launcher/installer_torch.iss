@@ -69,8 +69,9 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   pythonExe: String;
-  pipCmd: String;
+  cmdArgs: String;
   wpDir: String;
+  rc: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
@@ -80,8 +81,9 @@ begin
       pythonExe := FindPythonExe(wpDir);
       if pythonExe <> '' then
       begin
-        pipCmd := '"' + pythonExe + '" -m pip install --no-index --find-links=' + ExpandConstant('{tmp}\torch_wheels') + ' torch torchvision torchaudio';
-        Exec('cmd.exe', '/c ' + pipCmd, '', SW_HIDE, ewWaitUntilTerminated, Nil);
+        cmdArgs := '/c "' + pythonExe + '" -m pip install --no-index --find-links=' +
+                   ExpandConstant('{tmp}\torch_wheels') + ' torch torchvision torchaudio';
+        Exec('cmd.exe', cmdArgs, '', SW_HIDE, ewWaitUntilTerminated, rc);
       end;
     end;
   end;
