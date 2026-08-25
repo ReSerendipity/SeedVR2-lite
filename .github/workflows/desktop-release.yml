@@ -81,6 +81,21 @@ jobs:
           python -m PyInstaller --noconfirm --onefile --windowed --name SeedVR2 --paths . --add-data "launcher\static;launcher\static" launcher\launcher_main.py
           Get-Item dist\SeedVR2.exe | Select-Object Name, Length
 
+      - name: 下载 torch 家族 wheels（cu128，供 Torch 分卷包使用）
+        shell: powershell
+        run: |
+          $py = Get-ChildItem WPy64-312101 -Recurse -Filter python.exe | Select-Object -First 1
+          if (-not $py) { throw "python.exe not found" }
+          New-Item -ItemType Directory -Path dist\torch_wheels -Force | Out-Null
+          # CI runner 在 GitHub 托管环境，访问官方源较快；用 --no-deps 只取 torch 家族本体
+          & $py.FullName -m pip download torch torchvision torchaudio `
+            --index-url https://download.pytorch.org/whl/cu128 `
+            -d dist\torch_wheels --no-deps --timeout 300 --retries 3
+          if ($LASTEXITCODE -ne 0) { throw "pip download torch wheels failed" }
+          Get-ChildItem dist\torch_wheels | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
+          $total = (Get-ChildItem dist\torch_wheels | Measure-Object Length -Sum).Sum
+          Write-Output "torch wheels total: $([math]::Round($total/1GB,2)) GB"
+
       - name: 构建安装包（ISCC）
         shell: powershell
         run: |
@@ -97,27 +112,30 @@ jobs:
           if (-not $iscc) { throw "ISCC.exe not found after install" }
           Write-Output "ISCC: $($iscc.FullName)"
 
-          # 1. Full 包 (~350MB): WinPython + app 代码 + 启动器
+          # 1. Full 包 (~350MB)：WinPython + app 代码 + 启动器
           Write-Output "Building Full package..."
           & $iscc.FullName "/DAppVer=$appVer" launcher\installer_full.iss
-          # 2. Torch 包：torch cu128 wheel 单文件 2753MB，打包成 exe 超 GitHub 2GB 限制，
-          #    改为由引导页从国内镜像下载（pip 支持断点续传）。此处不编译。
 
-          Get-ChildItem dist\SeedVR2-Setup-Full-*.exe | Select-Object Name, Length
+          # 2. Torch 分卷包：torch cu128 wheel 单文件 2.7GB，DiskSpanning 拆成 <2GB 多个 .bin
+          Write-Output "Building Torch package..."
+          & $iscc.FullName "/DAppVer=$appVer" launcher\installer_torch.iss
+
+          Get-ChildItem dist\SeedVR2-Setup-Full-*.exe, dist\SeedVR2-Torch-Installer-*.* | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}} | Format-Table -AutoSize
 
       - name: 生成 SHA256SUMS
         shell: powershell
         run: |
-          Get-ChildItem dist\SeedVR2-Setup-Full-*.exe | Get-FileHash -Algorithm SHA256 | ForEach-Object {
+          Get-ChildItem dist\SeedVR2-Setup-Full-*.exe, dist\SeedVR2-Torch-Installer-*.* | Get-FileHash -Algorithm SHA256 | ForEach-Object {
             "$($_.Hash.ToLower())  $([System.IO.Path]::GetFileName($_.Path))"
           } | Set-Content dist\SHA256SUMS -Encoding ascii
 
       - name: 上传安装包为 workflow artifact（验证构建）
         uses: actions/upload-artifact@v4
         with:
-          name: SeedVR2-Setup
+          name: SeedVR2-Installers
           path: |
             dist/SeedVR2-Setup-Full-*.exe
+            dist/SeedVR2-Torch-Installer-*
             dist/SHA256SUMS
 
       - name: 打 tag 时上传到 Release
@@ -126,7 +144,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ github.ref_name }}"
-          $exe = Get-ChildItem dist\SeedVR2-Setup-Full-*.exe | Select-Object -First 1
           # release-please 可能已创建 Release，已存在则忽略
           gh release create $tag --title "$tag" --generate-notes 2>$null
           # 组装发布说明：新手安装指引（顶部）+ 自动 changelog
@@ -135,4 +152,11 @@ jobs:
           $bodyFile = Join-Path $env:RUNNER_TEMP "relbody.md"
           ($intro + "`n" + $body) | Set-Content -Path $bodyFile -Encoding utf8
           gh release edit $tag --notes-file $bodyFile
-          gh release upload $tag "$($exe.FullName)" dist\SHA256SUMS --clobber
+          # 上传所有产物：Full 包 + Torch 分卷包（exe + 多个 .bin）
+          $files = @()
+          $files += Get-ChildItem dist\SeedVR2-Setup-Full-*.exe
+          $files += Get-ChildItem dist\SeedVR2-Torch-Installer-*.*
+          foreach ($f in $files) {
+            gh release upload $tag "$($f.FullName)" --clobber
+          }
+          gh release upload $tag dist\SHA256SUMS --clobber
