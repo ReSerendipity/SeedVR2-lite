@@ -29,7 +29,6 @@ InfoBeforeFile=installer_torch_info.txt
 ; DiskSpanning 自动拆分到 setup.exe + 多个 .bin 分卷，每卷 < 2GB。
 DiskSpanning=yes
 DiskSliceSize=1900000000
-DiskName=SeedVR2Torch
 
 [Files]
 ; Torch 家族 wheels，安装后注入 WinPython（分卷由 DiskSpanning 自动生成）
