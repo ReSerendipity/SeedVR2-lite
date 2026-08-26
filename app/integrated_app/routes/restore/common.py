@@ -184,6 +184,7 @@ def parse_unified_params(
     offload_device: str = Form("cpu"),
     enable_debug: bool = Form(False),
     double_res: bool = Form(False),
+    output_format: str = Form(""),  # 输出格式："png"/"jpg"/"webp"/"bmp"/"tiff"，空串表示自动匹配输入
 ) -> UnifiedRestoreParams:
     """解析统一修复表单参数，返回结构化 Pydantic 模型。
 
@@ -230,7 +231,7 @@ def parse_unified_params(
         batch_size = 1
     elif (batch_size - 1) % 4 != 0:
         batch_size = max(1, 4 * max(0, round((batch_size - 1) / 4)) + 1)
-    return UnifiedRestoreParams(
+    _params = UnifiedRestoreParams(
         task_type=task_type,
         dit_model=dit_model,
         dit_device=dit_device,
@@ -264,7 +265,11 @@ def parse_unified_params(
         offload_device=offload_device,
         enable_debug=enable_debug,
         double_res=double_res,
+        output_format=output_format,
     )
+    # 记录本次请求实际收到的输出格式（排查"默认/自动"是否被悄悄改成其它格式）
+    logger.info(f"[restore/params] output_format={output_format!r} double_res={double_res} resolution={resolution} task_type={task_type}")
+    return _params
 
 
 logger = logging.getLogger(__name__)

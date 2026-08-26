@@ -750,6 +750,7 @@ class ImageInferenceConfig:
             "enable_debug": infer_cfg.get("enable_debug", False),
             "cache_model": infer_cfg.get("cache_model", False),
             "torch_compile": infer_cfg.get("torch_compile", {}),
+            "output_format": infer_cfg.get("output_format", "png"),  # 输出格式配置
         }
         defaults.update(overrides)
         return cls(**defaults)

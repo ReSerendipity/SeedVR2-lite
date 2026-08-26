@@ -158,7 +158,40 @@ user_preferences:
   output_path_template: '{project_root}/outputs/{task_type}/restored/{input_name}{ext}'
   output_quality: 95
   recent_model_path: ''
-  restore_form_values: {}
+  restore_form_values:
+    attention_mode: sdpa
+    batch_size: '5'
+    blocks_to_swap: '8'
+    color_correction: lab
+    decode_tile_overlap: '512'
+    decode_tile_size: '1024'
+    decode_tiled: 'true'
+    dit_cache_model: 'true'
+    dit_device: cuda:0
+    dit_model: 3b_fp16
+    dit_offload_device: cpu
+    double_res: 'true'
+    enable_debug: 'true'
+    encode_tile_overlap: '512'
+    encode_tile_size: '512'
+    encode_tiled: 'true'
+    force_reload_dit: 'true'
+    input_noise_scale: '0.0'
+    latent_noise_scale: '0.0'
+    max_resolution: '0'
+    offload_device: cpu
+    output_format: webp
+    prepend_frames: '0'
+    resolution: '2048'
+    seed: '1373201197'
+    swap_io_components: 'true'
+    temporal_overlap: '0'
+    tile_debug: 'true'
+    uniform_batch_size: 'true'
+    vae_cache_model: 'true'
+    vae_device: cuda:0
+    vae_model: ema_vae_fp16
+    vae_offload_device: cpu
   restore_unlock_state: {}
   slider_comparison_enabled: true
   step_execution_enabled: false

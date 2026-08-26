@@ -334,8 +334,11 @@ class _ImagePipelineMixin:
                 logger.debug(f"水印嵌入失败 (不影响输出): {e}")
 
         # 保存：默认按「日期_时分秒_模型」命名；批量场景传入 output_name 保留原文件名
-        # 获取输出格式（从 self.config 或默认自动匹配）
-        requested_format = self.config.get("output_format", "").lower().strip()
+        # 获取输出格式（从 inf 或默认自动匹配）
+        requested_format = inf.get("output_format", "").lower().strip()
+        
+        # 🔍 DEBUG: 打印输出的实际值
+        logger.info(f"🔧 [DEBUG] 输出格式调试：inf={inf.get('output_format', 'MISSING')}, requested_format='{requested_format}'")
         
         # 如果用户选择"默认"（空字符串），则根据输入图片的扩展名自动匹配
         if not requested_format and image_path:
@@ -350,10 +353,15 @@ class _ImagePipelineMixin:
                 ".tif": "tiff",
             }
             requested_format = format_map_reverse.get(input_ext, "png")
+            logger.info(f"🔧 [DEBUG] 自动匹配格式：输入={image_path}, 扩展名={input_ext} -> {requested_format}")
         
-        # 如果没有输入路径或格式不匹配，使用 PNG 作为安全默认值
-        if not requested_format or requested_format not in ("png", "jpg", "jpeg", "webp", "bmp", "tiff"):
+        # 验证格式合法性
+        valid_formats = ("png", "jpg", "jpeg", "webp", "bmp", "tiff")
+        if not requested_format or requested_format not in valid_formats:
+            logger.warning(f"⚠️ [WARN] 无效的输出格式 '{requested_format}', 回退到 PNG")
             requested_format = "png"
+        
+        logger.info(f"✅ [INFO] 最终使用输出格式：{requested_format.upper()}")
         
         format_map = {
             "png": ".png",
@@ -367,6 +375,11 @@ class _ImagePipelineMixin:
         
         if output_name is None:
             output_name = _build_output_name(self.model_size, ext)
+        else:
+            # 指定了输出格式时，强制用目标格式的扩展名，覆盖输入文件的原始扩展名
+            # （批量模板带的是 {ext}=输入扩展名，直接保存会按原格式写出）
+            stem, _nouse = os.path.splitext(output_name)
+            output_name = stem + ext
         output_path = _resolve_unique_path(output_dir, output_name)
         
         # 根据格式保存图片
@@ -426,6 +439,7 @@ class _ImagePipelineMixin:
                 "cfg_scale": cfg_scale,
                 "sample_steps": sample_steps,
                 "blockswap_active": blockswap_was_active,
+                "output_format": requested_format,  # 实际使用的输出格式
                 "mean": float(mean_val),
                 "std": float(std_val),
                 "postprocessing": {
@@ -479,6 +493,8 @@ class _ImagePipelineMixin:
                 attention_mode=cfg.attention_mode,
                 enable_debug=cfg.enable_debug,
             )
+            # REFACTOR [E5-1]: 添加 request-level 参数（与模型无关）
+            inf["output_format"] = cfg.output_format  # 输出格式选择
 
             seed = inf["seed"]
             if seed == -1:

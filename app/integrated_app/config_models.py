@@ -556,6 +556,9 @@ class ImageRestoreParams(BaseModel):
     latent_noise_scale: float = Field(0.0, ge=0.0)
     offload_device: str = "cpu"
     enable_debug: bool = False
+    
+    # 输出配置
+    output_format: str = "png"  # 输出格式："png", "jpg", "webp", "bmp", "tiff"
 
 
 class UnifiedRestoreParams(ImageRestoreParams):
@@ -599,6 +602,9 @@ class VideoRestoreParams(BaseModel):
     force_reload_dit: bool = False
     blocks_to_swap: int = 0
     batch_size: int = 5
+    
+    # 输出配置
+    output_format: str = "mp4"  # 视频输出格式："mp4", "avi", "mov", "mkv"
 
 
 class AppConfig(BaseModel):

@@ -222,6 +222,16 @@
             <button type="button" class="sv2-tb-btn sv2-ico" id="btnPresetSave" title="将当前参数保存为方案"><i class="bi bi-plus-lg"></i></button>
             <button type="button" class="sv2-tb-btn sv2-ico" id="btnPresetDelete" title="删除选中方案" disabled><i class="bi bi-trash"></i></button>
         </div>
+        
+        <!-- 默认设置按钮组 -->
+        <div class="sv2-presets sv-mt-3" style="border-top: 1px solid #ddd; padding-top: 12px;">
+            <button type="button" class="sv-btn sv-btn-secondary sv-btn-sm sv-w-100" id="btnSaveAsDefault" title="将当前所有参数保存为默认设置（下次打开页面自动加载）">
+                <i class="bi bi-save"></i> 保存为默认设置
+            </button>
+            <button type="button" class="sv-btn sv-btn-outline sv-btn-sm sv-w-100 sv-mt-2" id="btnResetToDefault" title="重置所有参数为系统默认值">
+                <i class="bi bi-arrow-counterclockwise"></i> 重置为默认值
+            </button>
+        </div>
 
         <div class="sv-param-section-title">{{ t('restore.basic_params') or '基础参数' }}</div>
 
@@ -2214,6 +2224,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // 4. 应用表单值（先写值，再同步 UI）
+            //    注意：不再用 localStorage 覆盖后端值（旧格式会悄悄恢复成非"默认"，造成输出格式错乱）。
+            //    页面加载以"最后一次使用"的后端持久化值为准（auto-save 已持续写入后端）。
             _applyRestoreFormValues(values);
 
             // 5. 应用解锁状态（必须在 setup 之后）
@@ -2254,6 +2266,65 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     _bindAutoSaveListeners();
+
+    // ===== 保存到默认设置 / 重置为默认值 =====
+    // "保存为默认" - 将所有当前表单值保存到 localStorage + 后端 preferences
+    const btnSaveAsDefault = document.getElementById('btnSaveAsDefault');
+    if (btnSaveAsDefault) {
+        btnSaveAsDefault.addEventListener('click', async () => {
+            try {
+                // 收集所有表单参数
+                const values = {};
+                const sidebar = document.getElementById('paramsSidebar');
+                if (sidebar) {
+                    sidebar.querySelectorAll('select[name], input[name]').forEach(el => {
+                        if (el.type === 'checkbox') {
+                            values[el.name] = el.checked ? 'true' : 'false';
+                        } else {
+                            // 注意：select 选"默认"(value="") 也必须记录，否则旧格式被悄悄保留
+                            values[el.name] = el.value;
+                        }
+                    });
+                }
+                
+                // 保存到后端
+                await SeedVR2.saveRestorePrefs({ values });
+                
+                // 同时保存到 localStorage（跨设备/浏览器同步）
+                localStorage.setItem('seedvr2_restore_defaults', JSON.stringify(values));
+                
+                SeedVR2.toast('已保存为默认设置 ✓', 'success');
+            } catch (e) {
+                SeedVR2.toast('保存失败：' + e.message, 'error');
+            }
+        });
+    }
+    
+    // "重置为默认值" - 从 localStorage 加载默认值并应用到表单
+    const btnResetToDefault = document.getElementById('btnResetToDefault');
+    if (btnResetToDefault) {
+        btnResetToDefault.addEventListener('click', async () => {
+            if (!confirm('确定要重置所有参数为默认值吗？')) return;
+            
+            try {
+                // 从 localStorage 加载默认值
+                const defaults = localStorage.getItem('seedvr2_restore_defaults');
+                if (defaults) {
+                    const values = JSON.parse(defaults);
+                    _applyRestoreFormValues(values);
+                    
+                    // 同时更新后端 preferences
+                    await SeedVR2.saveRestorePrefs({ values });
+                    
+                    SeedVR2.toast('已重置为上次保存的默认值 ✓', 'success');
+                } else {
+                    SeedVR2.toast('还没有保存过默认设置，请先点击"保存为默认设置"', 'warning');
+                }
+            } catch (e) {
+                SeedVR2.toast('重置失败：' + e.message, 'error');
+            }
+        });
+    }
 
     // 模式切换标签（单文件/批量）+ URL hash 同步（重构：顶部工具条 + sv-mode-tab-pane）
     function switchMode(mode) {
