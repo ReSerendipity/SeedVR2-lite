@@ -86,14 +86,15 @@ jobs:
         run: |
           $py = Get-ChildItem WPy64-312101 -Recurse -Filter python.exe | Select-Object -First 1
           if (-not $py) { throw "python.exe not found" }
-          New-Item -ItemType Directory -Path dist\torch_wheels -Force | Out-Null
+          # 下载到 launcher/torch_wheels/（installer_torch.iss 的 Source 路径）
+          New-Item -ItemType Directory -Path launcher\torch_wheels -Force | Out-Null
           # CI runner 在 GitHub 托管环境，访问官方源较快；用 --no-deps 只取 torch 家族本体
           & $py.FullName -m pip download torch torchvision torchaudio `
             --index-url https://download.pytorch.org/whl/cu128 `
-            -d dist\torch_wheels --no-deps --timeout 300 --retries 3
+            -d launcher\torch_wheels --no-deps --timeout 300 --retries 3
           if ($LASTEXITCODE -ne 0) { throw "pip download torch wheels failed" }
-          Get-ChildItem dist\torch_wheels | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
-          $total = (Get-ChildItem dist\torch_wheels | Measure-Object Length -Sum).Sum
+          Get-ChildItem launcher\torch_wheels | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
+          $total = (Get-ChildItem launcher\torch_wheels | Measure-Object Length -Sum).Sum
           Write-Output "torch wheels total: $([math]::Round($total/1GB,2)) GB"
 
       - name: 构建安装包（ISCC）
