@@ -32,7 +32,7 @@ DiskSliceSize=1900000000
 
 [Files]
 ; Torch 家族 wheels，安装后注入 WinPython（分卷由 DiskSpanning 自动生成）
-Source: "..\dist\torch_wheels\*.whl"; DestDir: "{tmp}\torch_wheels"; Flags: recursesubdirs
+Source: "torch_wheels\*.whl"; DestDir: "{tmp}\torch_wheels"; Flags: recursesubdirs dontcopy
 
 [Code]
 // 在指定目录下递归查找 python.exe（WinPython 的 python 目录名不固定）
