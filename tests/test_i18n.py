@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from bin.integrated_app.i18n import (
+from app.integrated_app.i18n import (
     _I18N_TRANSLATIONS,
     _LANG_FILE_MAP,
     LOCALE_ICONS,
@@ -149,7 +149,7 @@ class TestI18nClass:
 
     def test_singleton_instance_t_method(self):
         """全局实例的 t 方法应可用"""
-        from bin.integrated_app.i18n import i18n
+        from app.integrated_app.i18n import i18n
 
         result = i18n.t("app")
         assert isinstance(result, str)
@@ -215,7 +215,7 @@ class TestEdgeCases:
         (locales_dir / "en.json").write_text("{}")  # 空但合法
 
         monkeypatch.setattr(
-            "bin.integrated_app.i18n._get_locales_dir",
+            "app.integrated_app.i18n._get_locales_dir",
             lambda: str(locales_dir),
         )
 

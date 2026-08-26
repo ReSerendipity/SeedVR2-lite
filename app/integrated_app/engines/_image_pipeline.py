@@ -99,6 +99,7 @@ class _ImagePipelineMixin:
         image_path: str,
         output_dir: str,
         config: ImageInferenceConfig | None = None,
+        output_name: str | None = None,
         **kwargs,
     ) -> RestoreResult:
         """图像修复推理 - 在线程中运行以避免阻塞事件循环
@@ -114,6 +115,7 @@ class _ImagePipelineMixin:
             image_path: 输入图像路径
             output_dir: 输出目录
             config: 图像推理配置 (为 None 时从 self.config 构建默认配置)
+            output_name: 输出文件名 (含扩展名)；为 None 时使用默认「日期_时分秒_模型」命名
             **kwargs: 额外参数，会覆盖 config 中的同名字段 (兼容旧调用方)
         """
         if config is None:
@@ -126,7 +128,9 @@ class _ImagePipelineMixin:
 
         # REFACTOR [E4-1]: 每次推理开始前重置取消令牌
         self._reset_cancel_token()
-        return await asyncio.to_thread(self._infer_image_impl, image_path, output_dir, config)
+        return await asyncio.to_thread(
+            self._infer_image_impl, image_path, output_dir, config, output_name=output_name
+        )
 
     def _prepare_image_input(self, image_path: str, resolution: int, max_resolution: int = 0) -> tuple:
         """读取图像并预处理为模型输入
@@ -194,6 +198,7 @@ class _ImagePipelineMixin:
         cfg_scale: float,
         sample_steps: int,
         blockswap_was_active: bool,
+        output_name: str | None = None,
     ) -> RestoreResult:
         """后处理: 颜色校正、保存输出、创建 RestoreResult
 
@@ -212,6 +217,7 @@ class _ImagePipelineMixin:
             res_h, res_w: 输出分辨率
             image_path: 输入图像路径
             output_dir: 输出目录
+            output_name: 输出文件名 (含扩展名)，为 None 时使用默认命名
             scale_factor: 缩放因子
             inf: 推理配置字典 (含 inference_mode 等)
             cfg_scale: CFG 缩放
@@ -327,10 +333,64 @@ class _ImagePipelineMixin:
             except Exception as e:
                 logger.debug(f"水印嵌入失败 (不影响输出): {e}")
 
-        # 保存：按「日期_时分秒_模型」命名，便于区分与排序
-        output_name = _build_output_name(self.model_size, ".png")
+        # 保存：默认按「日期_时分秒_模型」命名；批量场景传入 output_name 保留原文件名
+        # 获取输出格式（从 self.config 或默认自动匹配）
+        requested_format = self.config.get("output_format", "").lower().strip()
+        
+        # 如果用户选择"默认"（空字符串），则根据输入图片的扩展名自动匹配
+        if not requested_format and image_path:
+            input_ext = os.path.splitext(image_path)[1].lower()
+            format_map_reverse = {
+                ".png": "png",
+                ".jpg": "jpg",
+                ".jpeg": "jpg",
+                ".webp": "webp",
+                ".bmp": "bmp",
+                ".tiff": "tiff",
+                ".tif": "tiff",
+            }
+            requested_format = format_map_reverse.get(input_ext, "png")
+        
+        # 如果没有输入路径或格式不匹配，使用 PNG 作为安全默认值
+        if not requested_format or requested_format not in ("png", "jpg", "jpeg", "webp", "bmp", "tiff"):
+            requested_format = "png"
+        
+        format_map = {
+            "png": ".png",
+            "jpg": ".jpg",
+            "jpeg": ".jpg",
+            "webp": ".webp",
+            "bmp": ".bmp",
+            "tiff": ".tiff",
+        }
+        ext = format_map.get(requested_format, ".png")
+        
+        if output_name is None:
+            output_name = _build_output_name(self.model_size, ext)
         output_path = _resolve_unique_path(output_dir, output_name)
-        PILImage.fromarray(result_np).save(output_path)
+        
+        # 根据格式保存图片
+        save_kwargs = {}
+        if requested_format in ("jpg", "jpeg"):
+            save_kwargs["quality"] = 95
+            save_kwargs["optimize"] = True
+        elif requested_format == "webp":
+            save_kwargs["quality"] = 90
+            save_kwargs["lossless"] = False
+        
+        pil_img = PILImage.fromarray(result_np)
+        # JPEG/WebP 不支持透明通道，需要转换为 RGB
+        if requested_format in ("jpg", "jpeg") and pil_img.mode in ("RGBA", "LA", "P"):
+            # 白色背景合成透明图
+            background = PILImage.new("RGB", pil_img.size, (255, 255, 255))
+            if pil_img.mode == "P":
+                pil_img = pil_img.convert("RGBA")
+            background.paste(pil_img, mask=pil_img.split()[-1] if pil_img.mode in ("RGBA", "LA") else None)
+            pil_img = background
+        elif requested_format in ("jpg", "jpeg") and pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
+        
+        pil_img.save(output_path, **save_kwargs)
 
         # 复制 EXIF 元数据 (upscayl inspired)
         enable_exif_copy = postprocess_cfg.get("copy_exif", True)
@@ -381,6 +441,7 @@ class _ImagePipelineMixin:
         image_path: str,
         output_dir: str,
         cfg: ImageInferenceConfig,
+        output_name: str | None = None,
     ) -> RestoreResult:
         """图像修复推理同步实现 - 在线程中运行
 
@@ -631,6 +692,7 @@ class _ImagePipelineMixin:
                 cfg_scale=cfg_scale,
                 sample_steps=sample_steps,
                 blockswap_was_active=blockswap_was_active,
+                output_name=output_name,
             )
             result.processing_time = time.time() - start_time
             return result

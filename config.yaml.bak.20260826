@@ -109,11 +109,8 @@ runtime:
     retry_max_delay_seconds: 30.0
   security:
     allowed_base_dirs:
-    - C:/
-    - D:/
-    - E:/
-    - F:/
-    - G:/
+    - outputs/
+    - data/uploads/
     rate_limit_per_minute: 30
   sse:
     heartbeat_interval_seconds: 30
@@ -155,7 +152,7 @@ user_preferences:
   default_steps: 20
   default_vae: ema_vae_fp16
   output_format: png
-  output_path_template: '{project_root}/outputs/{task_type}/restored/{input_name}{ext}'
+  output_path_template: '{input_dir}/restored/{input_name}{ext}'
   output_quality: 95
   recent_model_path: ''
   restore_form_values: {}

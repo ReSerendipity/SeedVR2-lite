@@ -106,7 +106,7 @@ async def batch_restore_from_folder(
 
     folder = Path(folder_path.strip())
     if not await asyncio.to_thread(folder.exists) or not await asyncio.to_thread(folder.is_dir):
-        raise HTTPException(status_code=400, detail=f"文件夹不存在: {folder_path}")
+        raise HTTPException(status_code=400, detail=f"文件夹不存在：{folder_path}")
 
     media_files = []
     for root, _dirs, files in await asyncio.to_thread(lambda: list(os.walk(folder))):
@@ -120,12 +120,13 @@ async def batch_restore_from_folder(
         media_files = [(p, t) for p, t in media_files if t == task_type]
 
     if not media_files:
-        raise HTTPException(status_code=400, detail=f"文件夹中未找到可处理文件: {folder_path}")
+        raise HTTPException(status_code=400, detail=f"文件夹中未找到可处理文件：{folder_path}")
 
     actual_type = task_type if task_type != "auto" else media_files[0][1]
 
     dit_model = raw_params.dit_model
     use_model_size = common.model_size_from_dit_model(dit_model)
+    
     params: ImageRestoreParams | VideoRestoreParams
     if actual_type == "image":
         image_fields = {k: v for k, v in raw_params.model_dump().items() if k in ImageRestoreParams.model_fields}
@@ -169,10 +170,13 @@ async def batch_restore_from_folder(
     engine = model_registry.get_engine()
     on_cancel = engine.request_cancel if engine else None
     paths_only = [p for p, _ in media_files]
+    # 传递两倍模式配置
+    double_res_flag = raw_params.double_res
     await task_queue.submit(
         batch_id,
         lambda: _process_batch_background(
-            batch_id, paths_only, actual_type, task_config, use_model_size, history_db, task_queue, config
+            batch_id, paths_only, actual_type, task_config, use_model_size, history_db, task_queue, config,
+            double_res=double_res_flag
         ),
         on_cancel=on_cancel,
     )
@@ -197,10 +201,11 @@ async def _process_batch_background(
     task_queue: TaskQueue,
     app_config: dict,
     results_to_update: list | None = None,
+    double_res: bool = False,
 ):
     """后台逐个处理批量任务（含自动重试 + 断点续跑）（内部函数）。
 
-    顺序处理媒体文件列表，每个文件失败后使用指数退避+抖动自动重试，
+    顺序处理媒体文件列表，每个文件失败后使用指数退避 + 抖动自动重试，
     重试次数和间隔从配置读取。处理过程中实时更新缓存和数据库状态。
     支持断点续跑：每个文件处理完成后保存 checkpoint，崩溃重启后可恢复。
 
@@ -238,7 +243,7 @@ async def _process_batch_background(
         ckpt_data = checkpoint_mgr.load_checkpoint(batch_id)
         if ckpt_data:
             completed_files_list = ckpt_data.get("completed_files", [])
-        logger.info(f"批量任务 {batch_id} 从断点恢复: 已完成 {len(completed_fingerprints)} 个文件")
+        logger.info(f"批量任务 {batch_id} 从断点恢复：已完成 {len(completed_fingerprints)} 个文件")
 
     cached = common.get_cached_or_create(
         batch_id,
@@ -272,6 +277,7 @@ async def _process_batch_background(
         return
 
     records_to_insert: list[HistoryRecord] = []
+    # 默认输出子目录名 (仅模板解析失败时回退时使用)
     output_subdir = "image" if media_type == "image" else "video"
 
     batch_cfg = app_config.get("runtime", {}).get("batch", {})
@@ -286,7 +292,7 @@ async def _process_batch_background(
             # 验证文件指纹（大小 + 修改时间）是否一致
             current_fp = _file_fingerprint(media_path)
             if fp.get("size", 0) == current_fp.get("size", 0) and fp.get("mtime", 0) == current_fp.get("mtime", 0):
-                logger.debug(f"断点续跑: 跳过已完成文件 {media_path}")
+                logger.debug(f"断点续跑：跳过已结束文件 {media_path}")
                 completed += 1
                 common.get_task_cache().update(batch_id, completed=completed)
                 # 为跳过的文件创建结果项
@@ -305,7 +311,7 @@ async def _process_batch_background(
                 )
                 continue
             else:
-                logger.warning(f"断点续跑: 文件指纹不匹配，重新处理 {media_path}")
+                logger.warning(f"断点续跑：文件指纹不匹配，重新处理 {media_path}")
 
         if task_queue.is_cancelled(batch_id):
             for remaining in media_files[i:]:
@@ -333,20 +339,75 @@ async def _process_batch_background(
 
         last_error = None
 
+        # 两倍模式：每个文件需要单独计算分辨率（因为不同文件分辨率可能不同）
+        current_config = config.copy()  # 为当前文件创建配置副本
+        if double_res and media_type == "image":
+            try:
+                from PIL import Image
+                with Image.open(media_path) as im:
+                    width, height = im.size
+                    short_edge = min(width, height)
+                    target_res = short_edge * 2
+                    current_config["resolution"] = target_res
+                    logger.info(
+                        f"[double_res] 文件 {os.path.basename(media_path)}: 图片尺寸 {width}x{height} -> 短边 {short_edge} -> 分辨率 {target_res}"
+                    )
+            except Exception as e:
+                logger.warning(f"[double_res] 无法读取图片尺寸 {media_path}, 保留原分辨率：{e}")
+
         for attempt in range(max_retries + 1):
             task_item["retry_count"] = attempt
             try:
-                output_dir = os.path.join(os.getcwd(), "outputs", output_subdir)
+                # 输出路径模板渲染 (user_preferences.output_path_template):
+                # 占位符 {project_root}/{task_type}/{input_dir}/{input_name}/{ext}
+                # -> 项目根目录/任务类型 (image/video)/输入目录/输入文件名 (不含扩展名)/扩展名 (含点号)
+                # 默认模板 "{project_root}/outputs/{task_type}/restored/{input_name}{ext}" 输出到项目根目录的 outputs 子目录
+                try:
+                    template = app_config.get("user_preferences", {}).get(
+                        "output_path_template", "{project_root}/outputs/{task_type}/restored/{input_name}{ext}"
+                    )
+                    project_root = os.getcwd()
+                    task_type_for_template = media_type  # "image" or "video"
+                    input_dir = os.path.dirname(media_path)
+                    input_stem = os.path.splitext(os.path.basename(media_path))[0]
+                    input_ext = os.path.splitext(media_path)[1]  # 含点号，如 ".png"
+                    rendered = (
+                        template.replace("{project_root}", project_root)
+                        .replace("{task_type}", task_type_for_template)
+                        .replace("{input_dir}", input_dir)
+                        .replace("{input_name}", input_stem)
+                        .replace("{ext}", input_ext)
+                    )
+                    # 渲染结果缺少文件名 (空模板/以分隔符结尾): 视为解析失败
+                    # 注：必须在 normpath 之前检查，否则空串被归一化为 "." 会绕过校验
+                    if not os.path.basename(rendered):
+                        raise ValueError(f"模板渲染结果缺少文件名：{rendered!r}")
+                    # 归一化分隔符 (模板用 / 而 Windows 用反斜杠): 保证输出路径风格统一
+                    rendered = os.path.normpath(rendered)
+                    output_dir = os.path.dirname(rendered)
+                    output_name = os.path.basename(rendered)
+                    # 模板未含目录 (如仅文件名) 时回退到输入文件所在目录，再回退当前工作目录
+                    if not output_dir:
+                        output_dir = input_dir or os.getcwd()
+                    # 渲染结果为 "."/".." 等相对名：视为解析失败
+                    if output_name in (".", ".."):
+                        raise ValueError(f"模板渲染结果缺少有效文件名：{rendered!r}")
+                except Exception as e:
+                    # 模板解析失败：回退到原行为 (outputs/{image|video} + 默认随机命名), 不中断批量任务
+                    logger.warning(f"输出路径模板解析失败，回退默认输出目录：{e}")
+                    output_dir = os.path.join(os.getcwd(), "outputs", output_subdir)
+                    output_name = None
                 await asyncio.to_thread(os.makedirs, output_dir, exist_ok=True)
 
                 if media_type == "image":
                     image_config = ImageInferenceConfig(
-                        **{k: v for k, v in config.items() if k in ImageInferenceConfig.__dataclass_fields__}
+                        **{k: v for k, v in current_config.items() if k in ImageInferenceConfig.__dataclass_fields__}
                     )
                     result = await engine.infer_image(
                         image_path=media_path,
                         output_dir=output_dir,
                         config=image_config,
+                        output_name=output_name,
                     )
                 else:
                     # 批量任务的进度回调（同步函数 - 推理在工作线程同步执行）
@@ -364,10 +425,11 @@ async def _process_batch_background(
                     result = await engine.infer_video(
                         video_path=media_path,
                         output_dir=output_dir,
-                        resolution=config["resolution"],
-                        max_resolution=config["max_resolution"],
-                        cache_model=config["cache_model"],
-                        seed=config["seed"],
+                        resolution=current_config["resolution"],
+                        max_resolution=current_config["max_resolution"],
+                        cache_model=current_config["cache_model"],
+                        seed=current_config["seed"],
+                        output_name=output_name,
                     )
 
                 if result.success:
@@ -387,7 +449,7 @@ async def _process_batch_background(
                             total=len(media_files),
                             completed_files=completed_files_list,
                             remaining=remaining_files,
-                            config=config,
+                            config=current_config,
                             media_type=media_type,
                             use_model_size=use_model_size,
                         )
@@ -397,7 +459,7 @@ async def _process_batch_background(
                     if attempt < max_retries:
                         task_item["status"] = "retrying"
                         logger.warning(
-                            f"批量处理 {media_type} {i+1}/{len(media_files)} 第{attempt+1}次失败，重试中: {media_path}, {last_error}"
+                            f"批量处理 {media_type} {i+1}/{len(media_files)} 第{attempt+1}次失败，重试中：{media_path}, {last_error}"
                         )
                         await exponential_backoff_with_jitter(attempt, base=retry_base, max_delay=retry_max)
                     else:
@@ -415,7 +477,7 @@ async def _process_batch_background(
                 if attempt < max_retries:
                     task_item["status"] = "retrying"
                     logger.warning(
-                        f"批量处理 {media_type} {i+1}/{len(media_files)} 第{attempt+1}次异常，重试中: {media_path}, {e}"
+                        f"批量处理 {media_type} {i+1}/{len(media_files)} 第{attempt+1}次异常，重试中：{media_path}, {e}"
                     )
                     await exponential_backoff_with_jitter(attempt, base=retry_base, max_delay=retry_max)
                 else:
@@ -423,7 +485,7 @@ async def _process_batch_background(
                     task_item["error"] = last_error
                     failed += 1
                     common.get_task_cache().update(batch_id, failed=failed)
-                    logger.error(f"批量处理 {media_type} {i+1}/{len(media_files)} 最终失败: {media_path}, {e}")
+                    logger.error(f"批量处理 {media_type} {i+1}/{len(media_files)} 最终失败：{media_path}, {e}")
 
         records_to_insert.append(
             HistoryRecord(
@@ -462,7 +524,7 @@ async def _process_batch_background(
         checkpoint_mgr.remove_checkpoint(batch_id)
         logger.info(f"批量任务 {batch_id} checkpoint 已清理")
 
-    logger.info(f"批量任务 {batch_id} 完成: {completed} 成功, {failed} 失败")
+    logger.info(f"批量任务 {batch_id} 完成：{completed} 成功，{failed} 失败")
 
 
 @router.get("/batch/{batch_id}/progress")
@@ -591,6 +653,8 @@ async def retry_failed_batch(
     task_config = cached.get("config", {})
     use_model_size = cached.get("use_model_size", "3b")
     media_type = cached.get("media_type", "image")
+    # 从缓存的配置中获取 double_res 设置（如果有）
+    double_res_flag = app_config.get("user_preferences", {}).get("double_res", False)
 
     engine = model_registry.get_engine()
     on_cancel = engine.request_cancel if engine else None
@@ -604,8 +668,9 @@ async def retry_failed_batch(
             use_model_size,
             history_db,
             task_queue,
-            config,
+            app_config,
             results_to_update=retry_results,
+            double_res=double_res_flag,
         ),
         on_cancel=on_cancel,
     )

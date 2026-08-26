@@ -176,6 +176,14 @@
                 <span class="sv2-batch-title">{{ t('restore.batch_title') }}</span>
                 <span class="sv-badge sv-badge-info">{{ t('restore.folder_mode') }}</span>
             </div>
+            <details class="sv2-allow-dirs" id="allowDirsPanel" style="margin-bottom:10px;">
+                <summary style="cursor:pointer;font-size:12px;color:var(--sv-fg-secondary);user-select:none;display:flex;align-items:center;gap:6px;">
+                    <i class="bi bi-shield-check"></i> {{ '允许目录管理' if t('restore.allow_dirs_title') == 'restore.allow_dirs_title' else t('restore.allow_dirs_title') }}
+                </summary>
+                <div class="sv2-allow-dirs-body" id="allowDirsList" style="margin-top:6px;padding:8px 10px;background:var(--sv-surface-2);border-radius:var(--sv-radius-sm);">
+                    <div class="sv-text-xs sv-text-muted"><span class="sv-spinner sv-spinner-sm"></span> {{ '加载中...' if t('restore.allow_dirs_loading') == 'restore.allow_dirs_loading' else t('restore.allow_dirs_loading') }}</div>
+                </div>
+            </details>
             <div id="folderScanResults" class="sv2-scan-results"></div>
             <div class="sv2-batch-progress" id="batchProgressCard" style="display:none;">
                 <div class="sv2-batch-progress-head">
@@ -239,7 +247,23 @@
                 </label>
             </label>
             <input type="number" class="sv-param-input" id="resolution" name="resolution" value="960" min="1">
-            <div class="sv-res-hint" id="resolutionHint">{{ '上传图片后将按短边×2自动计算（两倍模式下不可手动修改）' if t('restore.double_res_hint_default') == 'restore.double_res_hint_default' else t('restore.double_res_hint_default') }}</div>
+            <div class="sv-res-hint" id="resolutionHint">{{ '自动按短边×2 计算，手动修改将自动退出两倍模式' if t('restore.double_res_hint_default') == 'restore.double_res_hint_default' else t('restore.double_res_hint_default') }}</div>
+        </div>
+        <div class="sv-param-group">
+            <label class="sv-param-label" for="outputFormat">
+                {{ t('restore.output_format') or '输出格式' }}
+                <span class="sv-param-help" data-tooltip="{{ t('restore.tip_output_format') or ('选择修复完成后输出文件的格式。\n默认：自动匹配输入图片格式（PNG 输入→PNG 输出）\nPNG(推荐)：无损压缩，保留透明通道\nJPG：有损压缩，文件更小，适合照片\nWebP：现代格式，兼顾质量和大小\nBMP：无压缩，文件最大\nTIFF：无损，适合专业用途') }}">
+                    <i class="bi bi-info-circle"></i>
+                </span>
+            </label>
+            <select class="sv-param-select" id="outputFormat" name="output_format">
+                <option value="" selected>默认 (自动匹配输入格式)</option>
+                <option value="png">PNG (无损，保留透明)</option>
+                <option value="jpg">JPG (有损，文件小)</option>
+                <option value="webp">WebP (现代格式)</option>
+                <option value="bmp">BMP (无压缩)</option>
+                <option value="tiff">TIFF (无损专业)</option>
+            </select>
         </div>
         <div class="sv-param-group">
             <label class="sv-param-label" for="vaeModel">{{ t('video.vae_model') }}</label>
@@ -558,29 +582,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const autoOn = toggle.checked;
         input.classList.toggle('double-res-active', autoOn);
-        // 两倍模式 ON → 禁用分辨率 + 四个 VAE tile 参数，与自定义值完全互斥
-        input.disabled = autoOn;
-        const tileInputs = [
-            document.getElementById('encodeTileSize'),
-            document.getElementById('encodeTileOverlap'),
-            document.getElementById('decodeTileSize'),
-            document.getElementById('decodeTileOverlap'),
-        ];
-        tileInputs.forEach((el) => { if (el) el.disabled = autoOn; });
+        // 两倍模式仅作为"自动填充"开关：分辨率与四个 VAE tile 输入框始终可手动编辑，
+        // 手动修改分辨率会自动退出两倍模式（见 bindResolutionEvents 的 input 监听）
 
         if (autoOn && meta && typeof meta.width === 'number' && typeof meta.height === 'number') {
             const shortEdge = meta.shortEdge != null ? meta.shortEdge : Math.min(meta.width, meta.height);
             const target = shortEdge * 2;
             hint.classList.add('is-auto');
             hint.textContent =
-                (I['restore.double_res_applied'] || '已根据尺寸 {w}×{h} 的短边 {s} 自动设置为 {v}（不可手动修改）')
+                (I['restore.double_res_applied'] || '已根据尺寸 {w}×{h} 的短边 {s} 自动设置为 {v}（手动修改将自动退出两倍模式）')
                     .replace('{w}', String(meta.width))
                     .replace('{h}', String(meta.height))
                     .replace('{s}', String(shortEdge))
                     .replace('{v}', String(target));
         } else if (autoOn) {
             hint.classList.add('is-auto');
-            hint.textContent = I['restore.double_res_hint_default'] || '上传图片或视频后将按短边×2自动计算（两倍模式下不可手动修改）';
+            hint.textContent = I['restore.double_res_hint_default'] || '自动按短边×2 计算，手动修改将自动退出两倍模式';
         } else {
             hint.classList.remove('is-auto');
             hint.textContent = I['manual_res_hint'] || '自定义模式：可手动输入任意分辨率';
@@ -1214,21 +1231,50 @@ document.addEventListener('DOMContentLoaded', () => {
             const typeStats = [];
             if (videoCount > 0) typeStats.push(`<i class="bi bi-film"></i> ${videoCount} ${I['restore.video_files'] || '视频'}`);
             if (imageCount > 0) typeStats.push(`<i class="bi bi-image"></i> ${imageCount} ${I['restore.image_files'] || '图片'}`);
-            const listHtml = scannedFiles.slice(0, 10).map(f => {
+            
+            // 生成文件列表（仅展示前 10 个，添加滚动和统计提示）
+            const previewCount = Math.min(scannedFiles.length, 10);
+            const listHtml = scannedFiles.slice(0, previewCount).map(f => {
                 const icon = f.type === 'video' ? 'bi-film' : 'bi-image';
                 const sizeText = f.size ? (f.size / 1024 / 1024).toFixed(2) + ' MB' : '';
-                return `<div class="sv-batch-file-item"><i class="bi ${icon} sv-text-muted"></i><span class="bf-name">${SeedVR2.escapeHtml(f.relative)}</span>${sizeText ? `<span class="sv-text-xs sv-text-muted sv-ml-auto">${sizeText}</span>` : ''}</div>`;
+                return `<div class="sv-batch-file-item">
+                    <i class="bi ${icon} sv-text-muted"></i>
+                    <span class="bf-name" title="${SeedVR2.escapeHtml(f.path)}">${SeedVR2.escapeHtml(f.relative)}</span>
+                    ${sizeText ? `<span class="sv-text-xs sv-text-muted sv-ml-auto" title="文件大小：${sizeText}">${sizeText}</span>` : ''}
+                </div>`;
             }).join('');
-            const more = scannedFiles.length > 10 ? `<div class="sv-text-xs sv-text-muted sv-mt-1">... ${I['restore.and_more'] || '还有'} ${scannedFiles.length - 10} ${I['restore.more_files'] || '个文件'}</div>` : '';
+            
+            const remainingCount = scannedFiles.length - previewCount;
+            const moreInfo = remainingCount > 0 
+                ? `<div class="sv-text-xs sv-text-muted sv-mt-1 sv-flex sv-align-center">
+                       <i class="bi bi-list-ul sv-mr-1"></i> ... ${I['restore.and_more'] || '还有'} <strong>${remainingCount}</strong> ${I['restore.more_files'] || '个文件'}
+                   </div>` 
+                : '';
+            
             els.scanResults.innerHTML = `
                 <div class="sv-alert sv-alert-success sv-mb-2">
-                    <i class="bi bi-check-circle-fill"></i>
-                    <div>
-                        <strong>${totalText}</strong>
-                        <div class="sv-text-xs sv-mt-1 sv-flex sv-gap-3">${typeStats.join('')}<span><i class="bi bi-hdd"></i> ${totalSizeMB} MB</span></div>
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+                        <div style="flex:1;">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                                <i class="bi bi-check-circle-fill sv-font-lg" style="color:#28a745;"></i>
+                                <strong style="font-size:1rem;">${totalText}</strong>
+                            </div>
+                            <div class="sv-text-xs sv-flex sv-gap-3 sv-flex-wrap" style="color:#666;">
+                                ${typeStats.join('')}
+                                <span><i class="bi bi-hdd"></i> ${totalSizeMB} MB</span>
+                                <span><i class="bi bi-folder"></i> ${SeedVR2.escapeHtml(path)}</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div class="sv-batch-file-list">${listHtml}${more}</div>
+                <div class="sv-batch-file-list" style="max-height:280px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:6px;padding:8px;background:#fafafa;">
+                    ${listHtml}
+                    ${moreInfo}
+                </div>
+                <div class="sv-text-xs sv-text-muted sv-mt-2 sv-flex sv-align-center sv-flex-wrap">
+                    <i class="bi bi-info-circle sv-mr-1"></i>
+                    ${I['restore.batch_tip'] || '点击"从文件夹批量处理"将处理上述文件夹中的所有文件'}
+                </div>
             `;
             // 启用批量开始按钮
             if (els.btnStartBatch) {
@@ -1238,7 +1284,26 @@ document.addEventListener('DOMContentLoaded', () => {
             SeedVR2.toast(totalText, 'success', 3000);
         } catch (err) {
             els.scanResults.innerHTML = '';
-            SeedVR2.toast((I['restore.scan_failed'] || '扫描失败') + ': ' + err.message, 'error', 8000);
+            if (isForbiddenError(err)) {
+                // 403：目录不在白名单 → 渲染自助加白提示块（无需后端介入）
+                const deniedPath = els.folderPath.value.trim();
+                els.scanResults.innerHTML = `
+                    <div class="sv-alert sv-alert-warning sv-mb-2" role="alert">
+                        <i class="bi bi-shield-exclamation"></i>
+                        <div>
+                            <strong>${I['restore.dir_not_allowed'] || '该目录不在允许扫描列表'}</strong>
+                            <div class="sv-text-xs sv-mt-1" style="word-break:break-all;">${SeedVR2.escapeHtml(deniedPath)}</div>
+                            <div class="sv-text-xs sv-text-muted sv-mt-1">${I['restore.dir_not_allowed_desc'] || '加入允许目录后即可重新扫描'}</div>
+                            <button type="button" class="sv-btn sv-btn-secondary sv-btn-sm sv-mt-2" id="btnAllowDirAdd">
+                                <i class="bi bi-plus-circle"></i> ${I['restore.allow_dir_add_scan'] || '加入允许目录并重新扫描'}
+                            </button>
+                        </div>
+                    </div>`;
+                const addBtn = document.getElementById('btnAllowDirAdd');
+                if (addBtn) addBtn.addEventListener('click', addCurrentFolderToAllowedDirs);
+            } else {
+                SeedVR2.toast((I['restore.scan_failed'] || '扫描失败') + ': ' + err.message, 'error', 8000);
+            }
         } finally {
             els.btnScanFolder.disabled = false;
             els.btnScanFolder.innerHTML = originalHtml;
@@ -1248,6 +1313,131 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (els.btnScanFolder) {
         els.btnScanFolder.addEventListener('click', scanFolder);
+    }
+
+    // ===== 允许目录（白名单）自助管理 =====
+    /**
+     * 判断错误是否为 403 权限类错误。
+     * SeedVR2.api.get/post 目前抛出纯 Error（message 来自后端 detail / 状态码文案），
+     * 此处同时兼容未来带 status 字段的错误对象。
+     */
+    function isForbiddenError(err) {
+        if (!err) return false;
+        if (err.status === 403) return true;
+        const msg = String(err.message || '');
+        return /403|forbidden|不允许扫描|不在允许|允许的目录|无权限|无权访问|权限不足|禁止访问|拒绝访问|白名单|越权/i.test(msg);
+    }
+
+    /** 读取当前允许目录白名单：GET /api/system/settings → security.allowed_base_dirs */
+    async function fetchAllowedDirs() {
+        const data = await SeedVR2.api.get('/api/system/settings');
+        const dirs = data && data.security && Array.isArray(data.security.allowed_base_dirs)
+            ? data.security.allowed_base_dirs
+            : [];
+        return dirs.filter(d => typeof d === 'string' && d.trim() !== '');
+    }
+
+    /** 整体保存允许目录白名单：POST /api/system/settings { allowed_base_dirs } */
+    async function saveAllowedDirs(dirs) {
+        await SeedVR2.api.post('/api/system/settings', { allowed_base_dirs: dirs });
+    }
+
+    /** 渲染允许目录列表到管理面板（#allowDirsList） */
+    async function refreshAllowedDirsList() {
+        const listEl = document.getElementById('allowDirsList');
+        if (!listEl) return;
+        try {
+            const dirs = await fetchAllowedDirs();
+            if (dirs.length === 0) {
+                listEl.innerHTML = `<div class="sv-text-xs sv-text-muted">${I['restore.allow_dirs_empty'] || '仅默认目录（outputs/、data/uploads/）'}</div>`;
+                return;
+            }
+            const defaultDirs = ['outputs/', 'data/uploads/'];
+            const items = dirs.map((dir, idx) => {
+                const isDefault = defaultDirs.indexOf(dir) !== -1;
+                return `<div class="sv-flex sv-gap-2 sv-mt-1">
+                    <code class="sv-text-xs" style="word-break:break-all;">${SeedVR2.escapeHtml(dir)}</code>
+                    <button type="button" class="sv-btn sv-btn-outline sv-btn-sm" style="margin-left:auto;flex-shrink:0;"
+                            data-dir-index="${idx}" data-dir="${SeedVR2.escapeHtml(dir)}"
+                            title="${isDefault ? SeedVR2.escapeHtml(I['restore.allow_dir_delete_default_warn'] || '删除后该目录将无法扫描') : ''}">${I['restore.allow_dir_delete'] || '删除'}</button>
+                </div>`;
+            }).join('');
+            listEl.innerHTML = items;
+            listEl.querySelectorAll('button[data-dir-index]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    removeAllowedDir(btn.getAttribute('data-dir'));
+                });
+            });
+        } catch (err) {
+            listEl.innerHTML = `<div class="sv-text-xs sv-text-muted">${I['restore.allow_dirs_load_failed'] || '加载允许目录失败'}: ${SeedVR2.escapeHtml(err.message || '')}</div>`;
+        }
+    }
+
+    /** 从白名单删除目录；删除默认目录前先弹确认提示 */
+    function removeAllowedDir(dir) {
+        const doRemove = async () => {
+            try {
+                const dirs = await fetchAllowedDirs();
+                const next = dirs.filter(d => d !== dir);
+                await saveAllowedDirs(next);
+                SeedVR2.toast(I['restore.allow_dir_removed'] || '已从允许列表移除', 'success');
+                await refreshAllowedDirsList();
+            } catch (err) {
+                SeedVR2.toast((I['restore.allow_dir_remove_failed'] || '删除允许目录失败') + ': ' + err.message, 'error', 8000);
+            }
+        };
+        if (dir === 'outputs/' || dir === 'data/uploads/') {
+            if (typeof SeedVR2.confirm === 'function') {
+                SeedVR2.confirm(
+                    I['restore.allow_dir_delete_title'] || '删除允许目录',
+                    I['restore.allow_dir_delete_default_warn'] || '删除后该目录将无法扫描，确定删除？',
+                    doRemove
+                );
+                return;
+            }
+        }
+        doRemove();
+    }
+
+    /** 把当前 folderPath 加入允许目录白名单并自动重新扫描（403 自助处理） */
+    async function addCurrentFolderToAllowedDirs() {
+        const path = els.folderPath.value.trim();
+        if (!path) {
+            SeedVR2.toast(I['restore.please_select_folder'] || '请输入或选择文件夹路径', 'warning');
+            return;
+        }
+        const btn = document.getElementById('btnAllowDirAdd');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="sv-spinner sv-spinner-sm"></span> ' + (I['restore.allow_dir_adding'] || '添加中...');
+        }
+        try {
+            const dirs = await fetchAllowedDirs();
+            const norm = (p) => p.replace(/[\\/]+$/, '').toLowerCase();
+            const existed = dirs.some(d => norm(d) === norm(path));
+            if (!existed) {
+                dirs.push(path);
+                await saveAllowedDirs(dirs);
+            }
+            SeedVR2.toast(I['restore.allow_dir_added'] || '目录已加入允许列表，正在重新扫描', 'success');
+            await refreshAllowedDirsList();
+            await scanFolder();
+        } catch (err) {
+            SeedVR2.toast((I['restore.allow_dir_add_failed'] || '加入允许目录失败') + ': ' + err.message, 'error', 8000);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-plus-circle"></i> ' + (I['restore.allow_dir_add_scan'] || '加入允许目录并重新扫描');
+            }
+        }
+    }
+
+    // 面板展开时刷新允许目录列表
+    const allowDirsPanel = document.getElementById('allowDirsPanel');
+    if (allowDirsPanel) {
+        allowDirsPanel.addEventListener('toggle', () => {
+            if (allowDirsPanel.open) refreshAllowedDirsList();
+        });
     }
 
     // 收集表单参数
@@ -1577,25 +1767,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // 用户手动输入分辨率：若输入值与自动设置值不一致，自动切回自定义模式
+        // 用户手动输入分辨率：两倍模式下直接退出自动填充，以输入值为准
         input.addEventListener('input', () => {
-            if (!toggle.checked) return; // 已经是自定义，无需处理
-            const currentNum = parseInt(input.value, 10);
-            if (_resolutionLastAutoValue !== null && Number.isFinite(currentNum)) {
-                if (currentNum !== _resolutionLastAutoValue) {
-                    toggle.checked = false;
-                    _resolutionLastAutoValue = null;
-                    syncResolutionUI({});
-                    SeedVR2.toast(
-                        I['restore.switched_to_manual'] || '检测到手动修改，已切换为「自定义」模式',
-                        'info'
-                    );
-                }
-            } else if (input.value !== '' && _resolutionLastAutoValue === null) {
-                // 用户在两倍模式未生效（未上传图片）时就开始输入 → 视为想自定义
-                toggle.checked = false;
-                syncResolutionUI({});
-            }
+            if (!toggle.checked) return; // 已是自定义模式，无需处理
+            toggle.checked = false;
+            _resolutionLastAutoValue = null;
+            syncResolutionUI({});
+            SeedVR2.toast(
+                I['restore.switched_to_manual'] || '已切换到手动模式，分辨率以输入值为准',
+                'info'
+            );
         });
     })();
 
@@ -2038,7 +2219,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // 5. 应用解锁状态（必须在 setup 之后）
             _applyUnlockState(unlockState);
 
-            // 6. 最后同步分辨率互斥 UI（此时已恢复用户上次的 double_res 勾选值）
+            // 6. 最后同步分辨率提示 UI（此时已恢复用户上次的 double_res 勾选值）
             //    注意：只有当用户未上传文件（没有 width/height 元数据）时才做默认同步，
             //    防止 autoSetResolutionFromImage 已经设置过的联动值被默认逻辑覆盖。
             const toggle = document.getElementById('doubleResToggle');

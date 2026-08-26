@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from bin.integrated_app.config_models import AppConfig, ModelConfig, ServerConfig, get_pretrained_root
+from app.integrated_app.config_models import AppConfig, ModelConfig, ServerConfig, get_pretrained_root
 
 
 class TestAppConfig:
@@ -73,7 +73,7 @@ class TestModelConfig:
 
     def test_default_pretrained_dir(self):
         config = ModelConfig()
-        assert config.pretrained_dir == "pretrained_models"
+        assert config.pretrained_dir == "model"
 
     def test_default_model_source_mode(self):
         config = ModelConfig()
@@ -138,7 +138,7 @@ class TestGetPretrainedRoot:
         """缺少 model_source_mode 字段时默认 portable"""
         cfg = {}
         path = get_pretrained_root(cfg, project_root="/project")
-        assert "pretrained_models" in path
+        assert "model" in path
 
     def test_model_config_instance_input(self):
         """接受 ModelConfig 实例作为输入"""

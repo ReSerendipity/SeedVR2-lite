@@ -124,6 +124,7 @@ class SettingsUpdateRequest(BaseModel):
         default_resolution_h: 默认输出高度。
         default_resolution_w: 默认输出宽度。
         seed: 默认随机种子。
+        allowed_base_dirs: 允许访问的基础目录白名单，None 表示不修改。
     """
 
     default_model_size: str | None = None
@@ -133,6 +134,7 @@ class SettingsUpdateRequest(BaseModel):
     default_resolution_h: int | None = None
     default_resolution_w: int | None = None
     seed: int | None = None
+    allowed_base_dirs: list[str] | None = None
 
 
 @router.get("/settings")
@@ -149,6 +151,7 @@ async def get_settings(config: dict = Depends(get_config)):
         "gpu": { ... },          // GPU 相关配置
         "i18n": { ... },         // 国际化配置
         "restore": { ... },      // 修复相关配置
+        "security": { ... },     // 安全相关配置（含 allowed_base_dirs 白名单）
         "user_preferences": { ... }  // 用户偏好设置
     }
 
@@ -172,6 +175,7 @@ async def get_settings(config: dict = Depends(get_config)):
             "gpu": config.get("gpu", {}),
             "i18n": config.get("i18n", {}),
             "restore": config.get("restore", {}),
+            "security": config.get("runtime", {}).get("security", {}),
             "user_preferences": user_prefs,
         }
     )
@@ -215,6 +219,10 @@ async def update_settings(
         config.setdefault("restore", {})["default_resolution_w"] = settings.default_resolution_w
     if settings.seed is not None:
         config.setdefault("restore", {})["seed"] = settings.seed
+    if settings.allowed_base_dirs is not None:
+        config.setdefault("runtime", {}).setdefault("security", {})[
+            "allowed_base_dirs"
+        ] = settings.allowed_base_dirs
 
     await run_in_threadpool(save_config, config)
 

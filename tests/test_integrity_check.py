@@ -12,7 +12,7 @@ import hashlib
 
 import pytest
 
-from bin.integrated_app.security.integrity_check import (
+from app.integrated_app.security.integrity_check import (
     compute_sha256,
     verify_checkpoint,
     verify_model_files,

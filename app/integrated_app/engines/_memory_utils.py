@@ -698,6 +698,7 @@ class ImageInferenceConfig:
     enable_debug: bool = False
     cache_model: bool = False
     force_reload_dit: bool = False
+    output_format: str = "png"  # 输出格式："png", "jpg", "webp", "bmp", "tiff"
     torch_compile: dict = field(default_factory=dict)
 
     @classmethod

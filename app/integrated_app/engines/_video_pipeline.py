@@ -43,7 +43,9 @@ logger = logging.getLogger(__name__)
 class _VideoPipelineMixin:
     """Mixin: pipeline methods extracted from SeedVR2Engine."""
 
-    async def infer_video(self, video_path: str, output_dir: str, **kwargs) -> RestoreResult:
+    async def infer_video(
+        self, video_path: str, output_dir: str, output_name: str | None = None, **kwargs
+    ) -> RestoreResult:
         """视频修复推理 - 在线程中运行以避免阻塞事件循环
 
         阶段1 (VAE编码): VAE在GPU, DiT在CPU
@@ -60,9 +62,13 @@ class _VideoPipelineMixin:
             self._vram_monitor = VRAMPeakMonitor(device=self.device, enabled=True)
         except Exception:
             self._vram_monitor = None
-        return await asyncio.to_thread(self._infer_video_impl, video_path, output_dir, **kwargs)
+        return await asyncio.to_thread(
+            self._infer_video_impl, video_path, output_dir, output_name=output_name, **kwargs
+        )
 
-    def _infer_video_impl(self, video_path: str, output_dir: str, **kwargs) -> RestoreResult:
+    def _infer_video_impl(
+        self, video_path: str, output_dir: str, output_name: str | None = None, **kwargs
+    ) -> RestoreResult:
         """视频修复推理同步实现 - 分段流式处理，避免长视频全量加载导致 OOM
 
         与全量读取不同，本实现将长视频按段顺序读取 → 逐段推理 → 逐段写盘:
@@ -258,8 +264,9 @@ class _VideoPipelineMixin:
                 except Exception as e:
                     logger.debug(f"FeaturePropagation init skipped: {e}")
 
-            # 输出文件名：按「日期_时分秒_模型」命名，便于区分与排序
-            output_name = _build_output_name(self.model_size, ".mp4")
+            # 输出文件名：默认按「日期_时分秒_模型」命名；批量场景传入 output_name 保留原文件名
+            if output_name is None:
+                output_name = _build_output_name(self.model_size, ".mp4")
             output_path = _resolve_unique_path(output_dir, output_name)
 
             # ==================== 分段流式主循环 ====================

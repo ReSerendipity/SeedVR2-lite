@@ -550,3 +550,30 @@ if scene_id not in db:
 - app/integrated_app/spec.py — 领域公式契约层
 - scripts/render_pages.py + tests/frontend/smoke.js — 前端冒烟测试
 - tests/test_mcp_server.py、tests/test_bad_case_retry.py、tests/test_spec.py
+
+## 📂 文件归档与放置规范（重要：新增文件必须遵守）
+
+> 本仓库目录已于 2026-08-23 系统整理（见 `docs/整理记录_20260823.md`）。后续任何新增/生成文件，**先判断类型再放置**，不要随意丢在仓库根目录或其他位置。
+
+**docs/ 分类（项目文档）**
+- `docs/project/`：需求(PRD)、架构、API、技术选型、设计上下文
+- `docs/plans/`：实施计划、路线图、指南(Guide)、待办(TASKS)
+- `docs/reports/`：评估/审计/安全/测试/优化报告、Lessons
+- `docs/repo-analysis/`：仓库学习报告（命名 `{仓库名}_技术学习报告.md`）
+- `docs/_devarchive/`：历史/一次性开发产物、交接方案、旧版本文档（**归档而非删除**）
+
+**根目录只允许放置**
+- 标准仓库文件：README、LICENSE、NOTICE、CONTRIBUTING、CODE_OF_CONDUCT、CHANGELOG、AGENTS、SECURITY、USER_AGREEMENT
+- 构建与配置：build/gradle、pyproject.toml、config.yaml、requirements*.txt、uv.lock、Dockerfile、.gitignore、.env(.example)、启动脚本(start/install)
+- 明确被 build/CI 或文档要求从根目录运行的工具（如 `run_checks.bat`、`run_verify.bat`）
+
+**禁止事项（防止回归混乱）**
+- ❌ 一次性调试脚本/截图/日志/草稿 → 放 `scripts/` 或 `docs/_devarchive/`，绝不堆在根目录
+- ❌ 文档散落到 tests/perf/launcher/model 等业务目录 → 归入 `docs/` 对应分类
+- ❌ 移动/删除 gitignored 运行时产物（`.watermark_key`、`.coverage`、`perf/monitoring_plan.md`）
+- ❌ 移动被 CI 读取的文件（如 `launcher/release-notes-intro.md`、`model_lib/SOURCE.md`）
+- ❌ 删除旧版本文档 → 需要留档移入 `docs/_devarchive/`
+
+> 本仓库特别说明：`run_checks.bat`/`run_verify.bat` 按文档约定须在根目录运行，保留勿动；
+> `verify_engine.py` 的权威版本在 `scripts/`，根目录不要再放一份。
+> 新增文件前若不确定归属，先询问，不要自作主张放置。
