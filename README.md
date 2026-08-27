@@ -24,7 +24,7 @@
 ## 🆕 新手必看
 
 **第一次使用？完全不懂技术？**  
-👉 请先阅读 [新手引导](docs/project/FIRST_TIME_USER_GUIDE.md) —— 从零开始的保姆级教程，包含：
+👉 请先阅读 [新手引导](https://reserendipity.github.io/SeedVR2-lite/docs/) —— 从零开始的保姆级教程，包含：
 - 如何获取代码（ZIP 下载 vs Git 克隆）
 - 系统要求和环境检查清单
 - 一步步安装指引（含常见问题解答）
