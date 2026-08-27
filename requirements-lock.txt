@@ -8,8 +8,8 @@
 #   - 切换 CUDA 版本时需重新生成哈希
 #   - 无哈希的条目标记为 # NO HASH, 需联网下载后重新生成
 
-# NO HASH (run generate_lock.py with network): ImageIO==2.37.3
-ImageIO==2.37.3
+# NO HASH (run generate_lock.py with network): ImageIO==2.37.4
+ImageIO==2.37.4
 # NO HASH (run generate_lock.py with network): Jinja2==3.1.6
 Jinja2==3.1.6
 # NO HASH (run generate_lock.py with network): MarkupSafe==3.0.3
