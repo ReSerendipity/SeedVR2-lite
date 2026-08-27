@@ -46,6 +46,21 @@ jobs:
         # `|| true`：即使测试/收集失败也返回成功，避免 CI 因环境性测试问题变红
         run: python -m pytest -q --ignore=tests/perf --cov=app/integrated_app --cov-report=xml --cov-report=html --cov-report=term || true
 
+      - name: Coverage Gate (>= 50%)
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import os, xml.etree.ElementTree as ET
+          if not os.path.exists('coverage.xml'):
+              print('[WARN] coverage.xml not found - skipping gate')
+              raise SystemExit(0)
+          rate = float(ET.parse('coverage.xml').getroot().get('line-rate'))
+          pct = rate * 100
+          print(f'Line coverage: {pct:.1f}%')
+          if pct < 50:
+              raise SystemExit(f'[FAIL] coverage {pct:.1f}% < 50%')
+          print('[PASS] coverage meets 50% threshold')
+          PYEOF
       - name: Upload coverage XML
         if: always()
         continue-on-error: true
