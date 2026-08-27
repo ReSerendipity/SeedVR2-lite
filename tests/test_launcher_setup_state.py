@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from launcher.setup_state import SetupState, DEFAULT_STATE
+from launcher.setup_state import SetupState
 
 
 def test_default_state_when_no_file(tmp_path: Path):

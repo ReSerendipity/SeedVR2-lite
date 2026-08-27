@@ -497,14 +497,13 @@ class MCPServer:
             }
 
             try:
-                gpu_status = gpu_manager.get_status()
-                if isinstance(gpu_status, dict):
-                    status["gpu"] = {
-                        "available": gpu_status.get("available"),
-                        "name": gpu_status.get("name"),
-                        "vram_total_gb": gpu_status.get("vram_total_gb"),
-                        "vram_used_gb": gpu_status.get("vram_used_gb"),
-                    }
+                gpu_info = gpu_manager.get_gpu_info()
+                status["gpu"] = {
+                    "available": gpu_manager.is_gpu_available,
+                    "name": gpu_info.name,
+                    "vram_total_gb": round(gpu_info.total_vram_mb / 1024, 2),
+                    "vram_used_gb": round((gpu_info.total_vram_mb - gpu_info.available_vram_mb) / 1024, 2),
+                }
             except Exception as e:  # noqa: BLE001 — GPU 信息是尽力而为
                 status["gpu"] = {"error": str(e)}
 

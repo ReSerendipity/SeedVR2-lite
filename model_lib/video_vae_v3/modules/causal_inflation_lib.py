@@ -30,7 +30,7 @@
 """
 
 import math
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 import torch
 import torch.distributed as dist
@@ -92,9 +92,7 @@ def _check_conv3d_memory_bug():
         if not hasattr(torch.backends.cudnn, "version"):
             return False
         cudnn_version = torch.backends.cudnn.version()
-        if cudnn_version is None or cudnn_version < 91002:
-            return False
-        return True
+        return cudnn_version is not None and cudnn_version >= 91002
     except Exception:
         return False
 
@@ -102,14 +100,12 @@ def _check_conv3d_memory_bug():
 NVIDIA_CONV3D_MEMORY_BUG_WORKAROUND = _check_conv3d_memory_bug()
 
 if NVIDIA_CONV3D_MEMORY_BUG_WORKAROUND:
-    try:
+    with suppress(Exception):
         logger.info(
             "Conv3d workaround active: PyTorch %s, cuDNN %s (fixing VAE 3x memory bug)",
             torch.__version__.split("+")[0],
             torch.backends.cudnn.version(),
         )
-    except Exception:
-        pass
 
 
 @contextmanager

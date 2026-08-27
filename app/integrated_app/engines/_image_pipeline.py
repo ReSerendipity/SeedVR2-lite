@@ -336,10 +336,10 @@ class _ImagePipelineMixin:
         # 保存：默认按「日期_时分秒_模型」命名；批量场景传入 output_name 保留原文件名
         # 获取输出格式（从 inf 或默认自动匹配）
         requested_format = inf.get("output_format", "").lower().strip()
-        
+
         # 🔍 DEBUG: 打印输出的实际值
         logger.info(f"🔧 [DEBUG] 输出格式调试：inf={inf.get('output_format', 'MISSING')}, requested_format='{requested_format}'")
-        
+
         # 如果用户选择"默认"（空字符串），则根据输入图片的扩展名自动匹配
         if not requested_format and image_path:
             input_ext = os.path.splitext(image_path)[1].lower()
@@ -354,15 +354,15 @@ class _ImagePipelineMixin:
             }
             requested_format = format_map_reverse.get(input_ext, "png")
             logger.info(f"🔧 [DEBUG] 自动匹配格式：输入={image_path}, 扩展名={input_ext} -> {requested_format}")
-        
+
         # 验证格式合法性
         valid_formats = ("png", "jpg", "jpeg", "webp", "bmp", "tiff")
         if not requested_format or requested_format not in valid_formats:
             logger.warning(f"⚠️ [WARN] 无效的输出格式 '{requested_format}', 回退到 PNG")
             requested_format = "png"
-        
+
         logger.info(f"✅ [INFO] 最终使用输出格式：{requested_format.upper()}")
-        
+
         format_map = {
             "png": ".png",
             "jpg": ".jpg",
@@ -372,7 +372,7 @@ class _ImagePipelineMixin:
             "tiff": ".tiff",
         }
         ext = format_map.get(requested_format, ".png")
-        
+
         if output_name is None:
             output_name = _build_output_name(self.model_size, ext)
         else:
@@ -381,7 +381,7 @@ class _ImagePipelineMixin:
             stem, _nouse = os.path.splitext(output_name)
             output_name = stem + ext
         output_path = _resolve_unique_path(output_dir, output_name)
-        
+
         # 根据格式保存图片
         save_kwargs = {}
         if requested_format in ("jpg", "jpeg"):
@@ -390,7 +390,7 @@ class _ImagePipelineMixin:
         elif requested_format == "webp":
             save_kwargs["quality"] = 90
             save_kwargs["lossless"] = False
-        
+
         pil_img = PILImage.fromarray(result_np)
         # JPEG/WebP 不支持透明通道，需要转换为 RGB
         if requested_format in ("jpg", "jpeg") and pil_img.mode in ("RGBA", "LA", "P"):
@@ -402,7 +402,7 @@ class _ImagePipelineMixin:
             pil_img = background
         elif requested_format in ("jpg", "jpeg") and pil_img.mode != "RGB":
             pil_img = pil_img.convert("RGB")
-        
+
         pil_img.save(output_path, **save_kwargs)
 
         # 复制 EXIF 元数据 (upscayl inspired)

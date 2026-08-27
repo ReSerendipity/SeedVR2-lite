@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import threading
@@ -74,10 +75,8 @@ class Router:
         if fn is None:
             return 404, b'{"error":"not found"}', "application/json; charset=utf-8"
         if method == "POST" and body_bytes:
-            try:
+            with contextlib.suppress(json.JSONDecodeError, UnicodeDecodeError):
                 self._last_body.update(json.loads(body_bytes.decode("utf-8")))
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
         try:
             result = fn()
             if result is None:

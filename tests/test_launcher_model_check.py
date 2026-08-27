@@ -5,7 +5,6 @@ from pathlib import Path
 from launcher.model_check import (
     MAIN_MODEL_FILES,
     MANDATORY_FILES,
-    ModelCheckResult,
     check_models,
     recommend_main_model,
 )

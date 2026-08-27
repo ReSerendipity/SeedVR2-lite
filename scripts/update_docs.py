@@ -33,7 +33,7 @@ def main(argv):
         return 0
     rc, out = sh(["git", "-C", str(repo), "diff", "--name-status",
                   f"{tag}~5..{tag}", "--", "."], repo)
-    changed = [l for l in out.splitlines() if l and not l.startswith("fatal")]
+    changed = [line for line in out.splitlines() if line and not line.startswith("fatal")]
     if not changed:
         print("no git range; skipping")
         return 0

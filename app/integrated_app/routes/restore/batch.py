@@ -126,7 +126,7 @@ async def batch_restore_from_folder(
 
     dit_model = raw_params.dit_model
     use_model_size = common.model_size_from_dit_model(dit_model)
-    
+
     params: ImageRestoreParams | VideoRestoreParams
     if actual_type == "image":
         image_fields = {k: v for k, v in raw_params.model_dump().items() if k in ImageRestoreParams.model_fields}
@@ -654,7 +654,7 @@ async def retry_failed_batch(
     use_model_size = cached.get("use_model_size", "3b")
     media_type = cached.get("media_type", "image")
     # 从缓存的配置中获取 double_res 设置（如果有）
-    double_res_flag = app_config.get("user_preferences", {}).get("double_res", False)
+    double_res_flag = config.get("user_preferences", {}).get("double_res", False)
 
     engine = model_registry.get_engine()
     on_cancel = engine.request_cancel if engine else None
@@ -668,7 +668,7 @@ async def retry_failed_batch(
             use_model_size,
             history_db,
             task_queue,
-            app_config,
+            config,
             results_to_update=retry_results,
             double_res=double_res_flag,
         ),

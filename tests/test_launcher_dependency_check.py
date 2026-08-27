@@ -1,13 +1,11 @@
 from unittest import mock
 
 from launcher.dependency_check import (
-    TORCH_CUDA_VERSIONS,
     TORCH_INDEXES,
-    TorchCheckResult,
+    _parse_cuda_from_driver,
     check_torch,
     recommend_cuda_index,
     torch_install_cmd,
-    _parse_cuda_from_driver,
 )
 
 

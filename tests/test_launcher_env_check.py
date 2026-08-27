@@ -5,11 +5,11 @@ from unittest import mock
 from launcher.env_check import (
     MIN_DISK_GB,
     EnvCheckResult,
-    check_env,
-    _parse_nvidia_smi,
+    _check_disk_space,
     _parse_nvidia_mem,
     _parse_nvidia_query,
-    _check_disk_space,
+    _parse_nvidia_smi,
+    check_env,
 )
 
 

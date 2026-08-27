@@ -73,7 +73,8 @@ def setup_logging(config: dict | None = None) -> None:
                 )
             )
         except (OSError, ValueError) as exc:  # 文件路径不可写时降级为仅控制台
-            handlers[0].setLevel(logging.WARNING)
+            if handlers[0] is not None:
+                handlers[0].setLevel(logging.WARNING)
             logging.getLogger("seedvr2").warning(f"文件日志初始化失败，降级为仅控制台输出: {exc}")
 
     formatter = logging.Formatter(LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")

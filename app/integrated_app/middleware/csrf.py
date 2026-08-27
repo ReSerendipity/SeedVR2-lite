@@ -146,7 +146,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             bool: cookie 存在且签名有效时返回 True。
         """
         cookie_token = request.cookies.get(self.CSRF_COOKIE_NAME)
-        return bool(cookie_token) and self._verify_signed_token(cookie_token)
+        return cookie_token is not None and self._verify_signed_token(cookie_token)
 
     @staticmethod
     def _verify_signed_token(token: str) -> bool:
@@ -204,7 +204,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # 先验证 cookie 中的 token 签名合法（服务端签名）
         if (
             self._has_valid_cookie(request)
-            and header_token
+            and cookie_token is not None
+            and header_token is not None
             and secrets.compare_digest(cookie_token, header_token)
         ):
             return await call_next(request)
