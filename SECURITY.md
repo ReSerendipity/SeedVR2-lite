@@ -85,7 +85,7 @@ SeedVR2 的 Web UI **默认仅绑定 `127.0.0.1`**。**严禁将 `server.host` �
 - 通过上传接口投递恶意文件
 - 下载 `outputs/` 与 `data/uploads/` 目录内容
 
-如需局域网共享，请在反向代理（Nginx/Caddy）后增加 Basic Auth，并启用 HTTPS。详见 [部署文档](docs/DEPLOYMENT.md)。
+如需局域网共享，请在反向代理（Nginx/Caddy）后增加 Basic Auth，并启用 HTTPS。详见 [部署文档](docs/plans/DEPLOYMENT.md)。
 
 ### 模型来源
 
