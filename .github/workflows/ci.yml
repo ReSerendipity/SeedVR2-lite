@@ -34,15 +34,12 @@ jobs:
 
       - name: Ruff (lint)
         run: python -m ruff check .
-        continue-on-error: true
 
       - name: Black (format check)
         run: python -m black --check .
-        continue-on-error: true
 
       - name: Mypy (type check)
         run: python -m mypy app/integrated_app
-        continue-on-error: true
         if: always()
 
       - name: Pytest + coverage
