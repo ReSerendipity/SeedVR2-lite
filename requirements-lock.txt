@@ -202,8 +202,8 @@ torchaudio==2.11.0
 torchvision==0.28.0+cu132
 # NO HASH (run generate_lock.py with network): tqdm==4.68.2
 tqdm==4.68.2
-# NO HASH (run generate_lock.py with network): traitlets==5.15.1
-traitlets==5.15.1
+# NO HASH (run generate_lock.py with network): traitlets==5.16.1
+traitlets==5.16.1
 # NO HASH (run generate_lock.py with network): transformers==5.12.0
 transformers==5.12.0
 # NO HASH (run generate_lock.py with network): typer==0.25.1
