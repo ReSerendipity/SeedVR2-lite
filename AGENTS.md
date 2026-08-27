@@ -1,14 +1,28 @@
 # Seedvr2 AGENTS.md — AI 辅助开发指南
 
-> 🧬 **自进化协议版本**：v1.25  
+> 🧬 **自进化协议版本**：v1.26  
 > 📅 **最后更新日期**：2026-08-27  
 > 🎯 **对应项目版本**：v1.0.0（Apache-2.0 开源协议）
 
 ---
 
+## 0. 文档优先级（单一事实来源）
+
+当以下文档相互矛盾时，**以此顺序为准**，并立即按铁律 #1 修正靠后者：
+
+1. 代码与配置本身（`pyproject.toml` / `package.json` / `.pre-commit-config.yaml` / 源码）
+2. `docs/official_spec.md`（若本仓存在；当前本仓无此文件）
+3. `AGENTS.md`
+4. `README.md` / `docs/**`
+5. `CHANGELOG.md`
+
+> 判据：**能被机器验证的事实永远优先于自然语言描述。**
+
+---
+
 ## ⚠️ 🤖 Agent 行为契约（自进化协议 · 必须严格遵守）
 
-AI Agent 打开本文件后的 **第一件事** 是执行下面的「🧪 自进化自检清单」，并遵守以下 5 条铁律：
+AI Agent 打开本文件后的**第一件事**是执行下面的「🧪 自进化自检清单」，并遵守以下 5 条铁律：
 
 ### 🔴 6 条自进化铁律
 1. **🔄 同步规则（Synchronize First）**：如果发现项目实际情况（目录结构、依赖版本、技术栈、配置文件名等）与本文件描述 **不一致** → **立即更新本文件**，不要只改代码不改 AGENTS.md。这是最高优先级的规则。
@@ -88,96 +102,34 @@ AI Agent 打开本文件后的 **第一件事** 是执行下面的「🧪 自进
 
 ## 3. 模块边界 & 关键规则（🚫 跨层引用严格禁止）
 
-### 3.1 目录结构 & 职责
-```
-Seedvr2/
-├── api/                 ← FastAPI 入口（只做组装，不写业务逻辑）
-│   ├── main.py          ← create_app() + lifespan（启动时预加载引擎）
-│   ├── clean_launch.py  ← 推荐启动入口（含健康检查 + 环境自检）
-│   └── routes/          ← 路由（实际在 app/integrated_app/routes/，契约见 3.3 节：module 级 router 变量即自动注册）
-├── common/              ← 公共基础设施（config.py / logger.py / exceptions.py）
-│   ├── config.py        ← Pydantic BaseSettings 读 config.yaml（单例）
-│   └── security.py      ← 通用安全工具（CSRF token 生成、密码哈希）
-├── core/                ← 业务逻辑层（services + repositories + workflows）
-│   ├── services/        ← 业务服务（SceneGenerateService / HistoryService）
-│   ├── repositories/    ← 数据访问（HistoryRepoDB / CacheRepo）
-│   └── workflows/       ← 编排多步任务（VR 场景生成 pipeline）
-├── app/integrated_app/engines/  ← 模型引擎层（**实际位置**；单引擎 = SeedVR2 视频/图像超分修复）
-│   ├── seedvr2_engine.py        ← SeedVR2Engine 主类（组合下列 mixin）
-│   ├── _memory_utils.py         ← 显存监控函数、数据变换类、常量、ImageInferenceConfig
-│   ├── _vae_pipeline.py         ← VAE 编解码管线 mixin
-│   ├── _dit_pipeline.py         ← DiT 采样管线 mixin
-│   ├── _video_pipeline.py       ← 视频推理管线 mixin（水印调用点）
-│   └── _image_pipeline.py       ← 图像推理管线 mixin（水印调用点）
-│   （接口契约在同包上一级：app/integrated_app/engine_interface.py 的 3 个 Protocol，见 3.4 节）
-├── model_lib/           ← 第三方模型权重 & 代码（🚫 禁区：AI 不允许自动修改）
-│   ├── diffusion/
-│   └── llm/
-├── security/            ← 安全模块（独立层，不能依赖 core/engines 以外的业务层）
-│   ├── path_guard.py    ← 路径安全校验（防路径穿越，所有文件 IO 必须过 safe_join）
-│   ├── csrf.py          ← CSRF 中间件（SSE 接口 + 表单提交必须校验）
-│   ├── integrity.py     ← SHA-256 文件完整性校验（模型文件 + 输出作品）
-│   └── watermark.py     ← 不可见水印嵌入（所有生成图像必须加水印）
-├── db/                  ← 数据库
-│   └── history.db       ← AioSQLite，存生成历史 + 用户作品元数据
-├── config.yaml          ← 全局配置（**仓库根级、唯一、且已提交 Git**；本仓无 `configs/` 目录，也没有 config.example.yaml 模板）
-├── configs_3b/          ← SeedVR2-3B 的模型架构配置（随第三方权重，属禁区）
-├── configs_7b/          ← SeedVR2-7B 的模型架构配置（随第三方权重，属禁区）
-├── tests/               ← 测试（第 4 节详细说明）
-├── scripts/             ← 辅助脚本（模型下载 / 完整性校验 / DB 迁移 / 备份）
-├── install.bat / start.bat   ← Windows 一键脚本
-├── install.sh  / start.sh    ← Linux/macOS 一键脚本
-├── requirements.txt          ← 生产依赖
-├── requirements-dev.txt      ← 开发依赖（pytest + ruff + mypy + coverage）
-├── requirements-lock.txt     ← 锁定依赖版本（generate_lock.py 生成）
-└── pyproject.toml            ← 项目元数据 + 工具配置
-```
+> 完整目录树、禁区目录表、路由自动发现规则、引擎契约现状已移至 [docs/project/MODULE_MAP.md](docs/project/MODULE_MAP.md)，移出时逐字保留。
 
-### 3.2 禁区目录（禁止 AI 自动修改，必须人工确认）
-| 目录 / 文件 | 原因 | 例外情况 |
-|------------|------|---------|
-| `model_lib/` 整个目录 | 第三方模型权重和研究代码，修改会直接影响生成效果和合规性 | 用户明确要求时，可以只改配置类（模型路径、超参数），不动模型推理代码 |
-| `common/config.py` + 仓库根级 `config.yaml` | 配置结构变动会破坏所有依赖 settings 的代码 | 新增配置项时必须同步更新 `app/integrated_app/config.py` / `config_models.py` 的 Pydantic 模型 + 第 7 节启动命令说明（本仓没有 config.example.yaml 模板，只有根级 `config.yaml`） |
-| `security/` 整个目录 | 安全模块（路径安全、CSRF、完整性、水印），改一个条件判断就可能出合规漏洞 | Bug 修复必须加攻击测试 + 人工 review |
-| `api/main.py` 的 lifespan 回调 | 预加载引擎顺序不能乱，乱了会导致 GPU OOM | 调整预加载顺序必须测试后人工确认 |
-
-### 3.3 路由自动发现 & 注册规则（极重要，AI 必须遵循）
-**新增路由不需要手动 `include_router`**：`app/integrated_app/routes/__init__.py` 的 `auto_discover_routes(app)`（由 `app_server.py` 创建应用时调用）用 `pkgutil.iter_modules` 递归扫描 `routes` 包及其子包，凡模块内有名为 `router` 的属性即自动注册。
-
-注册规则（不遵守则路由不会生效）：
-1. 文件放在 `app/integrated_app/routes/` 下或其子包内（现有子包：`restore/`、`system/`、`ui/`）；**文件名不要求 `_router.py` 后缀**（实际如 `upload.py`、`batch.py`、`task.py`、`health.py`、`gpu.py`）
-2. 必须定义 **module-level** 的 `router = APIRouter(prefix="/api/xxx", tags=["xxx"])`，变量名只能是 `router`，不能叫 `restore_router`
-3. 前缀不能重复：两个模块都写 `prefix="/api/restore"` 肯定冲突
-4. ⚠️ 扫描时 import 失败**只打 `logger.warning`、不阻断启动** → 路由会静默消失（Swagger UI 查不到但服务照常起）。排查顺序：启动日志「自动发现路由: xxx (prefix=...)」的条数 → 「导入路由模块失败」告警 → 最后才怀疑路由代码本身
-
-### 3.4 引擎契约与注册现状（2026-08-27 核实）
-本仓库为**单模型（SeedVR2 超分修复）服务**，不存在多引擎并存：
-
-| 事实 | 实际位置（已核实） |
-|------|------------------|
-| 引擎接口契约 | `app/integrated_app/engine_interface.py` 的 `RestoreEngine` / `BatchRestoreEngine` / `EngineRegistry` 三个 `Protocol`（均 `@runtime_checkable`，不是 ABC） |
-| 唯一引擎实现 | `app/integrated_app/engines/seedvr2_engine.py` 的 `SeedVR2Engine`（mixin 组合，见 3.1 节） |
-| 实际加载方式 | `app/integrated_app/model_manager.py` 直接 `SeedVR2Engine(self.config)` —— 显式构造，不扫描、不注册 |
-| 注册表实现 | `app/integrated_app/model_registry.py` 的 `_ModelRegistry` 实现了 `EngineRegistry` 的 `register` / `get` / `list_engines`，但**全仓找不到任何 `register(...)` 调用点** → 它当前只承载模型状态，不是引擎发现机制 |
-
-> ⚠️ 历史文档里的「engines 自动发现与注册」机制 → **不存在，不得作为工作依据**：
-> `engines/auto_register.py`、`base.py` 的 `AbstractEngineProtocol`、`diffusion_engine/`、`llm_engine/`、`_legacy/` → 均系从家族仓库 TTS_MultiModel（多引擎终态）移植时的残留，已移除。
-> 真要加第二个引擎时不要指望任何自动发现：实现 `RestoreEngine` 协议 → 在 `ModelManager` 内按配置显式选择实例化 → 补 `config.yaml` 的 `model.models.<size>` 条目 → 补测试。
-
----
+**关键规则（保留）**：
+- 跨层引用严格禁止（api/ 只做组装；core/ 不直接依赖 engines/）。
+- 路由自动发现：模块级 `router` 变量即自动注册，文件名不要求 `_router.py` 后缀。
+- 禁区：`model_lib/`、`security/`、`config.yaml` 禁止 AI 自动修改。
 
 ## 4. 测试约定
 
 ### 4.1 测试框架 & 运行命令
 | 类型 | 框架 | 命令 | 覆盖率门槛 |
 |------|------|------|:----------:|
-| 单元测试 | pytest + pytest-asyncio + pytest-cov | `pytest tests/unit -q`（或脚本里 `python -m pytest tests/unit --cov=core --cov=engines --cov-report=term-missing`） | ≥ 65%（CI 强制：`--cov-fail-under=65`） |
+| 单元测试 | pytest + pytest-asyncio + pytest-cov | `pytest tests/unit -q`（或脚本里 `python -m pytest tests/unit --cov=app/integrated_app --cov-report=term-missing`） | ≥ 70%（CI 强制：`--cov-fail-under=70`） |
 | 集成测试 | pytest + TestClient（FastAPI）；用例**扁平放在 `tests/` 根目录**、靠 `@pytest.mark.integration` marker 选中（本仓无按目录分层的集成层） | `pytest tests/ -m integration -q` | 不计入 fail_under，但必须全部通过 |
 | E2E / 浏览器测试 | Playwright + TypeScript；spec 在 `tests/specs/*.spec.ts`，配置 `tests/playwright.config.ts`（chromium / firefox / webkit × desktop / laptop / tablet / mobile 多 project） | **在 `tests/` 目录下**执行 `npx playwright test`（等价 `npm test`；需服务已监听 `http://127.0.0.1:7870`；只想验证用例收集加 `--list`） | 不计入 fail_under，但必须全部通过 |
 | 安全测试 | pytest + 手动攻击用例（路径穿越 / CSRF / SQL 注入） | `pytest tests/security -q` | 必须 100% 通过，CI 中阻断 PR |
 | 性能测试（手动） | pytest-benchmark（可选；当前未接入，参考 `perf/benchmark/`） | `pytest tests/perf -q` | 无强制，仅供参考对比 |
 
-### 4.2 测试命名 & 结构
+### 4.2 覆盖率分阶段路线图（诚实设定，逐步提升）
+
+> 数值必须与 `pyproject.toml` 的 `fail_under` 一致（当前 = **70**）。历史报告中的 65 属旧快照，以其成文时间为准，不做改动。
+
+| 阶段 | 目标 fail_under | 达成条件 | 状态 |
+|---|---|---|---|
+| 当前 | 70 | 已用 `--cov-fail-under=70` 锁定（`pyproject.toml`） | ✅ |
+| M1 | +10 | 补齐 `model_lib/common`、`model_lib/video_vae_v3` 关键模块分支覆盖 | pending |
+
+### 4.3 测试命名 & 结构
 - 目录结构：`tests/`（扁平布局，非 `unit/integration/security` 分层；分层仅通过 marker 区分）
 - 类名：`class Test<被测类>:`（PascalCase，首字母必须 Test）
 - 方法名：`def test_<场景>_<期望结果>_<条件>():`（snake_case，前缀必须 test_）
@@ -333,156 +285,11 @@ Scope 建议：`core` / `security` / `engines` / `routes` / `i18n` / `ci`
 
 ## 11. 常见陷阱 / 注意事项（每条都有 ✅正确 / ❌错误对照）
 
-<!-- 📥 新坑追加模板（AI 踩坑后复制填好追加到表格最后）：
-| # | 坑点标题 | 触发场景 | 现象/报错 | 正确做法 | 首次发现日期 |
-|---|---------|---------|---------|---------|------------|
-| X | 简短标题 | 什么操作会触发 | 具体报错信息或现象 | 正确代码/配置/步骤 | YYYY-MM-DD |
--->
-
-| # | 坑点标题 | 触发场景 | 现象/报错 | 正确做法 | 首次发现日期 |
-|---|---------|---------|---------|---------|------------|
-| 1 | SSE 流式响应回调禁止 async def | 在 `StreamingResponse` 的 generator 里直接 `async def generate()` 并 `await engine.generate()` | Uvicorn 事件循环卡死 → `RuntimeError: async generator ignored StopAsyncIteration`，进度推送卡死 | 用普通函数 `def generate():`，内部 `asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=xx)` 或提前把 chunk 全部收集到 deque 再 yield | 2026-05-10 |
-| 2 | 多个 router 前缀（prefix）不能重复 | 新写的 `scene_router_v2.py` 也用了 `prefix="/scene"`，老的 `scene_router.py` 还在 | FastAPI 启动不报错，但 Swagger UI 路径重复 → 实际调用时返回 404 / 或随机命中一个，排查极难 | 命名前缀必须语义化且唯一：v2 的话用 `prefix="/scene/v2"` 或直接改名替换老的（老的移到 `_deprecated/`） | 2026-05-20 |
-| 3 | 严禁监听 `host="0.0.0.0"` | 为了局域网访问方便，直接在代码或启动脚本写 `uvicorn.run(app, host="0.0.0.0", port=7870)` | 所有接口直接暴露公网（如果机器公网 IP）→ 未授权用户可以直接调用生成接口消耗 GPU / 上传任意文件（路径穿越风险） | 永远 `host="127.0.0.1"`，局域网访问用 `ssh -L 7870:127.0.0.1:7870 user@server` 端口转发，或服务器上套 Nginx（带 Basic Auth + IP 白名单） | 2026-06-01 |
-| 4 | 依赖注入用 `Depends(get_settings)`，不要直接 `from common.config import settings` | 在路由函数里直接读全局 settings | 单测 mock 配置时极其痛苦（要 import 后 patch 变量），且容易出现「模块导入时 settings 还没初始化」的竞态 | 所有路由 / service 一律用 FastAPI Depends：`async def route(settings: Settings = Depends(get_settings))`，测试时 override_dependency 一行就能替换 | 2026-06-15 |
-| 5 | 修改核心模块后忘记重新生成完整性清单 | 改动 `app_server.py` / `model_manager.py` / `security/` 下文件 / `engines/seedvr2_engine.py` 等被完整性自检覆盖的核心模块 | 启动时报 `[SECURITY WARNING] 核心模块完整性校验失败: xxx.py`，期望/实际 SHA256 不一致，误以为被篡改 | 这是合法代码改动导致的清单过期，改完核心模块后必须运行 `python scripts/generate_integrity_manifest.py` 重新生成 `app/integrated_app/security/integrity_manifest.json`（见 SOP-4） | 2026-08-13 |
-| 6 | `app/models` 常规包遮蔽项目根 `model_lib` 命名空间包 | 应用经 `python app/clean_launch.py` 启动（`app/` 进入 sys.path），同时存在项目根 `model_lib/`（无 `__init__.py`，命名空间包）与 `app/models/`（有 `__init__.py`，常规包） | 视频修复时报 `ModuleNotFoundError: No module named 'model_lib.video_vae_v3'`（`import model_lib` 解析到了 `app/models/`），但图片修复正常 | 给项目根 `model_lib/` 补 `__init__.py` 使其成为常规包，确保在 sys.path 首位（项目根）优先解析；注意 `app/models/` 仅被 `perf/benchmark/test_suite.py` 以全限定名 `app.models.*` 引用 | 2026-08-13 |
-| 7 | CSP 缺 `media-src blob:` 导致 `<video>` 无法加载 blob 源 | 前端用 `<video src="blob:...">` 读取视频宽高（两倍模式自动填分辨率/预览） | 控制台报 `MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check`，`videoWidth` 恒为 0，两倍检测失效（图片正常，因为 `img-src` 已含 blob:） | 在 `templates/base.html` 的 Content-Security-Policy 加 `media-src 'self' blob:`；`<video>`/`<audio>` 回退到 `default-src`，不会继承 `img-src` 的 blob: | 2026-08-13 |
-| 8 | `api.post` 硬编码 JSON 头导致 FormData 提交被 422 | `startBatch` 调用 `SeedVR2.api.post('/api/restore/batch', params)` 传 FormData，但 `api.post` 在 `static/js/app.js` 硬编码 `'Content-Type': 'application/json'` + `JSON.stringify(data)` | 后端收到空 body → `parse_unified_params`（Depends）所有 Form 字段缺失 → FastAPI 422 Unprocessable Entity；浏览器控制台看到 `POST /api/restore/batch 422` | `api.post` 自动检测 `data instanceof FormData`，是 FormData 时移除 `Content-Type: application/json` 头并直接传 `body: data`（让浏览器自动加 boundary）。任何新增 `api.post(..., formData)` 调用都不需要改 | 2026-08-13 |
-| 9 | 模型下载脚本落盘路径与 config 引用不一致 | 用 `scripts/download_model.py`（旧版）下载权重 | 旧脚本把文件下到 `model/SeedVR2-3B/` 子目录，但 `model_manager.check_model_exists` / `seedvr2_engine.py` 用 `os.path.join(pretrained_dir, checkpoint_name)` 只在 `model/` **根目录**找 `seedvr2_ema_3b_fp16.safetensors` 等 → 报「模型文件未找到」/ `FileNotFoundError` | 权重文件**必须直接放 `model/` 根目录**，文件名与 `config.yaml` 的 `model.models.<size>` 引用完全一致（`seedvr2_ema_*_fp16/fp8.safetensors`、`ema_vae_fp16.safetensors`、`pos_emb.pt`、`neg_emb.pt`）；下载脚本已改为 `hf_hub_download` 逐文件写入根目录（幂等跳过） | 2026-08-14 |
-| 10 | 新版 nvidia-smi 输出格式变化导致 CUDA 版本解析偏移 | 新版驱动（如 NVIDIA-SMI 610.x / CUDA UMD 13.x）的 `nvidia-smi` 头部从 `CUDA Version: 13.2` 变为 `CUDA UMD Version: 13.3` | 按旧格式 `tokens=9` 提取到的是 `Version:` 而非版本号 → `install.bat` 自动探测 CUDA 版本失败 | 批处理里先取 `tokens=9` 判断是否含 `Version` 字样，若命中再用 `tokens=10` 重取版本号；版本号落入 13.x → 选 `cu132` index | 2026-08-14 |
-| 11 | Blackwell(sm_120) 上 PyTorch SDPA 的 FLASH_ATTENTION/cuDNN 内核不可用 | RTX 50 系（如 5070 Ti）且 `attention_mode: sdpa` 时实测 `F.scaled_dot_product_attention`，或想装 flash-attn 之前排查 | SDPA 调用在强制 flash/cudnn 后端时报 `RuntimeError: No available kernel. Aborting execution.`，只有 `EFFICIENT_ATTENTION`/`MATH` 可用 → 当前 sdpa 实际走的是 memory-efficient 后端，并未用上 flash | Blackwell 仅支持预编译 SASS（无 PTX JIT），torch 官方 SDPA flash 内核未覆盖 sm_120。想真正用 flash 需装 `flash-attn`（若有匹配轮子）或 `sageattn`，并用 `torch.compile`(inductor) 加速；估算提速收益前先确认瓶颈是注意力还是显存/CPU 换页（12GB 下 `blocks_to_swap`/`fp8` 更关键） | 2026-08-16 |
-| 12 | torch.compile 首次推理慢且重启后重复编译（inductor 缓存未持久化） | 开启 `torch_compile.enabled: true` 后跑推理 | 首次推理 ~70-110s（含编译），且**重启服务后仍要 ~100s 重新编译**；`~/.cache/torch/inductor` 目录为空，说明编译产物没落盘 | 启用 `torch.compile` 前**必须**在启动入口（`app/clean_launch.py`）设 `os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", <项目根>/.torch_cache/inductor)` 让编译产物持久化，否则每次重启都重编译。实测持久化后重启首次从 ~113s 降到 ~76s（仍非稳态 ~30s，说明部分图仍会重编译）。注意 `.torch_cache/` 已加 .gitignore | 2026-08-16 |
-| 13 | 外部 Google Fonts 同步样式表阻塞 DOMContentLoaded，导致整页 JS 初始化失效 | `base.html` 里 `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?...">` 同步加载；弱网/无外网环境（或被代理/镜像重定向到 `gstatic.font.im` 被 CSP 拦截） | `document.readyState` 长期卡在 `loading`，DOMContentLoaded 不触发 → 页面内容可见但**所有交互无效**（如「高级设置」点不开、上传无响应），且无任何 JS 报错，极难排查 | 字体样式改为**异步加载**：`<link ... media="print" onload="this.media='all'">` + `<noscript>` 兜底；外部字体只是装饰，不应阻塞页面初始化（`base.html` 已改，2026-08-16） | 2026-08-16 |
-| 16 | 失效/陈旧的 csrf_token cookie 被永久 403 自锁 | 用户浏览器里残留一个**签名失效的 `csrf_token` cookie**（如密钥曾变动、非会话 cookie 长期残留、跨环境拷贝）。原中间件只在「cookie 缺失」时才重种、有 cookie 就跳过 | 首次上传 `POST /api/restore` 返回「`没有权限执行此操作`」（`error.403`），后端日志 `CSRF 验证失败: POST /api/restore`；关键是**反复刷新/重启都不恢复**，因为中间件见「有 cookie」就不再补发，坏 cookie 永远淘汰不掉 | 服务端：中间件对安全方法响应与 403 失败响应**一律补发有效 token**（`_set_csrf_cookie`，判断改为 `_has_valid_cookie` 而不是「cookie 不存在」），坏 cookie 会被自动替换自愈；前端：非安全请求统一走 `csrfSafeFetch(url,opts)`，403 时自动重试一次（解读新版 `csrf_token` 后再发）。改动 `csrf.py` 后需 `python scripts/generate_integrity_manifest.py`（SOP-4） | 2026-08-17 |
-| 17 | 长视频/长批次任务被「卡死清理」误杀（进度清零、GPU 白跑） | 视频/图片的 `progress_callback`（在 `infer_video/image` 的 `asyncio.to_thread` 中同步执行）只调 `common.get_task_cache().update(...)`——**只写内存缓存、不写 DB**；`tasks.updated_at` 仅由异步 `update_task_state`（唯一白名单字段 `status/progress/output_path/error_message` 写 DB）在任务启动/结束等里程碑刷新 | 长视频处理中 `tasks.updated_at` 停在任务启动时刻，`cleanup_stale_tasks`（每 5 分钟）按 DB `updated_at` 判卡死 → 一个**正在正常推理的**任务被标记 failed、进度清零；但底层推理协程仍跑完，白白浪费 GPU 算力。日志报错「清理卡死任务 … 超过 30 分钟」，随后日志却显示 `处理段 30/39`、VAE/扩散仍在跑 | 清理器不能只信 DB `updated_at`：给 `cleanup_stale_tasks` 增加 `task_queue` 参数，跳过 `task_queue.current_task_id()`（当前正被 worker 执行）的任务——processing 里唯一合法的是运行中的那个，其余才真卡死。改完后 `app_server.py` 的 `_periodic_stale_cleanup` 调用处传入 `app.state.task_queue` | 2026-08-17 |
-| 18 | 用 PowerShell `Set-Content`/`Out-File` 重写含中文的 UTF-8 模板会破坏编码，Jinja 渲染整站崩 | 在 PowerShell 里用 `(Get-Content -Raw) ... | Set-Content path` （PS 5.1 默认 **ANSI/GBK**）重写 `templates/*.html`（含中文注释/字面量） | 文件变成 UTF-8 与 GBK 混合字节，`Jinja/open()` 用 UTF-8 读取报 `'utf-8' codec can't decode bytes in position ~772`，FastAPI 全局 `ValueError` handler 把**所有继承 base.html 的页面**（`/`、`/history` 等）返回 `422 Unprocessable Entity`，且整页 JS 初始化失效（表现为"视频/上传/按钮都点不动"） | **禁止**用 PowerShell 重定向/Set-Content 写含中文的模板；一律用 `Edit`/`Write` 工具或 `python -c` 显式 `encoding='utf-8'` 写回。若已损坏：模板大多仍是原始 UTF-8 字节，可用 `data.decode('gbk', errors='replace').encode('gbk', errors='ignore').decode('utf-8', errors='replace')` 还原，再按语义补回残留坏字，最后 `open(p,'w',encoding='utf-8',newline='\n')` 写回并做 jinja 渲染冒烟 + 全页 `\ufffd` 检查 | 2026-08-18 |
-| 19 | CI 中 `--ignore-snapshots` 导致视觉回归门禁虚设 | `e2e.yml` 中 Playwright 命令带 `--ignore-snapshots` 跳过视觉断言，因 baseline 是 win32 生成、CI 跑 Linux | CI 中视觉回归测试形同虚设：即使 UI 视觉完全崩坏也不会失败，投入最大的 E2E 层在 CI 中产出最低；且掩盖了跨平台渲染差异问题 | 移除 `--ignore-snapshots`，改用 `maxDiffPixelRatio: 0.01` 容忍跨平台渲染差异（已在 spec 代码中配置）；首次 CI 运行自动生成 baseline，后续运行比较。如需重新生成 baseline 使用 `update-baselines.yml` workflow（手动触发） | 2026-08-19 |
-
----
+> 完整内容已移至 [docs/project/KNOWN_ISSUES.md](docs/project/KNOWN_ISSUES.md)，移出时逐字保留；核心纪律见 §0/§3 硬约束。
 
 ## 12. 典型 AI 开发场景 SOP（照着做，少踩坑）
 
-<!-- 📥 新SOP追加模板（AI 完成新类型任务后复制填好追加到这里）：
-#### SOP-X: [场景名称]
-**适用条件**：什么情况下走这个流程
-**步骤**：
-1. 第一步...
-2. 第二步...
-3. 第三步...
-**验证**：怎么确认操作成功
-**关联文件**：
-- path/to/file1.py
-- path/to/file2.py
--->
-
-#### SOP-1: 新增一个路由模块（遵循 3.3 节的自动发现契约）
-1. 在 `app/integrated_app/routes/` 下（或其子包 `restore/`、`system/`、`ui/`）新建文件；文件名随意（现有如 `upload.py`、`batch.py`、`health.py`），**唯一硬要求是 module 级有个叫 `router` 的属性**
-2. 文件开头：
-   ```python
-   from fastapi import APIRouter, Depends
-
-   router = APIRouter(prefix="/api/xxx", tags=["xxx"])  # 变量名必须是 router！
-
-   @router.get("/list")
-   async def list_xxx():
-       return {"data": []}
-   ```
-3. 路由文件完成后，**不需要** 在任何地方手动 `include_router`：`auto_discover_routes(app)` 会递归扫描并注册
-4. 启动 `python app/clean_launch.py` → 打开 `/docs` 验证新路由是否在 Swagger UI 中；**如果没出现，先翻启动日志找「导入路由模块失败」告警**（扫描器会吞掉 import 异常、不阻断启动）
-5. CSRF 与登录保护是**中间件层统一处理**的：`app/integrated_app/middleware/csrf.py`（非安全方法校验 `X-CSRF-Token`）与 `app/integrated_app/middleware/basic_auth.py`；本仓**没有** `require_csrf_token` / `require_bearer_token` 这类 FastAPI 依赖，路由内不要写 `Depends(require_*)`
-
-#### SOP-2: 新增一种模型引擎实现（本仓当前为单引擎，事实见 3.4 节）
-1. 在 `app/integrated_app/engines/` 下新建模块（现有布局是「一个主类 + 若干 mixin」，不要求建子包）
-2. 实现 `app/integrated_app/engine_interface.py` 的 `RestoreEngine` 协议（`Protocol`，不是 ABC，无需显式继承）：
-   ```python
-   # 必须实现：is_loaded / get_model_info / load_model / unload_model
-   #           infer_image / infer_video / estimate_vram_required
-   # 需要批量能力则再实现 BatchRestoreEngine.infer_batch
-   class NewEngine:  # 不需要写括号继承
-       async def infer_image(self, image_path: str, output_dir: str, **kwargs) -> RestoreResult: ...
-   ```
-3. **不存在任何自动发现/自动注册**（历史文档写的 engines 目录下 auto_register.py → 系 TTS 移植残留，本仓从未实现）：必须在 `app/integrated_app/model_manager.py` 里按 `config.yaml` 的模型选择显式实例化（现网只有一处 `SeedVR2Engine(self.config)`）；`_ModelRegistry.register(name, cls)` 是为此预留的接口，但当前**全仓无调用点**，只注册不取用等于没生效
-4. 补 `config.yaml` 的 `model.models.<size>` 条目（含 `sha256_*` 字段，见 9.3 节）后重启，用 `/api/system` 下的健康与模型状态端点确认引擎已加载
-5. **安全要求**：输出图像/视频必须过水印。现网水印是在**引擎管线内**调用的（`app/integrated_app/engines/_image_pipeline.py` 与 `_video_pipeline.py` 中的 `embed_watermark`），不是 service 层 → 新引擎要在同样位置接上，不能跳过
-
-#### SOP-3: 修改 config.yaml 新增配置项
-1. 先在 `app/integrated_app/config_models.py` 的 Pydantic 模型加字段（含默认值 + type annotation；`AppConfig` 及其子模型即 `config.yaml` 的结构契约）
-2. 在仓库根级 `config.yaml` 的对应段落加同一项并写好注释说明（本仓没有 config.example.yaml 模板，`config.yaml` 自身已提交 Git，见 3.1 节）
-3. 更新本文件第 7 节启动命令或第 3 节模块边界描述（如果新增配置影响启动流程或模块边界）
-4. 执行 `python -c "from app.integrated_app.config import get_app_config; print(get_app_config().model_dump())"` 验证新字段被正确加载（`get_app_config()` 返回校验后的 `AppConfig`）
-
-#### SOP-4: 修改核心模块后重新生成完整性清单（改完必做）
-**适用条件**：改动任何被启动自检覆盖的核心模块后，必须重新生成清单，否则下次启动会报「完整性校验失败」误报。
-**被覆盖的核心模块**（清单见 `app/integrated_app/security/integrity_manifest.json`，自检列表见 `integrity_selfcheck.py` 的 `_CORE_MODULES`）：
-- `app_server.py` / `config.py` / `model_manager.py`
-- `security/` 下：`path_guard.py` / `integrity_check.py` / `watermark.py` / `integrity_selfcheck.py`
-- `middleware/` 下：`csrf.py` / `basic_auth.py`
-- `engines/seedvr2_engine.py`
-
-**步骤**：
-1. 完成上述任一核心模块的代码修改（改完逻辑后、提交前）
-2. 运行 `python scripts/generate_integrity_manifest.py` 重新生成清单
-3. 确认输出显示所有模块 `[OK]` 且生成路径为 `app/integrated_app/security/integrity_manifest.json`
-
-**验证**：启动前先跑一次自检确认通过：
-```python
-python -c "from app.integrated_app.security.integrity_selfcheck import run_startup_selfcheck; print(run_startup_selfcheck())"
-# 期望输出 failed=0，failed_files=[]
-```
-**关联文件**：
-- scripts/generate_integrity_manifest.py
-- app/integrated_app/security/integrity_selfcheck.py
-- app/integrated_app/security/integrity_manifest.json
-
-#### SOP-5: 安装 Triton 并启用 torch.compile 加速（Blackwell/Windows）
-**适用条件**：在 RTX 50 系（Blackwell sm_120）+ Windows 上，想给模型推理开 torch.compile(inductor) 提速。
-**背景**：Windows 上 torch 不自带 triton，必须装社区版 `triton-windows`；装上后 inductor 才能编译自定义内核。
-**步骤**：
-1. 确认环境：`python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.get_device_capability(0))"`（Blackwell 需 triton>=3.3 / torch>=2.7 / CUDA>=12.8）
-2. 安装匹配的 triton-windows：`pip install triton-windows`（挑选与 torch 版本兼容的版本，如 torch 2.13 用 3.7.x）
-3. 冒烟验证：对一个小函数 `@torch.compile` 跑一次 forward，确认 inductor 在 sm_120 上能编译通过、无 `No available kernel`
-4. 接入项目：`config.yaml` → `inference.torch_compile.enabled` 改为 `true`（`backend: inductor`）。引擎代码已有 try/except 回退，编译失败会自动回到未编译，不会崩
-5. 启动 `app/clean_launch.py`，确认服务正常启动、模型加载无误；首次推理会触发 DiT/VAE 编译（较慢属正常）
-**注意**：torch.compile 只消除了算子融合/调度开销，**不能解决显存不足导致的 CPU 换页**（12GB 下瓶颈更多来自 `blocks_to_swap` / `fp8_enabled`）。提速收益要在确认瓶颈不是换页后才明显。
-**关联文件**：
-- config.yaml（`inference.torch_compile` 段）
-- app/integrated_app/engines/seedvr2_engine.py（DiT/VAE 编译应用点）
-
-#### SOP-6: 修复工作台页面 v2 重构（结构布局 + 对比查看器升级）
-**适用条件**：修改 `templates/restore.html` 结构布局、`static/js/app.js` 的对比查看器（CompareSlider）、或新增 `sv2-*` 样式时，必须遵守本 SOP，否则会静默破坏既有功能。
-**背景**：2026-08-16 将修复页重构为「工作台」布局（页头单行化 + 一体化画布工具条 + 画布舞台 + 参数侧栏），对比查看器升级为真实放大倍率语义（1:1 = 原像素 100%）。
-**硬性约束（ID 契约）**：
-- `app.js` 与 restore.html 内联脚本**硬编码大量 id**：`progressCard/resultCard/compareCard/compareViewport/compareContainer/compareSlider/compareBefore/compareAfterImg/resultVideo/btnDownload/canvasStateLabel/btnCanvas*/restoreFileInfo/restoreFileInput/restoreUploadZone/imagePreview/batchProgressCard/folderPath/btnScanFolder/btnStartBatch/btnBrowseFolder/folderScanResults` 及全部参数 id（`ditModel/resolution/doubleResToggle/vaeModel/blocksToSwap/maxResolution/colorCorrection/batchSize/encodeTileSize/encodeTileOverlap/decodeTileSize/decodeTileOverlap/btnVramRecommend/btnStartRestore/btnResetRestore/advParams/btnToggleParams`）——**改结构只能换 class，不能改 id/name**。
-- `collectParams()` 遍历 `#paramsSidebar` 内 input/select（跳过 `#advParams`），再遍历 `#advParams`；`_collectRestoreFormValues` 依赖 `#paramsSidebar [name]`。所有参数字段必须留在侧栏内，含 hidden 字段（`seed/attention_mode/dit_cache_model/vae_cache_model/temporal_overlap/prepend_frames/input_noise_scale/latent_noise_scale/dit_device/offload_device` 等）。
-- 上传区依赖 `setupUploadZone(zone, fileInput, {onFileSelected, onFileCleared})` 与内联脚本的 `restoreFileInfo/imagePreview/imagePreviewContainer/workflowGuide/previewArea` 显示切换，保留 `sv-dropzone-*` 类名可白嫖既有样式。
-**SV2 结构**：`.sv2-workbench`（列布局）> `.sv2-header`（标题+`.sv2-mode-seg` 分段控件）+ `.sv2-body`（grid: 主区 + 324px 侧栏）> `.sv2-main`（批量工具条 `#batchToolbar` + 一体化工具条 `#canvasToolbar` + 画布舞台 `#previewArea[data-mode-pane=single]` + 批量面板 `[data-mode-pane=batch]`）。模式切换仍走 `switchMode()`（toggle `.sv-mode-tab` active + `[data-mode-pane].active` + batchToolbar display）。
-**对比查看器 v2（CompareSlider）**：构造签名不变（`initCompareSlider(containerId, sliderId, afterId)`）；状态改为 `mag`（1=适配）/`oneToOneMag`/`tx,ty` 平移；transform = `translate(tx,ty) scale(mag)` 且 **transform-origin:0 0**（`.sv2-workbench .sv-compare-container`）；分割线位置用 `offsetWidth/Height` 而非 getBoundingClientRect（有 transform 时会算错）；滚轮以光标为中心缩放、拖拽在放大态平移、双击 适配↔1:1、键盘固定 60px 步长平移；HUD 元素 `#compareHud` 与 `#compareZoomLabel` 显示真实倍率。**新增 id**（`tbFileName/plainViewer/plainImg/compareHud/btnCanvasClear/btnCanvasReplace/btnCanvasCompare/btnRestoreSidebar/sv2Body`）在 `showRestoreResult`/`resetRestore`/内联 `bindCanvasToolbar` 中同步维护。
-**验证命令**：
-```bash
-node --check app/integrated_app/static/js/app.js
-# 模板全量渲染冒烟：
-python - <<'EOF'
-import json; from jinja2 import Environment, FileSystemLoader
-loc=json.load(open('app/integrated_app/locales/zh.json',encoding='utf-8'))
-env=Environment(loader=FileSystemLoader('app/integrated_app/templates'))
-env.globals['t']=lambda k,**kw: loc.get(k,k); env.globals['current_locale']='zh'
-html=env.get_template('restore.html').render(); print(len(html))
-EOF
-```
-**注意**：SV2 样式全部追加在 `style.css` 末尾并派生自 `--sv-*` 令牌（明暗主题自动适配，勿硬编码色值）；对比查看器改造后**不要**再用 `btnCanvasZoom`（已删除），缩放走 `btnCompareZoomIn/Out`。
-**2026-08-16 增量（预览查看器 / 放大镜 / 右键平移）**：
-- 上传后图片预览支持缩放/拖动/双击适配/放大镜：`PreviewViewer` 类（app.js，工厂 `initPreviewViewer('previewStage','previewImgWrap','imagePreview')`，`destroyPreviewViewer()` 清理），结构在 `#imagePreviewContainer` 内（`.sv2-preview-stage` > `.sv2-preview-img` > `#imagePreview`）。
-- 放大镜：`#btnMagnifier` 工具条按钮（预览/结果共用，按当前阶段路由到 PreviewViewer 或 CompareSlider 的 `setMagnifier(on)`）；镜片 `.sv2-magnifier`（`#previewMagnifier`/`#compareMagnifier`）内 `.mg-before`/`.mg-after` 两层，经 `setLoupeLayer()` 按「主视图当前倍率 ×2」渲染背景，对比模式下镜片内也保持前后分割（clip-path 跟随 `position`）。
-- 平移交互：CompareSlider「左键」承担——未放大时拖分割线、放大后拖平移；预览无分割线，左键平移；右键不拦截（`e.button !== 0` 直接 return），避免与浏览器/鼠标手势冲突（2026-08-16 由「右键平移」按用户反馈改为「左键平移」）。
-- 新增导出：`initPreviewViewer/destroyPreviewViewer/getActiveCompareSlider/getActivePreviewViewer`；`initCompareSlider` 现会记录实例到模块变量 `activeCompareSlider`。
-**2026-08-16 增量（体验增强 ×4）**：
-- 完成/失败反馈：`showRestoreResult(taskId, taskType, meta)` 新增 meta.elapsedSec（SSE completed 时由本地 `Date.now()-startTime` 传入），工具条显示「耗时 XX」；新增 `showRestoreError(msg)`——失败时结果区显示错误卡 `#errorCard` + `#btnRetry`，重试走内联注入的 `window.__retryRestore = startRestore`（文件与参数不变直接重跑）。
-- 参数方案预设：侧栏顶部 `#presetSelect` + `#btnPresetSave/#btnPresetDelete`，复用内联 `_collectRestoreFormValues/_applyRestoreFormValues`（注意应用后需手动 `syncResolutionUI()` 同步两倍模式联动），存 localStorage `sv_restore_presets`。
-- 批量拖拽文件夹：`#restoreUploadZone` 的 **capture 阶段** drop 监听检测 `webkitGetAsEntry().isDirectory`，命中则 `stopImmediatePropagation` 阻断单文件流程 → `switchMode('batch')` + `openDirBrowser` 弹目录选择（浏览器安全限制拿不到拖入文件夹的绝对路径，只能引导选择）。
-- 记住查看偏好：localStorage `sv_view_prefs` = {dir, magnifier, compare}；CompareSlider.setMode/setMagnifier、PreviewViewer.setMagnifier、内联对比模式切换均写入；`showRestoreResult`（方向/放大镜/对比模式）与预览加载（放大镜）时恢复。
-
----
+> 完整 SOP 已移至 [docs/project/AI_DEV_SOPS.md](docs/project/AI_DEV_SOPS.md)，移出时逐字保留；核心 SOP 一览：SOP-1 新增引擎 / SOP-2 调试 / SOP-3 发布。
 
 ## 13. API 响应规范（保持所有路由一致）
 
@@ -514,7 +321,7 @@ if scene_id not in db:
 - 触发：push 到 `main` / `release/*`，以及所有 PR
 - Jobs：
   1. `lint-and-typecheck`：`ruff check .` + `mypy api/ common/ core/ engines/ security/`
-  2. `unit-tests`：依赖 lint 通过后，`pytest tests/unit --cov-fail-under=65`
+  2. `unit-tests`：依赖 lint 通过后，`pytest tests/unit --cov-fail-under=70`
   3. `security-tests`：`pytest tests/security -v`（100% 通过要求）
   4. E2E 不挂在 ci.yml 上 → 由独立工作流 `e2e.yml` 跑矩阵：`cd tests && npx playwright test --project=<project>`（见第 4.1 节；视觉回归 baseline 用 `update-baselines.yml` 手动触发重新生成）
 
@@ -548,6 +355,7 @@ if scene_id not in db:
 | v1.13 | 2026-08-16 | 高级设置无法打开/展开区被压缩（二轮，Playwright 实测定位） | ① 根因一：`base.html` Google Fonts 样式表**同步阻塞 DOMContentLoaded**（弱网/被 CSP 拦截时 `readyState` 长期 `loading`）→ 页面内容可见但内联脚本（含高级设置点击）从未初始化；修复为 `media="print" onload="this.media='all'"` 异步加载 + noscript 兜底，新增陷阱 #13；② 根因二：旧规则 `.sv-param-sidebar .sv-advanced-params.open{flex-shrink:1;min-height:0}`（specificity 0,2,0）把展开后的 advParams 在 flex 容器里压缩到 12px，且 `overflow-y:visible` 与旧 `overflow-x:hidden` 混用被浏览器强制计算为 `auto`；修复为 `.sv2-sidebar .sv2-sidebar-scroll .sv-advanced-params.open{flex-shrink:0;min-height:auto;max-height:none;overflow:visible}`（0,3,0）并去掉 700px 展开限高，交由外层滚动容器统一滚动；③ 用 `tests/` Playwright 写临时诊断脚本（`_adv_check*.js`）实测：修复前 readyState=loading/advOpen=false/adv h=12px → 修复后 complete/advOpen=true/adv h=1276px/外层可滚，截图复查通过 | v1.0.0  | — |
 
 | v1.25 | 2026-08-27 | **家族规范完整性审计（Phase B · B4）：自进化协议打补丁（第 6 条铁律 + 修订表已校验列）** | ① 新增第 6 条铁律「证据绑定（Evidence Binding）」：可执行路径必须当时可验证存在、未实现项须显式标注、禁止虚构 CI 门禁；② 自检清单追加两项：路径真实存在校验（跑 `python scripts/check_spec_refs.py`）与 pre-commit 双向一致校验；③ 修订记录表增加「已校验」列，历史行统一填 `—`（未校验），新条目须填 `✓ (check_spec_refs)` 或 `✗`；④ 本仓新增 `scripts/check_spec_refs.py` 家族审计 wrapper 与 `.github/workflows/docs-consistency.yml`（本地/含审计器环境强校验，纯 CI 环境找不到审计器时降级跳过保持绿）。本行即首个填写「已校验」的条目 | v1.0.0| ✓ (check_spec_refs) |
+| v1.26 | 2026-08-27 | **家族规范治理 Phase C/D/E 落地（一致性·补齐·账本）** | C2 合规文档统一命名；C0 未入库 docs 链接标注；D1 §0 仲裁节；D2 docs/adr/ 架构决策记录；D3 FILEMAP+同步脚本；D4 禁区章节；D5 .github 治理层补齐；D6 许可证台账（model_lib 矩阵）；D9 覆盖率路线图（65→70 纠偏，与 pyproject.toml 一致）；E3 AGENTS 体量拆分 78.6KB→47.0KB；E4 迁移报告。以上各项均只更正与事实不符的表述，未新增任何未实现的承诺 | v1.0.0 | ✓ (check_spec_refs) |
 
 <!-- 🔄 下次更新 AGENTS.md 时，在上面表格末尾追加新一行，不要删除历史记录 -->
 | v1.14 | 2026-08-17 | 测试体系审计修复：门禁虚设/marker 失效/零覆盖模块/文档漂移同步 | ① e2e.yml：移除 `--update-snapshots` bootstrap（视觉回归改为 `--ignore-snapshots`，本地 win32 基线强制）+ ci.yml 删除空转的 `-m "not integration"`；② T2：9 个 TestClient 集成文件打标 `pytest.mark.integration`（test_api/schema/history_htmx/settings_routes/sse_integration/ui_routes + conftest）；③ T5：同步 AGENTS.md §4 实际测试布局（扁平 tests/ 非 unit/integration 分层）、marker 真实使用情况（integration/benchmark 注册 + 零使用 markers 说明）、缺失依赖说明；新增陷阱 #14（视觉门禁虚设）+ #15（marker 配置与执行策略脱节），CI/CD 章节注释修正为单 OS 触发与 pytest-cov 覆盖；版本递增 v1.14 | v1.0.0  | — |
