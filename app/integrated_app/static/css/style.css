@@ -8592,7 +8592,7 @@ input[type="number"].sv-form-control::-webkit-outer-spin-button {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 32px;
+    min-height: 44px;
     padding: 0 11px;
     border-radius: 9px;
     border: 1px solid var(--sv-border);
@@ -8609,7 +8609,7 @@ input[type="number"].sv-form-control::-webkit-outer-spin-button {
 .sv2-tb-btn:hover:not(:disabled) { color: var(--sv-text-primary); border-color: var(--sv-border-hover); background: var(--sv-surface-2); }
 .sv2-tb-btn.active { color: var(--sv-primary); background: var(--sv-primary-light); border-color: var(--sv-primary); }
 .sv2-tb-btn[disabled] { opacity: 0.6; pointer-events: none; }
-.sv2-tb-btn.sv2-ico { padding: 0; width: 32px; justify-content: center; }
+.sv2-tb-btn.sv2-ico { padding: 0; min-width: 44px; min-height: 44px; justify-content: center; }
 .sv2-tb-btn.sv2-primary { background: var(--sv-primary); color: #fff; border-color: transparent; }
 .sv2-tb-btn.sv2-primary:hover:not(:disabled) { filter: brightness(1.08); }
 .sv2-tb-btn.sv2-dl { color: var(--sv-text-primary); }
@@ -8959,8 +8959,8 @@ html[data-theme] .sv2-sidebar {
     gap: 6px;
     margin-bottom: 4px;
 }
-.sv2-preset-select { flex: 1; min-width: 0; height: 34px; font-size: 12.5px; }
-.sv2-presets .sv2-tb-btn { height: 34px; }
+.sv2-preset-select { flex: 1; min-width: 0; min-height: 44px; font-size: 12.5px; }
+.sv2-presets .sv2-tb-btn { min-height: 44px; }
 
 /* 结果 meta（工具条内，如耗时） */
 .sv2-meta {
