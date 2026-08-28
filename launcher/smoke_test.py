@@ -4,6 +4,7 @@
 经应用 API 跑一次真实修复：健康检查 → 上传内置测试图 → 轮询任务 → 校验输出。
 仅用 stdlib urllib 构造 multipart 上传，不引入 requests 依赖。
 """
+
 from __future__ import annotations
 
 import json
@@ -23,14 +24,10 @@ def build_multipart(filename: str, filedata: bytes, extra_fields: dict | None = 
     boundary = f"----seedvr2smoke{uuid.uuid4().hex}"
     parts: list[bytes] = []
     for k, v in (extra_fields or {}).items():
-        parts.append(
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
-        )
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode())
     parts.append(
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
-        f"filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n".encode()
-        + filedata
-        + b"\r\n"
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; '
+        f'filename="{filename}"\r\nContent-Type: application/octet-stream\r\n\r\n'.encode() + filedata + b"\r\n"
     )
     parts.append(f"--{boundary}--\r\n".encode())
     body = b"".join(parts)

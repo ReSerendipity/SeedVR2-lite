@@ -4,6 +4,7 @@
 将安装/初始化步骤的完成状态写入 {install}/.setup_state.json，
 实现失败后重试/重启的断点续装（不重复下载已装部分）。
 """
+
 from __future__ import annotations
 
 import json
@@ -12,10 +13,10 @@ from pathlib import Path
 
 DEFAULT_STATE: dict = {
     "version": "1.0.0",
-    "torch_installed": False,   # torch 家族已安装
-    "torch_verified": False,    # torch 安装校验通过
+    "torch_installed": False,  # torch 家族已安装
+    "torch_verified": False,  # torch 安装校验通过
     "smoke_test_passed": False,  # 冒烟测试通过
-    "python_env_id": None,       # 用户选择的运行环境（.venv / system / winpython）
+    "python_env_id": None,  # 用户选择的运行环境（.venv / system / winpython）
 }
 
 _LOCK = threading.Lock()

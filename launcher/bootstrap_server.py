@@ -16,6 +16,7 @@
   POST /api/app/start             -> 拉起应用（clean_launch.py）
   POST /api/app/open              -> 用浏览器打开应用地址
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -65,7 +66,7 @@ class Router:
                 return 200, idx.read_bytes(), "text/html; charset=utf-8"
             return 404, b'{"error":"index.html missing"}', "application/json; charset=utf-8"
         if parsed.startswith("/static/"):
-            rel = parsed[len("/static/"):]
+            rel = parsed[len("/static/") :]
             fp = (self.static_dir / rel).resolve()
             if str(fp).startswith(str(self.static_dir.resolve())) and fp.exists():
                 ctype = "text/css; charset=utf-8" if fp.suffix == ".css" else "application/javascript; charset=utf-8"
@@ -83,10 +84,20 @@ class Router:
                 result = {"ok": True}
             return 200, json.dumps(result, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8"
         except Exception as exc:
-            return 500, json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8"
+            return (
+                500,
+                json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"),
+                "application/json; charset=utf-8",
+            )
 
-    def register_api(self, install_dir: Path, model_dir: Path,
-                     state: SetupState, python_exe: str, shutdown_fn: callable | None = None) -> None:
+    def register_api(
+        self,
+        install_dir: Path,
+        model_dir: Path,
+        state: SetupState,
+        python_exe: str,
+        shutdown_fn: callable | None = None,
+    ) -> None:
         """注册全部引导 API。闭包共享安装环境信息。"""
         env_result = {"checked": False, "data": None}
         torch_state = {"status": "idle", "log": "", "index": "pytorch-cu128", "error": None}
@@ -96,12 +107,15 @@ class Router:
         # .venv / 系统 Python / WinPython 三选一（存 setup_state）。
         _selected = {"python_exe": python_exe}
 
-        self.get("/api/status", lambda: {
-            "env": env_result["data"],
-            "torch_ready": state.torch_ready,
-            "smoke_test_passed": state.get("smoke_test_passed", False),
-            "models": check_models(model_dir).to_dict(),
-        })
+        self.get(
+            "/api/status",
+            lambda: {
+                "env": env_result["data"],
+                "torch_ready": state.torch_ready,
+                "smoke_test_passed": state.get("smoke_test_passed", False),
+                "models": check_models(model_dir).to_dict(),
+            },
+        )
 
         # 环境检测
         self.post("/api/env-check", lambda: self._run_env(env_result, install_dir))
@@ -112,8 +126,7 @@ class Router:
         self.post("/api/python/select", lambda: self._select_python(install_dir, state, _selected, self._last_body))
 
         # torch 安装
-        self.post("/api/torch/install",
-                  lambda: self._start_torch_install(torch_state, _selected["python_exe"], state))
+        self.post("/api/torch/install", lambda: self._start_torch_install(torch_state, _selected["python_exe"], state))
         self.get("/api/torch/status", lambda: torch_state)
         self.post("/api/torch/mirror", lambda: self._set_mirror(torch_state, self._last_body))
         self.post("/api/torch/skip", lambda: self._skip_torch(_selected, state, self._last_body))
@@ -163,8 +176,12 @@ class Router:
             cmd = torch_install_cmd(python_exe, index)
             try:
                 proc = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, encoding="utf-8", errors="replace",
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                 )
                 assert proc.stdout is not None
                 for line in proc.stdout:
@@ -249,6 +266,7 @@ class Router:
     def _app_health(self) -> bool:
         try:
             import urllib.request
+
             with urllib.request.urlopen(f"{APP_BASE}/api/system/health", timeout=3) as resp:
                 return resp.status == 200
         except Exception:
@@ -267,6 +285,7 @@ class Router:
 
     def _open_app(self):
         import webbrowser
+
         webbrowser.open(APP_BASE)
         return {"opened": True}
 

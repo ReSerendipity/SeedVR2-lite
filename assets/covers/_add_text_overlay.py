@@ -1,4 +1,5 @@
 """为 SeedVR2 视频封面叠加中文品牌排版"""
+
 import os
 
 from PIL import Image, ImageDraw, ImageFont
@@ -62,10 +63,10 @@ def make_cover_16x9(input_path, output_path):
         raise RuntimeError("找不到任何中文字体")
 
     # 字号按高度算
-    title_size = int(h * 0.115)        # ~ 350px @ 3072
-    sub_size = int(h * 0.044)          # ~ 135px
-    tag_size = int(h * 0.028)          # ~ 85px
-    badge_size = int(h * 0.030)        # ~ 90px
+    title_size = int(h * 0.115)  # ~ 350px @ 3072
+    sub_size = int(h * 0.044)  # ~ 135px
+    tag_size = int(h * 0.028)  # ~ 85px
+    badge_size = int(h * 0.030)  # ~ 90px
 
     title_font = ImageFont.truetype(font_path, title_size)
     sub_font = ImageFont.truetype(font_path, sub_size)
@@ -156,10 +157,10 @@ def make_cover_3x4(input_path, output_path):
         raise RuntimeError("找不到任何中文字体")
 
     # 3:4 的画幅比 16:9 窄很多，字号按宽度算时务必更克制
-    title_size = int(w * 0.075)        # ~ 270px @ 3584（之前 0.16 太大）
-    sub_size = int(w * 0.030)          # ~ 108px
-    tag_size = int(w * 0.020)          # ~ 72px
-    bottom_size = int(w * 0.018)       # ~ 65px
+    title_size = int(w * 0.075)  # ~ 270px @ 3584（之前 0.16 太大）
+    sub_size = int(w * 0.030)  # ~ 108px
+    tag_size = int(w * 0.020)  # ~ 72px
+    bottom_size = int(w * 0.018)  # ~ 65px
 
     title_font = ImageFont.truetype(font_path, title_size)
     sub_font = ImageFont.truetype(font_path, sub_size)
@@ -259,10 +260,10 @@ def make_cover_4x3(input_path, output_path):
         raise RuntimeError("找不到任何中文字体")
 
     # 4:3 比 3:4 矮，按高度算字号视觉更稳
-    title_size = int(h * 0.095)        # ~ 295px @ 3104 高
-    sub_size = int(h * 0.040)          # ~ 125px
-    tag_size = int(h * 0.026)          # ~ 80px
-    bottom_size = int(h * 0.024)       # ~ 75px
+    title_size = int(h * 0.095)  # ~ 295px @ 3104 高
+    sub_size = int(h * 0.040)  # ~ 125px
+    tag_size = int(h * 0.026)  # ~ 80px
+    bottom_size = int(h * 0.024)  # ~ 75px
 
     title_font = ImageFont.truetype(font_path, title_size)
     sub_font = ImageFont.truetype(font_path, sub_size)

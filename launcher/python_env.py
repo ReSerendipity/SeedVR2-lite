@@ -7,6 +7,7 @@
 
 纯 stdlib，可单测（mock 子进程输出）。
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -19,9 +20,10 @@ from launcher.setup_state import SetupState
 @dataclass
 class PyEnv:
     """一个可选的 Python 运行环境。"""
-    id: str          # ".venv" / "system" / "winpython"
-    label: str       # 展示名
-    path: str        # python.exe 绝对路径
+
+    id: str  # ".venv" / "system" / "winpython"
+    label: str  # 展示名
+    path: str  # python.exe 绝对路径
     detect_msg: str  # 探测过程信息（版本等），无用时为空串
 
     def to_dict(self) -> dict:
@@ -48,7 +50,10 @@ def _system_python(root: Path) -> Path | None:
     """探测 PATH 里的系统 Python（排除项目自身的 .venv / WinPython）。"""
     try:
         proc = subprocess.run(
-            ["where", "python"], capture_output=True, text=True, timeout=10,
+            ["where", "python"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -68,7 +73,10 @@ def _system_python(root: Path) -> Path | None:
 def _python_version(python_exe: Path) -> str:
     try:
         proc = subprocess.run(
-            [str(python_exe), "--version"], capture_output=True, text=True, timeout=10,
+            [str(python_exe), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         out = (proc.stdout or proc.stderr or "").strip()
         return out if out else ""
@@ -82,21 +90,39 @@ def detect_python_envs(root: Path, state: SetupState) -> list[PyEnv]:
 
     venv = _has_venv_python(root)
     if venv:
-        envs.append(PyEnv(".venv", "项目虚拟环境（.venv）", str(venv),
-                          f"版本 {_python_version(venv)}" if _python_version(venv) else ""))
+        envs.append(
+            PyEnv(
+                ".venv",
+                "项目虚拟环境（.venv）",
+                str(venv),
+                f"版本 {_python_version(venv)}" if _python_version(venv) else "",
+            )
+        )
     else:
-        envs.append(PyEnv(".venv", "项目虚拟环境（.venv）", str(root / ".venv" / "Scripts" / "python.exe"),
-                          "未检测到 .venv，将自动创建并安装依赖"))
+        envs.append(
+            PyEnv(
+                ".venv",
+                "项目虚拟环境（.venv）",
+                str(root / ".venv" / "Scripts" / "python.exe"),
+                "未检测到 .venv，将自动创建并安装依赖",
+            )
+        )
 
     syspy = _system_python(root)
     if syspy:
-        envs.append(PyEnv("system", "系统 Python", str(syspy),
-                          f"版本 {_python_version(syspy)}" if _python_version(syspy) else ""))
+        envs.append(
+            PyEnv(
+                "system", "系统 Python", str(syspy), f"版本 {_python_version(syspy)}" if _python_version(syspy) else ""
+            )
+        )
 
     wpy = _winpython_python(root)
     if wpy:
-        envs.append(PyEnv("winpython", "内置 WinPython", str(wpy),
-                          f"版本 {_python_version(wpy)}" if _python_version(wpy) else ""))
+        envs.append(
+            PyEnv(
+                "winpython", "内置 WinPython", str(wpy), f"版本 {_python_version(wpy)}" if _python_version(wpy) else ""
+            )
+        )
 
     return envs
 

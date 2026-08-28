@@ -4,6 +4,7 @@
 职责：起引导服务（localhost:7871）→ 浏览器打开 8 步向导页 → 保持运行。
 开发模式（未打包）时用仓库根目录；打包后用 exe 所在目录作为安装目录。
 """
+
 from __future__ import annotations
 
 import sys
@@ -82,6 +83,7 @@ def static_dir(root: Path) -> Path:
 
 def find_free_port(start: int = BOOTSTRAP_PORT, tries: int = 10) -> int:
     import socket
+
     for port in range(start, start + tries):
         with socket.socket() as s:
             try:

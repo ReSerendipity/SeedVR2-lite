@@ -4,6 +4,7 @@
 用 nvidia-smi 检测 NVIDIA GPU 与驱动/CUDA 版本（torch 未安装前也能用），
 并检查安装磁盘剩余空间。纯 stdlib，可单测（mock 子进程输出）。
 """
+
 from __future__ import annotations
 
 import re
@@ -42,7 +43,10 @@ class EnvCheckResult:
 def _run_nvidia_smi() -> str:
     try:
         proc = subprocess.run(
-            ["nvidia-smi"], capture_output=True, text=True, timeout=15,
+            ["nvidia-smi"],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         return proc.stdout or ""
     except (OSError, subprocess.SubprocessError):
@@ -53,7 +57,9 @@ def _run_nvidia_mem() -> str:
     try:
         proc = subprocess.run(
             ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         return proc.stdout.strip() or ""
     except (OSError, subprocess.SubprocessError):

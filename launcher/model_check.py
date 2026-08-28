@@ -4,6 +4,7 @@
 必装 3 项（VAE + 文本嵌入），主模型 6 选 1。文件名与 config.yaml 一致。
 仅做文件存在 + 大小 + safetensors 头校验，不做自动下载。
 """
+
 from __future__ import annotations
 
 import struct
@@ -21,7 +22,6 @@ MAIN_MODEL_FILES = [
     "seedvr2_ema_7b_sharp_fp16.safetensors",
     "seedvr2_ema_7b_sharp_fp8_e4m3fn.safetensors",
 ]
-
 
 
 def recommend_main_model(vram_gb: float) -> str:

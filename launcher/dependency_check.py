@@ -12,6 +12,7 @@ URL 编码（如 %2Bcu128），pip 的 --index-url（PEP 503 简单索引）无�
   - 国内镜像 用 --find-links（直接浏览目录列出具体 WHL，绕过简单索引解析）
 同时显式带 torch==x.y.z+cu123 版本约束，避免目录里同时含 CPU 版时误选。
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,7 @@ TORCH_PACKAGES = ["torch", "torchvision", "torchaudio"]
 
 # 各 CUDA 档位的 torch 家族精确版本（三元组，每个档位显式写死，不推导）。
 # 重要：同一 torch 版本在不同 cuXXX 源里配套的 torchvision 版本可能不同
-#（cu128 源 wheel 发布批次更旧，torch 2.11.0 在 cu128 只配套 torchvision 0.26.0，
+# （cu128 源 wheel 发布批次更旧，torch 2.11.0 在 cu128 只配套 torchvision 0.26.0，
 #  而在 cu126 配套 0.28.0）。因此必须按 (档位) 整体锁定，避免 "No matching distribution"。
 # 这些数据来自 download.pytorch.org 各 cuXXX 源的实测版本列表。
 TORCH_CUDA_VERSIONS = {
@@ -74,17 +75,19 @@ TORCH_INDEXES = {
 # 逐包 try/except：单个包（如 torch DLL）导入失败不会拖垮整个探测，
 # 其它包仍能正常上报。注意必须用真实换行（-c 支持多行脚本），
 # 单行里不允许 for:try: 这种复合语句嵌套。
-_PROBE_CODE = "\n".join([
-    "import json, importlib.util as u",
-    "r = {}",
-    "for p in ['torch', 'torchvision', 'torchaudio']:",
-    "    try:",
-    "        m = __import__(p) if u.find_spec(p) else None",
-    "        r[p] = getattr(m, '__version__', None) if m else None",
-    "    except Exception:",
-    "        r[p] = None",
-    "print(json.dumps(r))",
-])
+_PROBE_CODE = "\n".join(
+    [
+        "import json, importlib.util as u",
+        "r = {}",
+        "for p in ['torch', 'torchvision', 'torchaudio']:",
+        "    try:",
+        "        m = __import__(p) if u.find_spec(p) else None",
+        "        r[p] = getattr(m, '__version__', None) if m else None",
+        "    except Exception:",
+        "        r[p] = None",
+        "print(json.dumps(r))",
+    ]
+)
 _CUDA_CODE = "import torch; print(torch.cuda.is_available())"
 
 
@@ -104,8 +107,11 @@ def run_python_code(python_exe: str, code: str, timeout: int = 120) -> tuple[int
     try:
         proc = subprocess.run(
             [python_exe, "-c", code],
-            capture_output=True, text=True, timeout=timeout,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            encoding="utf-8",
+            errors="replace",
         )
         out = (proc.stdout or proc.stderr or "").strip()
         return proc.returncode, out
@@ -193,8 +199,7 @@ def torch_install_cmd(python_exe: str, index_key: str = "pytorch-cu128") -> list
     cuda = cfg.get("cuda", "cu128")
     specs = _versioned_pkg_specs(cuda)
 
-    cmd = [python_exe, "-m", "pip", "install", *specs,
-           "--timeout", "1200", "--retries", "10"]
+    cmd = [python_exe, "-m", "pip", "install", *specs, "--timeout", "1200", "--retries", "10"]
     if cfg.get("find_links"):
         cmd += ["--find-links", cfg["find_links"], "--no-index"]
     elif cfg.get("index"):
