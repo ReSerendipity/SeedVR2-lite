@@ -337,9 +337,9 @@ function Start-SeedVR2RuntimePrepare {
         New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
         Write-Host "  解压 WinPython ..."
         if ($sevenZip) {
-            & $sevenZip x $exePath "-o$extractDir" -y | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                throw "7z 解压 WinPython 失败，退出码 $LASTEXITCODE"
+            $res = Invoke-SeedVR2Native -Exe $sevenZip -Arguments @('x', $exePath, "-o$extractDir", '-y')
+            if ($res.ExitCode -ne 0) {
+                throw "7z 解压 WinPython 失败，退出码 $($res.ExitCode)：$($res.Text.Split("`n")[-4..-1] -join ' | ')"
             }
         } else {
             $psi = Start-Process -FilePath $exePath -ArgumentList '/S', "/D=$extractDir" -PassThru -Wait
@@ -354,16 +354,18 @@ function Start-SeedVR2RuntimePrepare {
     $reqSmall = Join-Path $ProjectRoot 'launcher\requirements-small.txt'
     if (Test-Path -LiteralPath $reqSmall) {
         Write-Host "  预装非 torch 依赖（launcher\requirements-small.txt）..."
-        & $py -m pip install --upgrade pip | Out-Null
-        & $py -m pip install -r $reqSmall --timeout 300 --retries 3
-        if ($LASTEXITCODE -ne 0) {
-            throw "便携解释器依赖安装失败"
+        Invoke-SeedVR2Native -Exe $py -Arguments @('-m', 'pip', 'install', '--upgrade', 'pip') | Out-Null
+        $res = Invoke-SeedVR2Native -Exe $py -Arguments @('-m', 'pip', 'install', '-r', $reqSmall, '--timeout', '300', '--retries', '3')
+        if ($res.ExitCode -ne 0) {
+            throw "便携解释器依赖安装失败：$($res.Text.Split("`n")[-6..-1] -join ' | ')"
         }
     }
     Write-Host "  摘除 torch 家族（归入独立 torch 组件）..."
-    & $py -m pip uninstall -y torch torchvision torchaudio | Out-Null
-    $probe = & $py -c "import torch" 2>$null
-    if ($LASTEXITCODE -eq 0) {
+    Invoke-SeedVR2Native -Exe $py -Arguments @('-m', 'pip', 'uninstall', '-y', 'torch', 'torchvision', 'torchaudio') | Out-Null
+    # 期望 import 失败（证明已摘干净），因此必须走 Invoke-SeedVR2Native：
+    # 直接 `& python -c` 在 EAP=Stop 下会把 stderr 的 Traceback 升级成终止错误（CI 实测踩过）。
+    $probe = Invoke-SeedVR2Native -Exe $py -Arguments @('-c', 'import torch')
+    if ($probe.ExitCode -eq 0) {
         throw "torch 仍存在于便携解释器中，core 组件会体积失控"
     }
     $link = Join-Path $runtimeRoot 'python'
@@ -392,10 +394,12 @@ function Start-SeedVR2TorchWheelPrepare {
     # 关键：不能加 --no-deps。离线安装用 pip --no-index --find-links，torch 的传递依赖
     # （filelock / fsspec / jinja2 / networkx / sympy / typing-extensions）必须一起落盘，
     # 否则解包端 pip 会因找不到依赖而失败。现有 launcher\installer_torch.iss 正是踩了这个坑。
-    & $PythonExe -m pip download torch torchvision torchaudio --index-url $IndexUrl `
-        -d $WheelDir --timeout 300 --retries 3
-    if ($LASTEXITCODE -ne 0) {
-        throw "pip download torch wheels 失败"
+    $res = Invoke-SeedVR2Native -Exe $PythonExe -Arguments @(
+        '-m', 'pip', 'download', 'torch', 'torchvision', 'torchaudio',
+        '--index-url', $IndexUrl, '-d', $WheelDir, '--timeout', '300', '--retries', '3'
+    )
+    if ($res.ExitCode -ne 0) {
+        throw "pip download torch wheels 失败：$($res.Text.Split("`n")[-8..-1] -join ' | ')"
     }
 }
 
@@ -408,11 +412,13 @@ function Test-SeedVR2TorchOfflineInstallable {
         [Parameter(Mandatory = $true)][string]$PythonExe,
         [Parameter(Mandatory = $true)][string]$WheelDir
     )
-    $out = & $PythonExe -m pip install --no-index --find-links $WheelDir --dry-run `
-        --ignore-installed torch torchvision torchaudio 2>&1
-    $code = $LASTEXITCODE
-    if ($code -ne 0) {
-        $text = ($out | Select-Object -Last 12) -join "`n  "
+    $res = Invoke-SeedVR2Native -Exe $PythonExe -Arguments @(
+        '-m', 'pip', 'install', '--no-index', '--find-links', $WheelDir,
+        '--dry-run', '--ignore-installed', 'torch', 'torchvision', 'torchaudio'
+    )
+    if ($res.ExitCode -ne 0) {
+        $lines = @($res.Text.Split("`n"))
+        $text = ($lines[([math]::Max(0, $lines.Count - 12))..($lines.Count - 1)]) -join "`n  "
         throw "离线可装性验证失败（wheels 缺依赖或平台不匹配）：`n  $text"
     }
     Write-Host '  离线可装性验证通过（pip --no-index --dry-run）' -ForegroundColor Green
@@ -555,8 +561,8 @@ if ($needWheels -and -not $TorchWheelDir) {
 if ($TorchWheelDir -and $RuntimeDir -and -not $SkipOfflineTorchCheck) {
     Write-Host "`n[验证] torch wheels 在便携解释器上是否可离线安装"
     $probe = Resolve-SeedVR2RuntimeRoot -Path $RuntimeDir
-    $alive = & $probe.PythonExe -c "print('ok')" 2>$null
-    if ($LASTEXITCODE -ne 0 -or ($alive | Select-Object -First 1) -ne 'ok') {
+    $alive = Invoke-SeedVR2Native -Exe $probe.PythonExe -Arguments @('-c', "print('ok')")
+    if ($alive.ExitCode -ne 0 -or ($alive.Text -notmatch 'ok')) {
         Write-Warning "$($probe.PythonExe) 不是可执行的解释器，跳过离线可装性验证（真实构建必须通过此检查）"
     } else {
         Test-SeedVR2TorchOfflineInstallable -PythonExe $probe.PythonExe -WheelDir $TorchWheelDir

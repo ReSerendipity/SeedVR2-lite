@@ -77,6 +77,28 @@ function Assert-True {
 }
 
 try {
+    Write-Host '=== 0. 外部调用回归（EAP=Stop 下 stderr 不得升级为终止错误）===' -ForegroundColor Cyan
+    . (Join-Path $repo 'scripts\portable_bundle_lib.ps1')
+    $py = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { $null }
+    if ($py) {
+        $oldThrew = $false
+        try {
+            $null = & $py -c "import sys;sys.stderr.write('x\n');sys.exit(3)" 2>$null
+        } catch {
+            $oldThrew = $true
+        }
+        $r = Invoke-SeedVR2Native -Exe $py -Arguments @('-c', "import sys;sys.stderr.write('boom\n');sys.exit(3)")
+        Assert-True ($r.ExitCode -eq 3 -and $r.Text -match 'boom') '包装器可容忍失败退出码并捕获 stderr'
+        $r2 = Invoke-SeedVR2Native -Exe $py -Arguments @('-c', "import sys;sys.stderr.write('WARN\n');print('ok')")
+        Assert-True ($r2.ExitCode -eq 0 -and $r2.Text -match 'ok') '包装器可容忍 stderr 警告（pip 常见形态）'
+        Assert-True ($ErrorActionPreference -eq 'Stop') '包装器未污染调用方 ErrorActionPreference'
+        if ($oldThrew) {
+            Write-Host '   NOTE  已确认旧写法（& cmd 2>$null）在本机同样抛终止错误 → 包装器为必需' -ForegroundColor DarkGray
+        }
+    } else {
+        Write-Host '   SKIP  未找到 python，跳过外部调用回归' -ForegroundColor DarkGray
+    }
+
     Write-Host '=== 1. 夹具 ===' -ForegroundColor Cyan
     if (Test-Path -LiteralPath $WorkDir) {
         Remove-Item -LiteralPath $WorkDir -Recurse -Force

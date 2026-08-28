@@ -61,19 +61,19 @@ function Expand-SeedVR2Archive {
     )
     $fmt = [System.IO.Path]::GetExtension($Archive)
     if ($sevenZip) {
-        & $sevenZip x $Archive "-o$Dest" -y | Out-Null
-        if ($LASTEXITCODE -eq 0) {
+        $res = Invoke-SeedVR2Native -Exe $sevenZip -Arguments @('x', $Archive, "-o$Dest", '-y')
+        if ($res.ExitCode -eq 0) {
             return
         }
-        Write-Warning "7z 解压失败（退出码 $LASTEXITCODE），尝试 tar.exe"
+        Write-Warning "7z 解压失败（退出码 $($res.ExitCode)），尝试 tar.exe"
     }
     if (-not $tar) {
         throw "需要 7-Zip 才能解压 $fmt 归档"
     }
     New-Item -ItemType Directory -Path $Dest -Force | Out-Null
-    & $tar @('-xf', $Archive, '-C', $Dest) | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "解压 $Archive 失败（退出码 $LASTEXITCODE）。$fmt 归档需安装 7-Zip 后重试。"
+    $res2 = Invoke-SeedVR2Native -Exe $tar -Arguments @('-xf', $Archive, '-C', $Dest)
+    if ($res2.ExitCode -ne 0) {
+        throw "解压 $Archive 失败（退出码 $($res2.ExitCode)）。$fmt 归档需安装 7-Zip 后重试。`n$($res2.Text)"
     }
 }
 
@@ -169,17 +169,21 @@ if ((Test-Path -LiteralPath $wheelsDir) -and -not $SkipTorchInstall) {
     Write-Host ''
     Write-Host '[torch] 向便携解释器离线安装 torch（全程不联网）' -ForegroundColor Yellow
     $pyInfo = Resolve-SeedVR2RuntimeRoot -Path $appRoot
-    & $pyInfo.PythonExe -m pip install --no-index --find-links $wheelsDir torch torchvision torchaudio
-    if ($LASTEXITCODE -ne 0) {
-        throw "torch 离线安装失败。可手动执行：$($pyInfo.PythonExe) -m pip install --no-index --find-links `"$wheelsDir`" torch torchvision torchaudio"
+    $inst = Invoke-SeedVR2Native -Exe $pyInfo.PythonExe -Arguments @(
+        '-m', 'pip', 'install', '--no-index', '--find-links', $wheelsDir, 'torch', 'torchvision', 'torchaudio'
+    )
+    if ($inst.ExitCode -ne 0) {
+        throw "torch 离线安装失败。可手动执行：$($pyInfo.PythonExe) -m pip install --no-index --find-links `"$wheelsDir`" torch torchvision torchaudio`n$($inst.Text.Split("`n")[-10..-1] -join "`n")"
     }
-    $ver = & $pyInfo.PythonExe -c "import torch;print(torch.__version__)" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        throw "torch 安装后无法 import，请检查 NVIDIA 驱动与 VC++ 运行库"
+    $verRes = Invoke-SeedVR2Native -Exe $pyInfo.PythonExe -Arguments @('-c', 'import torch;print(torch.__version__)')
+    if ($verRes.ExitCode -ne 0) {
+        throw "torch 安装后无法 import，请检查 NVIDIA 驱动与 VC++ 运行库`n$($verRes.Text)"
     }
-    Write-Host "  torch $ver 可用" -ForegroundColor Green
-    $cuda = & $pyInfo.PythonExe -c "import torch;print('yes' if torch.cuda.is_available() else 'no')" 2>$null
-    if ($cuda -ne 'yes') {
+    Write-Host "  torch $($verRes.Text.Trim()) 可用" -ForegroundColor Green
+    $cudaRes = Invoke-SeedVR2Native -Exe $pyInfo.PythonExe -Arguments @(
+        '-c', "import torch;print('yes' if torch.cuda.is_available() else 'no')"
+    )
+    if ($cudaRes.Text.Trim() -ne 'yes') {
         Write-Warning "torch.cuda.is_available() 为 False：本机可能缺 NVIDIA 驱动或 CUDA 版本不匹配（本包为 cu128）。CPU 仍可运行但极慢。"
     }
 }

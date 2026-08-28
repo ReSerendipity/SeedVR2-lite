@@ -8,7 +8,7 @@
 * **release:** 便携包内置 3B FP8 主模型与 cu128 torch wheels（含传递依赖），解包器全程离线（逐卷 SHA256 → 合并 → 解压 → 离线 pip 安装 → 按清单核对落地）
 * **release:** 新增解包后冒烟推理验收 `scripts/smoke_portable_bundle.py` 作为发布前门禁（启动便携服务 → CSRF 双提交 → 真实修复任务 → 输出文件校验），托管 runner 无 GPU 时仅容忍 GPU 缺失原因，打包层面任何错误即失败
 * **scripts:** `download_model.py` 支持 `--files` 精确选择权重，发行构建只取 FP8、不拖下 6.3 GB FP16
-* **scripts:** 新增常驻端到端自测 `scripts/test_portable_bundle.ps1`（31 项断言）
+* **scripts:** 新增常驻端到端自测 `scripts/test_portable_bundle.ps1`（34 项断言）
 
 ### Miscellaneous Chores
 

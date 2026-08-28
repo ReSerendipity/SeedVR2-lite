@@ -24,6 +24,39 @@ function Get-SeedVR2GithubAssetLimit {
     return [long]$script:GithubAssetLimitBytes
 }
 
+function Invoke-SeedVR2Native {
+    <#
+        执行外部命令并返回 @{ ExitCode; Text }。
+
+        为什么必须走这个包装器：调用方普遍设了 `$ErrorActionPreference = 'Stop'`，
+        而 Windows PowerShell 5.1 会把原生命令写到 stderr 的内容转成 error record，
+        于是「命令本身正常但往 stderr 打了警告」会被升级为终止错误直接崩掉脚本
+        （实测：`pip uninstall` 的 "Skipping ... not installed" 警告、
+        以及 `python -c "import torch"` 这种*期望它失败*的探测都会炸）。
+        这里在函数作用域内临时降为 Continue，退出后自动恢复，调用方只看 ExitCode。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Exe,
+        [string[]]$Arguments = @()
+    )
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $captured = $null
+    try {
+        $captured = & $Exe @Arguments 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    if ($null -eq $code) {
+        $code = 0
+    }
+    return [pscustomobject]@{
+        ExitCode = [int]$code
+        Text     = (@($captured) | ForEach-Object { [string]$_ }) -join "`n"
+    }
+}
+
 function Get-SeedVR2DefaultMaxPart {
     <# 返回默认分卷大小（1900MB，对 2GiB 留有余量）。 #>
     return [long]$script:DefaultMaxPartBytes
@@ -225,8 +258,8 @@ function New-SeedVR2HardLink {
     if (Test-Path -LiteralPath $LinkPath) {
         Remove-Item -LiteralPath $LinkPath -Force
     }
-    & cmd.exe /c "mklink /H `"$LinkPath`" `"$SourceFile`"" | Out-Null
-    if ((Test-Path -LiteralPath $LinkPath) -and ($LASTEXITCODE -eq 0)) {
+    $r = Invoke-SeedVR2Native -Exe 'cmd.exe' -Arguments @('/c', "mklink /H `"$LinkPath`" `"$SourceFile`"")
+    if ((Test-Path -LiteralPath $LinkPath) -and ($r.ExitCode -eq 0)) {
         return 'hardlink'
     }
     Remove-Item -LiteralPath $LinkPath -Force -ErrorAction SilentlyContinue
@@ -349,13 +382,14 @@ function New-SeedVR2Archive {
         $prev = Get-Location
         try {
             Set-Location -LiteralPath $SourceDir
-            & $sevenZip $arguments | Out-Null
-            $toolExit = $LASTEXITCODE
+            $res = Invoke-SeedVR2Native -Exe $sevenZip -Arguments $arguments
+            $sevenExit = $res.ExitCode
+            $sevenText = $res.Text
         } finally {
             Set-Location -LiteralPath $prev
         }
-        if ($toolExit -ne 0 -or -not (Test-Path -LiteralPath $out)) {
-            throw "New-SeedVR2Archive: 7z 归档失败，退出码 $toolExit"
+        if ($sevenExit -ne 0 -or -not (Test-Path -LiteralPath $out)) {
+            throw "New-SeedVR2Archive: 7z 归档失败，退出码 $sevenExit`n$sevenText"
         }
         $tool = $sevenZip
     } else {
@@ -374,18 +408,19 @@ function New-SeedVR2Archive {
         $prev = Get-Location
         try {
             Set-Location -LiteralPath $SourceDir
-            & $tar $attempt | Out-Null
-            $toolExit = $LASTEXITCODE
+            $res = Invoke-SeedVR2Native -Exe $tar -Arguments $attempt
+            $toolExit = $res.ExitCode
             if ($toolExit -ne 0 -or -not (Test-Path -LiteralPath $out)) {
                 Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
-                & $tar ($base + $names) | Out-Null
-                $toolExit = $LASTEXITCODE
+                $res = Invoke-SeedVR2Native -Exe $tar -Arguments ($base + $names)
+                $toolExit = $res.ExitCode
             }
+            $tarText = $res.Text
         } finally {
             Set-Location -LiteralPath $prev
         }
         if ($toolExit -ne 0 -or -not (Test-Path -LiteralPath $out)) {
-            throw "New-SeedVR2Archive: tar 归档失败，退出码 $toolExit"
+            throw "New-SeedVR2Archive: tar 归档失败，退出码 $toolExit`n$tarText"
         }
         $tool = $tar
     }
@@ -583,7 +618,7 @@ function Remove-SeedVR2TreeFast {
         Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
         return
     } catch {
-        & cmd.exe /c "rmdir /s /q `"$(Resolve-Path -LiteralPath $Path)`"" | Out-Null
+        Invoke-SeedVR2Native -Exe 'cmd.exe' -Arguments @('/c', "rmdir /s /q `"$(Resolve-Path -LiteralPath $Path)`"") | Out-Null
         if (Test-Path -LiteralPath $Path) {
             throw "Remove-SeedVR2TreeFast: 无法删除 $Path"
         }
