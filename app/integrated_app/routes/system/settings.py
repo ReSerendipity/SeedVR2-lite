@@ -220,9 +220,7 @@ async def update_settings(
     if settings.seed is not None:
         config.setdefault("restore", {})["seed"] = settings.seed
     if settings.allowed_base_dirs is not None:
-        config.setdefault("runtime", {}).setdefault("security", {})[
-            "allowed_base_dirs"
-        ] = settings.allowed_base_dirs
+        config.setdefault("runtime", {}).setdefault("security", {})["allowed_base_dirs"] = settings.allowed_base_dirs
 
     await run_in_threadpool(save_config, config)
 

@@ -192,8 +192,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if self._allow(client_ip) < 0:
                 retry_after = self._retry_after_seconds(client_ip)
                 logger.warning(
-                    f"速率限制触发: {request.method} {request.url.path} from {client_ip} "
-                    f"(limit={self._limit}/min)"
+                    f"速率限制触发: {request.method} {request.url.path} from {client_ip} " f"(limit={self._limit}/min)"
                 )
                 return JSONResponse(
                     status_code=429,

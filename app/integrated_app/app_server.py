@@ -89,6 +89,7 @@ def setup_logging(config: dict | None = None) -> None:
         force=True,
     )
 
+
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
@@ -254,9 +255,7 @@ async def lifespan(app: FastAPI):
         while True:
             try:
                 await asyncio.sleep(300)  # 每5分钟
-                cleaned = await unified_routes.cleanup_stale_tasks(
-                    history_db, task_queue=app.state.task_queue
-                )
+                cleaned = await unified_routes.cleanup_stale_tasks(history_db, task_queue=app.state.task_queue)
                 if cleaned:
                     logger.info(f"定期清理：已清理 {cleaned} 个卡死的 processing 任务")
             except asyncio.CancelledError:
@@ -390,9 +389,7 @@ def create_app(config: dict | None = None) -> FastAPI:
     # 上限取自 config.yaml runtime.security.rate_limit_per_minute (默认 30 次/分钟)
     from app.integrated_app.middleware.rate_limit import RateLimitMiddleware
 
-    _rate_limit_per_minute = int(
-        config.get("runtime", {}).get("security", {}).get("rate_limit_per_minute", 30)
-    )
+    _rate_limit_per_minute = int(config.get("runtime", {}).get("security", {}).get("rate_limit_per_minute", 30))
     if _rate_limit_per_minute >= 1:
         app.add_middleware(RateLimitMiddleware, rate_limit_per_minute=_rate_limit_per_minute)
         logger.info(f"Rate Limit 中间件已注册 (limit={_rate_limit_per_minute}/min)")

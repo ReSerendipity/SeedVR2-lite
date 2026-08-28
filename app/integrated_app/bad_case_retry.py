@@ -334,8 +334,7 @@ def _log_adjustment(attempt: int, params: dict[str, Any], strategies: list[Retry
     seed = _get_param(params, "seed", "N/A")
     dit = _get_param(params, "dit_model", "N/A")
     logger.info(
-        "[BadCaseRetry] 第 %d 次重试参数调整: blocks_to_swap=%s, resolution=%s, "
-        "dit_model=%s, seed=%s, 策略=%s",
+        "[BadCaseRetry] 第 %d 次重试参数调整: blocks_to_swap=%s, resolution=%s, " "dit_model=%s, seed=%s, 策略=%s",
         attempt,
         bts,
         res,
@@ -425,9 +424,7 @@ async def retry_with_bad_case_detection(
 
             state.failure_type = ftype
             state.failure_reason = reason
-            logger.warning(
-                "[BadCaseRetry] 尝试 %d/%d 结果失败: %s", attempt + 1, cfg.max_retries + 1, reason
-            )
+            logger.warning("[BadCaseRetry] 尝试 %d/%d 结果失败: %s", attempt + 1, cfg.max_retries + 1, reason)
 
             if attempt == cfg.max_retries:
                 # 重试耗尽：优雅降级，返回当前结果
@@ -451,9 +448,7 @@ async def retry_with_bad_case_detection(
             if not has_failure or ftype == FailureType.CANCELLED:
                 raise
 
-            logger.warning(
-                "[BadCaseRetry] 尝试 %d/%d 异常: %s", attempt + 1, cfg.max_retries + 1, reason
-            )
+            logger.warning("[BadCaseRetry] 尝试 %d/%d 异常: %s", attempt + 1, cfg.max_retries + 1, reason)
 
             if attempt == cfg.max_retries:
                 logger.error("[BadCaseRetry] 重试耗尽且所有尝试均异常")

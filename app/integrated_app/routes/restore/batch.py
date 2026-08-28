@@ -175,8 +175,15 @@ async def batch_restore_from_folder(
     await task_queue.submit(
         batch_id,
         lambda: _process_batch_background(
-            batch_id, paths_only, actual_type, task_config, use_model_size, history_db, task_queue, config,
-            double_res=double_res_flag
+            batch_id,
+            paths_only,
+            actual_type,
+            task_config,
+            use_model_size,
+            history_db,
+            task_queue,
+            config,
+            double_res=double_res_flag,
         ),
         on_cancel=on_cancel,
     )
@@ -344,6 +351,7 @@ async def _process_batch_background(
         if double_res and media_type == "image":
             try:
                 from PIL import Image
+
                 with Image.open(media_path) as im:
                     width, height = im.size
                     short_edge = min(width, height)

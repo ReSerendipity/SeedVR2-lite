@@ -128,9 +128,7 @@ class _ImagePipelineMixin:
 
         # REFACTOR [E4-1]: 每次推理开始前重置取消令牌
         self._reset_cancel_token()
-        return await asyncio.to_thread(
-            self._infer_image_impl, image_path, output_dir, config, output_name=output_name
-        )
+        return await asyncio.to_thread(self._infer_image_impl, image_path, output_dir, config, output_name=output_name)
 
     def _prepare_image_input(self, image_path: str, resolution: int, max_resolution: int = 0) -> tuple:
         """读取图像并预处理为模型输入
@@ -338,7 +336,9 @@ class _ImagePipelineMixin:
         requested_format = inf.get("output_format", "").lower().strip()
 
         # 🔍 DEBUG: 打印输出的实际值
-        logger.info(f"🔧 [DEBUG] 输出格式调试：inf={inf.get('output_format', 'MISSING')}, requested_format='{requested_format}'")
+        logger.info(
+            f"🔧 [DEBUG] 输出格式调试：inf={inf.get('output_format', 'MISSING')}, requested_format='{requested_format}'"
+        )
 
         # 如果用户选择"默认"（空字符串），则根据输入图片的扩展名自动匹配
         if not requested_format and image_path:

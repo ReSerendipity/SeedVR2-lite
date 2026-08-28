@@ -268,7 +268,9 @@ def parse_unified_params(
         output_format=output_format,
     )
     # 记录本次请求实际收到的输出格式（排查"默认/自动"是否被悄悄改成其它格式）
-    logger.info(f"[restore/params] output_format={output_format!r} double_res={double_res} resolution={resolution} task_type={task_type}")
+    logger.info(
+        f"[restore/params] output_format={output_format!r} double_res={double_res} resolution={resolution} task_type={task_type}"
+    )
     return _params
 
 
