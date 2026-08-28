@@ -6559,6 +6559,7 @@ input[type="number"].sv-form-control::-webkit-outer-spin-button {
 
 .sv-navbar-brand {
     margin-right: var(--sv-space-8);
+    min-height: 44px;
 }
 
 .sv-navbar-brand .brand-logo {
@@ -6580,6 +6581,7 @@ input[type="number"].sv-form-control::-webkit-outer-spin-button {
     font-weight: 500;
     position: relative;
     overflow: hidden;
+    min-height: 44px;
 }
 
 .sv-nav-link::before {
