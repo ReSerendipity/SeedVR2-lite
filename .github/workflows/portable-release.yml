@@ -102,7 +102,11 @@ jobs:
       - name: 下载便携包模型权重
         shell: powershell
         run: |
-          $names = "${{ steps.files.outputs.names }}".Split(' ') | Where-Object { $_ }
+          # 只从 HF 下 safetensors（3b FP8 主权重 + VAE）。pos_emb/neg_emb 是仓库内嵌资产
+          # （scripts/bundle_assets/），由 build_portable_bundle.ps1 直接打包，不在此联网拉取
+          # （HF 社区仓库 numz/SeedVR2_comfyUI 缺失这两个 .pt，返回 404）。
+          $names = "${{ steps.files.outputs.names }}".Split(' ') | Where-Object { $_ -match '\.safetensors$' }
+          if ($names.Count -lt 1) { throw "no safetensors to download from HF" }
           $argv = @("scripts/download_model.py", "--files") + $names
           & python $argv
           if ($LASTEXITCODE -ne 0) { throw "model weight download failed" }

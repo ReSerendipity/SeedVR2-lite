@@ -151,7 +151,9 @@ try {
     Assert-True ($torchC.volume_count -ge 2) "torch 组件多卷（$($torchC.volume_count)）"
     $fp8Expect = [int][math]::Ceiling($fp8C.raw_bytes / $slice)
     Assert-True ($fp8C.volume_count -eq $fp8Expect) "model-fp8 卷数 = ceil(归档/切片) = $fp8Expect（实为 $($fp8C.volume_count)）"
-    Assert-True ($sharedC.volume_count -eq 1) "model-shared 单卷（实为 $($sharedC.volume_count)）"
+    $sharedExpect = [int][math]::Ceiling($sharedC.raw_bytes / $slice)
+    Assert-True ($sharedC.volume_count -eq $sharedExpect) "model-shared 卷数 = ceil(归档/切片) = $sharedExpect（实为 $($sharedC.volume_count)）
+  （pos/neg 来自仓库内嵌 assets，纤匹配按实际字节）"
     foreach ($c in $manifest.components) {
         Assert-True ([long]($c.volumes | ForEach-Object { $_.bytes } | Measure-Object -Sum).Sum -eq [long]$c.raw_bytes) "$($c.id) 分卷字节之和 == 归档字节"
     }
@@ -195,6 +197,18 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $installed 'SeedVR2-Portable\.portable_ready')) '就绪标记已写入'
     Assert-True (@(Get-ChildItem -LiteralPath $installed -Filter '__merge__-*' -File -ErrorAction SilentlyContinue).Count -eq 0) '合并临时归档已清理'
     Assert-True (Test-Path -LiteralPath (Join-Path $installed 'SeedVR2-Portable\model\LICENSE')) 'LICENSE 随模型组件分发'
+    # 关键回归：pos_emb/neg_emb 必须取自仓库内嵌资产（scripts/bundle_assets），而非 HF 下载。
+    # fixture model/ 里的 pos/neg 是可区分的小文件，若取到内嵌版本则字节数=内嵌资产字节数。
+    $assetPos = Join-Path $repo 'scripts\bundle_assets\pos_emb.pt'
+    $assetNeg = Join-Path $repo 'scripts\bundle_assets\neg_emb.pt'
+    $dstPos = Join-Path $installed 'SeedVR2-Portable\model\pos_emb.pt'
+    $dstNeg = Join-Path $installed 'SeedVR2-Portable\model\neg_emb.pt'
+    if ((Test-Path -LiteralPath $assetPos) -and (Test-Path -LiteralPath $dstPos)) {
+        Assert-True ((Get-Item -LiteralPath $assetPos).Length -eq (Get-Item -LiteralPath $dstPos).Length) 'pos_emb.pt 取自仓库内嵌资产（字节一致）'
+    }
+    if ((Test-Path -LiteralPath $assetNeg) -and (Test-Path -LiteralPath $dstNeg)) {
+        Assert-True ((Get-Item -LiteralPath $assetNeg).Length -eq (Get-Item -LiteralPath $dstNeg).Length) 'neg_emb.pt 取自仓库内嵌资产（字节一致）'
+    }
 
     Write-Host ''
     Write-Host '=== 5. 缺卷必须被拒 ===' -ForegroundColor Cyan

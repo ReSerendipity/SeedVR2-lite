@@ -115,12 +115,14 @@ def download_model(
         with_vae: 是否同时下载共享的 VAE 与文本嵌入文件。默认为 True。
         only_files: 精确指定要下载的文件名列表，给出时忽略 model_size 清单与 with_vae。
                     用于便携包只取单一精度（如只要 FP8）而不拖下整组权重。默认为 None。
+                    注意：only_files 模式下**任何文件下载不到都会抛错终止**，不允许静默跳过，
+                    因为调用方（便携包 CI）把「全部权重就在该仓库」当作前提。
 
     Returns:
         None
 
     Raises:
-        ValueError: model_size 不在支持列表时抛出。
+        ValueError: model_size 不在支持列表时抛出（only_files 未给定 & model_size 非法）。
     """
     if importlib.util.find_spec("huggingface_hub") is None:
         print("请先安装 huggingface_hub: pip install huggingface_hub")
@@ -144,17 +146,29 @@ def download_model(
     print(f"共 {len(files)} 个文件（已存在会自动跳过）:")
     print()
 
+    missing: list[str] = []
     for filename in files:
-        # VAE / 嵌入文件在主仓库缺失时允许跳过（它们也可能位于官方仓库）
-        _download_file(repo_id, filename, save_path, allow_missing=filename in _SHARED_FILES)
+        # only_files 模式不允许静默跳过：便携包 CI 以「全部权重就在该仓库」为前提，
+        # 任何文件缺失都必须失败并暴露给调用方，否则会产出"假成功"（此前就漏了 pos/neg）。
+        allow = (filename in _SHARED_FILES) and not only_files
+        if not _download_file(repo_id, filename, save_path, allow_missing=allow):
+            missing.append(filename)
 
     print()
     print("=" * 60)
     print("下载结束。请确认以下文件都已存在于保存目录根下：")
+    ok = True
     for f in files:
-        mark = "✓" if (save_path / f).exists() else "✗"
+        exists = (save_path / f).exists()
+        mark = "✓" if exists else "✗"
         print(f"  {mark} {f}")
+        ok = ok and exists
     print("=" * 60)
+
+    if missing or not ok:
+        raise RuntimeError(
+            f"以下权重文件未能从 {repo_id} 下载到（或下载后缺失）：{', '.join(missing or files)}"
+        )
 
 
 if __name__ == "__main__":

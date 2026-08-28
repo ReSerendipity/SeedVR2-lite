@@ -160,6 +160,11 @@ function Get-SeedVR2ModelFilesFromConfig {
 }
 
 # --------------------------------------------------- 组件 payload 组装 ----
+# 仓库内嵌权重小资产（pos_emb/neg_emb），随代码一并提交，CI 无需联网拉取。
+# HF 社区模型仓库 numz/SeedVR2_comfyUI 缺失这两个文件（CI 已 404），
+# 但它们很小且本地模型正常运行必需 → 入库作为权威来源（见 docs/project/PORTABLE_BUNDLES.md）。
+$BundleAssetsDir = Join-Path $PSScriptRoot 'bundle_assets'
+
 $CoreIncludeDirs = @('app', 'common', 'model_lib', 'configs_3b', 'configs_7b', 'data')
 $CoreIncludeFiles = @('config.yaml', 'requirements.txt', 'LICENSE', 'NOTICE', 'README.md',
     'USER_AGREEMENT.md', 'SECURITY.md', 'CHANGELOG.md')
@@ -294,7 +299,10 @@ function New-SeedVR2ModelPayload {
     param(
         [Parameter(Mandatory = $true)][string]$PayloadDir,
         [Parameter(Mandatory = $true)][string[]]$FileNames,
-        [Parameter(Mandatory = $true)][string]$SourceModelDir
+        [Parameter(Mandatory = $true)][string]$SourceModelDir,
+        # 文件名 -> 额外来源目录 的映射。给定目录里存在该文件则优先用它，
+        # 否则回退到 $SourceModelDir。用于 pos_emb/neg_emb 这类仓库内嵌资产（CI 无需联网）。
+        [hashtable]$ExtraSourceDir = @{}
     )
     $appDir = Join-Path $PayloadDir $PortableRootName
     $dest = Join-Path $appDir 'model'
@@ -302,7 +310,16 @@ function New-SeedVR2ModelPayload {
     $bytes = 0
     $count = 0
     foreach ($n in $FileNames) {
-        $src = Join-Path $SourceModelDir $n
+        $src = $null
+        if ($ExtraSourceDir.ContainsKey($n) -and $ExtraSourceDir[$n]) {
+            $cand = Join-Path $ExtraSourceDir[$n] $n
+            if (Test-Path -LiteralPath $cand) {
+                $src = $cand
+            }
+        }
+        if (-not $src) {
+            $src = Join-Path $SourceModelDir $n
+        }
         if (-not (Test-Path -LiteralPath $src)) {
             throw "模型组件：缺少权重文件 $src"
         }
@@ -586,7 +603,14 @@ foreach ($id in $Component) {
             $built = New-SeedVR2TorchPayload -PayloadDir $payload -WheelDir $TorchWheelDir
         }
         'model-shared' {
-            $built = New-SeedVR2ModelPayload -PayloadDir $payload -FileNames @($modelCfg.vae_checkpoint, $modelCfg.pos_emb, $modelCfg.neg_emb) -SourceModelDir $ModelDir
+            # pos_emb/neg_emb 是仓库内嵌资产（CI 无需联网）；vae_checkpoint 仍来自 HF 下载的 $ModelDir。
+            $sharedMap = @{
+                $modelCfg.pos_emb = $BundleAssetsDir
+                $modelCfg.neg_emb = $BundleAssetsDir
+            }
+            $built = New-SeedVR2ModelPayload -PayloadDir $payload `
+                -FileNames @($modelCfg.vae_checkpoint, $modelCfg.pos_emb, $modelCfg.neg_emb) `
+                -SourceModelDir $ModelDir -ExtraSourceDir $sharedMap
         }
         'model-fp8' {
             $built = New-SeedVR2ModelPayload -PayloadDir $payload -FileNames @($modelCfg.checkpoint_fp8) -SourceModelDir $ModelDir
