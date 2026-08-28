@@ -658,7 +658,7 @@ a {
 
 .sv-navbar-nav {
     display: flex;
-    align-items: center;
+    align-items: stretch;
     justify-content: center;
     flex: 1;
     gap: var(--sv-space-1);
