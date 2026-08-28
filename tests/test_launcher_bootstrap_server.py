@@ -40,7 +40,10 @@ def test_post_body_parsed_into_last_body(tmp_path: Path):
 @mock.patch("launcher.bootstrap_server.check_models")
 def test_api_models_check_uses_model_check(mock_check, tmp_path: Path):
     mock_check.return_value.to_dict.return_value = {
-        "ready": True, "files": {}, "mandatory_ok": True, "main_model_ok": True,
+        "ready": True,
+        "files": {},
+        "mandatory_ok": True,
+        "main_model_ok": True,
     }
     r = Router(tmp_path)
     r.register_api(tmp_path, tmp_path, SetupState(tmp_path / ".setup_state.json"), "C:/py/python.exe")

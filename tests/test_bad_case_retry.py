@@ -60,9 +60,7 @@ class TestClassifyFailure:
         assert ftype == FailureType.OOM
 
     def test_oom_runtime_error_cuda(self):
-        has_failure, ftype, _reason = classify_failure(
-            error=RuntimeError("RuntimeError: CUDA error: out of memory")
-        )
+        has_failure, ftype, _reason = classify_failure(error=RuntimeError("RuntimeError: CUDA error: out of memory"))
         assert has_failure
         assert ftype == FailureType.OOM
 
@@ -77,9 +75,7 @@ class TestClassifyFailure:
         assert ftype == FailureType.NETWORK
 
     def test_network_socket_error(self):
-        has_failure, ftype, _reason = classify_failure(
-            error=ConnectionError("socket error: broken pipe")
-        )
+        has_failure, ftype, _reason = classify_failure(error=ConnectionError("socket error: broken pipe"))
         assert has_failure
         assert ftype == FailureType.NETWORK
 
@@ -212,9 +208,7 @@ class TestRetryLoop:
     @pytest.mark.asyncio
     async def test_graceful_degradation_when_retries_exhausted(self):
         mock_fn = AsyncMock(return_value=MagicMock(success=False, error="CUDA OOM"))
-        result = await retry_with_bad_case_detection(
-            mock_fn, {"x": 1}, RetryConfig(max_retries=2)
-        )
+        result = await retry_with_bad_case_detection(mock_fn, {"x": 1}, RetryConfig(max_retries=2))
         assert result.success is True  # 优雅降级
         assert result.attempts == 3
         assert result.degraded is True
@@ -223,9 +217,7 @@ class TestRetryLoop:
     @pytest.mark.asyncio
     async def test_all_attempts_exception_returns_failure(self):
         mock_fn = AsyncMock(side_effect=RuntimeError("Something fatal"))
-        result = await retry_with_bad_case_detection(
-            mock_fn, {"x": 1}, RetryConfig(max_retries=2)
-        )
+        result = await retry_with_bad_case_detection(mock_fn, {"x": 1}, RetryConfig(max_retries=2))
         assert result.success is False
         assert result.attempts == 3
 

@@ -59,8 +59,10 @@ def test_run_smoke_test_success():
         ),
     ]
     fake = _FakeUrlopen(plan)
-    with mock.patch("launcher.smoke_test.urlopen", fake), \
-         mock.patch("launcher.smoke_test.time.sleep", return_value=None):
+    with (
+        mock.patch("launcher.smoke_test.urlopen", fake),
+        mock.patch("launcher.smoke_test.time.sleep", return_value=None),
+    ):
         res = run_smoke_test(
             app_base_url="http://127.0.0.1:7870",
             test_image=__file__,
@@ -75,8 +77,10 @@ def test_poll_until_done_failed_task():
         _FakeResp(200, {"success": True, "data": {"status": "failed", "error": "OOM"}}),
     ]
     fake = _FakeUrlopen(plan)
-    with mock.patch("launcher.smoke_test.urlopen", fake), \
-         mock.patch("launcher.smoke_test.time.sleep", return_value=None):
+    with (
+        mock.patch("launcher.smoke_test.urlopen", fake),
+        mock.patch("launcher.smoke_test.time.sleep", return_value=None),
+    ):
         res = poll_until_done("http://127.0.0.1:7870", "abc123", timeout=5)
     assert res.success is False
     assert "OOM" in res.message

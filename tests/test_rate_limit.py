@@ -69,18 +69,12 @@ class TestClientIP:
     def test_xff_ignored_by_default(self):
         """未开启 trust_proxy 时，即使携带伪造 XFF 也以直连 IP 为准。"""
         mw = RateLimitMiddleware(app=None, rate_limit_per_minute=30)
-        assert (
-            mw._client_ip(_make_request(client_host="127.0.0.1", xff="203.0.113.9"))
-            == "127.0.0.1"
-        )
+        assert mw._client_ip(_make_request(client_host="127.0.0.1", xff="203.0.113.9")) == "127.0.0.1"
 
     def test_xff_used_when_trust_proxy_enabled(self):
         """显式开启 trust_proxy 时取 XFF 最左侧地址（原始客户端 IP）。"""
         mw = RateLimitMiddleware(app=None, rate_limit_per_minute=30, trust_proxy=True)
-        assert (
-            mw._client_ip(_make_request(client_host="127.0.0.1", xff="203.0.113.9, 10.0.0.1"))
-            == "203.0.113.9"
-        )
+        assert mw._client_ip(_make_request(client_host="127.0.0.1", xff="203.0.113.9, 10.0.0.1")) == "203.0.113.9"
 
     def test_missing_client_falls_back_to_unknown(self):
         mw = RateLimitMiddleware(app=None, rate_limit_per_minute=30)

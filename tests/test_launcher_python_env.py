@@ -17,15 +17,18 @@ def test_detect_python_envs_venv(tmp_path: Path):
     venv_py = tmp_path / ".venv" / "Scripts" / "python.exe"
     venv_py.parent.mkdir(parents=True)
     venv_py.write_text("x", encoding="utf-8")
-    with mock.patch("launcher.python_env._system_python", return_value=None), \
-         mock.patch("launcher.python_env._winpython_python", return_value=None), \
-         mock.patch("launcher.python_env._python_version", return_value="Python 3.12.0"):
+    with (
+        mock.patch("launcher.python_env._system_python", return_value=None),
+        mock.patch("launcher.python_env._winpython_python", return_value=None),
+        mock.patch("launcher.python_env._python_version", return_value="Python 3.12.0"),
+    ):
         envs = detect_python_envs(tmp_path, SetupState(tmp_path / ".setup_state.json"))
     assert any(e.id == ".venv" for e in envs)
 
 
-@mock.patch("launcher.python_env.subprocess.run", return_value=mock.Mock(
-    returncode=0, stdout="C:\\Python312\\python.exe\n"))
+@mock.patch(
+    "launcher.python_env.subprocess.run", return_value=mock.Mock(returncode=0, stdout="C:\\Python312\\python.exe\n")
+)
 def test_system_python_found(mock_run):
     root = Path("C:/proj")
     p = _system_python(root)
@@ -33,14 +36,15 @@ def test_system_python_found(mock_run):
     assert str(p).lower() == "c:\\python312\\python.exe"
 
 
-@mock.patch("launcher.python_env.subprocess.run", return_value=mock.Mock(
-    returncode=0, stdout="C:\\proj\\.venv\\Scripts\\python.exe\n"))
+@mock.patch(
+    "launcher.python_env.subprocess.run",
+    return_value=mock.Mock(returncode=0, stdout="C:\\proj\\.venv\\Scripts\\python.exe\n"),
+)
 def test_system_python_ignores_own_venv(mock_run):
     assert _system_python(Path("C:/proj")) is None
 
 
-@mock.patch("launcher.python_env.subprocess.run", return_value=mock.Mock(
-    returncode=1, stdout=""))
+@mock.patch("launcher.python_env.subprocess.run", return_value=mock.Mock(returncode=1, stdout=""))
 def test_system_python_none(mock_run):
     assert _system_python(Path("C:/proj")) is None
 

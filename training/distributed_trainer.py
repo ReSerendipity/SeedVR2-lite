@@ -404,7 +404,9 @@ class DistributedTrainer:
         filename += ".pt"
 
         checkpoint_path = checkpoint_dir / filename
-        torch.save(checkpoint, checkpoint_path)  # nosemgrep: pickles-in-pytorch - torch.save 为序列化（非反序列化），非 RCE 向量
+        torch.save(
+            checkpoint, checkpoint_path
+        )  # nosemgrep: pickles-in-pytorch - torch.save 为序列化（非反序列化），非 RCE 向量
         logger.info("检查点已保存: %s", checkpoint_path)
 
     def _load_checkpoint(
@@ -420,7 +422,9 @@ class DistributedTrainer:
             optimizer: 待加载状态的优化器。
             checkpoint_path: 检查点文件路径。
         """
-        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)  # nosemgrep: pickles-in-pytorch - 断点续训加载自产 checkpoint（开发者本地工具，非 Web 攻击面）；加载源受训前配置约束
+        checkpoint = torch.load(
+            checkpoint_path, map_location=self.device, weights_only=False
+        )  # nosemgrep: pickles-in-pytorch - 断点续训加载自产 checkpoint（开发者本地工具，非 Web 攻击面）；加载源受训前配置约束
 
         # 处理 DDP/FSDP 包装
         model_state = model

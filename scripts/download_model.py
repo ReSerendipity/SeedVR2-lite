@@ -58,9 +58,7 @@ _SHARED_FILES: list[str] = [
 _DEFAULT_REPO = "numz/SeedVR2_comfyUI"
 
 
-def _download_file(
-    repo_id: str, filename: str, save_dir: Path, allow_missing: bool = False
-) -> bool:
+def _download_file(repo_id: str, filename: str, save_dir: Path, allow_missing: bool = False) -> bool:
     """下载单个文件到 save_dir，已存在则跳过。
 
     Args:
@@ -97,7 +95,9 @@ def _download_file(
         raise
 
 
-def download_model(model_size: str = "3b", save_dir: str = "model", repo_id: str = _DEFAULT_REPO, with_vae: bool = True) -> None:
+def download_model(
+    model_size: str = "3b", save_dir: str = "model", repo_id: str = _DEFAULT_REPO, with_vae: bool = True
+) -> None:
     """从 HuggingFace 下载指定尺寸的 SeedVR2 模型权重到根目录。
 
     Args:

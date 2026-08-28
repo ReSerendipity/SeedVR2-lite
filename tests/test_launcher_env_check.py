@@ -71,8 +71,7 @@ def test_disk_check_insufficient(mock_usage):
 @mock.patch("launcher.env_check._check_disk_space")
 def test_check_env_aggregates(mock_disk, mock_mem, mock_smi):
     mock_smi.return_value = (
-        "NVIDIA-SMI 572.83  Driver Version: 572.83  CUDA Version: 13.3\n"
-        "|  NVIDIA GeForce RTX 3060\n"
+        "NVIDIA-SMI 572.83  Driver Version: 572.83  CUDA Version: 13.3\n" "|  NVIDIA GeForce RTX 3060\n"
     )
     mock_mem.return_value = "NVIDIA GeForce RTX 3060, 12288 MiB"
     mock_disk.return_value = True

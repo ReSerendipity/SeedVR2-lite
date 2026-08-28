@@ -51,6 +51,7 @@ class TestServerConfig:
     def test_public_host_rejected_without_auth(self):
         """安全强制：0.0.0.0 未配置 SEEDVR2_AUTH_PASSWORD 时必须被拒绝。"""
         import os
+
         old = os.environ.pop("SEEDVR2_AUTH_PASSWORD", None)
         try:
             with pytest.raises(ValueError):

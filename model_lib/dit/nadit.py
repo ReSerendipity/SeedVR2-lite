@@ -343,5 +343,3 @@ class NaDiT(nn.Module):
 
         x_vid, x_txt = na_split(x.view(b, -1, x.shape[-1]), vid_lens, txt_lens)
         return unpatchify(x_vid, window_sizes, self.patch_size)
-
-

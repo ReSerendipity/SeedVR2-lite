@@ -38,9 +38,7 @@ class TestSSEEndpointErrorHandling:
         response = csrf_post(test_app, "/api/restore/nonexistent-sse-task/cancel")
         # csrf_post 自动携带有效 CSRF token，因此不会因 CSRF 失败返回 403。
         # 不存在的 task_id 应精确返回 404。
-        assert response.status_code == 404, (
-            f"Cancel nonexistent task should return 404, got {response.status_code}"
-        )
+        assert response.status_code == 404, f"Cancel nonexistent task should return 404, got {response.status_code}"
 
 
 class TestRestoreEndpointStructure:
@@ -55,8 +53,7 @@ class TestRestoreEndpointStructure:
         for endpoint in endpoints:
             response = test_app.get(endpoint)
             assert response.status_code == 404, (
-                f"Endpoint {endpoint} should return 404 for nonexistent task, "
-                f"got {response.status_code}"
+                f"Endpoint {endpoint} should return 404 for nonexistent task, " f"got {response.status_code}"
             )
 
     def test_restore_progress_nonexistent_404(self, test_app):

@@ -116,7 +116,9 @@ class TestExtractWatermark:
 
         watermarked = embed_watermark(img, payload=payload)
         # 轻微扰动（±2 量化误差，模拟 JPEG 低压缩比）
-        perturbed = np.clip(watermarked.astype(np.int16) + np.random.randint(-2, 3, watermarked.shape), 0, 255).astype(np.uint8)
+        perturbed = np.clip(watermarked.astype(np.int16) + np.random.randint(-2, 3, watermarked.shape), 0, 255).astype(
+            np.uint8
+        )
 
         extracted = extract_watermark(perturbed)
         # DCT 中频对轻微扰动具有鲁棒性

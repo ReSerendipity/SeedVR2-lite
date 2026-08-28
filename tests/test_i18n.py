@@ -70,14 +70,8 @@ class TestResolveKey:
         return {
             "flat_key": "flat_value",
             "version_1.0.label": "Version 1.0",  # 含点的扁平键
-            "nested": {
-                "level1": {
-                    "level2": "deep_value"
-                }
-            },
-            "app": {
-                "title": "App Title"
-            }
+            "nested": {"level1": {"level2": "deep_value"}},
+            "app": {"title": "App Title"},
         }
 
     def test_flat_key_direct_hit(self, sample_translations):
@@ -188,7 +182,9 @@ class TestLocaleMetadata:
     def test_locale_names_match_lang_file_map(self):
         """LOCALE_NAMES 中的语言应在 _LANG_FILE_MAP 中有对应文件"""
         for locale in LOCALE_NAMES:
-            assert locale in _LANG_FILE_MAP or f"{locale}.json" in [f.lower() for f in ["zh.json", "zh-TW.json", "en.json", "ja.json", "fr.json"]]
+            assert locale in _LANG_FILE_MAP or f"{locale}.json" in [
+                f.lower() for f in ["zh.json", "zh-TW.json", "en.json", "ja.json", "fr.json"]
+            ]
 
     def test_all_lang_codes_have_display_names(self):
         """所有支持的语言代码都应有显示名称"""

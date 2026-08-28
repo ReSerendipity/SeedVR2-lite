@@ -74,10 +74,7 @@ def _check_conv3d_memory_bug():
         if not (hasattr(torch, "cuda") and torch.cuda.is_available()):
             return False
         # cuDNN 必须真实可用
-        if not (
-            hasattr(torch.backends.cudnn, "is_available")
-            and torch.backends.cudnn.is_available()
-        ):
+        if not (hasattr(torch.backends.cudnn, "is_available") and torch.backends.cudnn.is_available()):
             return False
         # 设备算力 >= 3.0（NVIDIA）
         if torch.cuda.get_device_capability()[0] < 3:
