@@ -2,6 +2,11 @@
 
 ## [1.5.0] - 2026-08-28
 
+### Bug Fixes
+
+* **integrity:** 重新生成核心模块完整性清单 `integrity_manifest.json`——此前 `app_server.py`/`middleware/csrf.py`/`middleware/rate_limit.py`/`engines/seedvr2_engine.py` 被改动后未同步重生成清单，导致运行/冒烟时报「核心模块完整性校验失败」(KNOWN_ISSUES #27)；新版清单与当前仓库代码 11 个模块全部匹配
+* **release:** 解包脚本 `unpack_portable_bundle.ps1` 默认解包目录从「桌面」改为「分卷所在目录（运行目录）」——运行后 `SeedVR2-Portable` 直接出现在你放分卷的文件夹下，不再落到桌面
+
 ### Features
 
 * **release:** 新增「便携离线分卷包」发行链路 `portable-release.yml`：4 组件（core / torch / model-shared / model-fp8）= 1+2+1+2 共 6 卷、合计约 5.6 GB，每个文件恒 < 2 GiB；tag 触发自动构建并上传全部产物 + `manifest.json` + `SHA256SUMS.txt` + 解包脚本

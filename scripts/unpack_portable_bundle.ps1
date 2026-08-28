@@ -36,7 +36,9 @@ if (-not (Test-Path -LiteralPath $manifestPath)) {
 }
 $manifest = Read-SeedVR2Json -Path $manifestPath
 if (-not $TargetDir) {
-    $TargetDir = Join-Path ([System.Environment]::GetFolderPath('Desktop')) 'SeedVR2-Portable'
+    # 默认解到分卷所在目录（脚本所在目录）本身：运行完直接在该文件夹下出现 SeedVR2-Portable
+    # （appRoot = TargetDir\SeedVR2-Portable），不套两层、不落到桌面。
+    $TargetDir = $BundleDir
 }
 New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
 $TargetDir = (Resolve-Path -LiteralPath $TargetDir).Path
