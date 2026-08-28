@@ -2,9 +2,9 @@
 # Portable offline multi-volume release bundles: 4 components -> volumes, every file < 2 GiB,
 # uploaded to GitHub Release.
 #
-# Relationship with desktop-release.yml: this is the tag-triggered release path. The Inno Setup
-# exe path was reduced to workflow_dispatch-only on 2026-08-28, so the two no longer compete
-# for the same Release. Rationale: docs/project/PORTABLE_BUNDLES.md (local-only doc).
+# This workflow is THE tag-triggered release path. The old Inno Setup exe route
+# (desktop-release.yml) was removed on 2026-08-28 once this path proved out in CI.
+# Rationale: docs/project/PORTABLE_BUNDLES.md (local-only doc).
 #
 # Components and expected volume count (1+2+1+2 = 6 volumes, ~5.6 GB total):
 #   core          app code + WinPython portable interpreter (torch family removed)     1 vol  ~0.2 GB

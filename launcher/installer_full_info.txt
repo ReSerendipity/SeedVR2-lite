@@ -1,8 +1,0 @@
-本安装包包含 SeedVR2 程序本体（WinPython + 应用代码）。
-
-安装后还需下载并安装：
-- SeedVR2-Torch-Installer-<VER>.exe（Torch GPU 依赖，约 2GB）
-
-两个包都必须安装才能运行。
-
-模型文件不受此限制，可手动放入 model/ 目录或后续自动下载。

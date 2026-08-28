@@ -2,7 +2,7 @@
   launcher/release-notes-portable.md
   GitHub Release 正文模板，由 .github/workflows/portable-release.yml 读取并替换占位符后写入 Release。
   占位符：{{VERSION}} = 版本号（不带 v），{{TOTAL_GB}} = 产物合计体积（GB）
-  必须放在已跟踪路径（与 launcher/release-notes-intro.md 同构）：docs/project/ 被 .gitignore 忽略，
+  必须放在受跟踪路径：docs/project/ 等自 2026-08-27 起被 .gitignore 忽略，
   CI checkout 里不会有那些文件，放那里会导致发布步骤读不到正文而失败。
   纪律：本文件描述的每个文件名与步骤都必须与当次 manifest.json 一致，不得凭印象改。
 -->

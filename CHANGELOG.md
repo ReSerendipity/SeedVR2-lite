@@ -12,7 +12,7 @@
 
 ### Miscellaneous Chores
 
-* **ci:** `desktop-release.yml` 移除 `push: tags` 触发，Inno Setup exe 路线降为仅手动构建、产物只留 artifact，不再与分卷包争抢同一 Release
+* **ci:** 删除旧 Inno Setup exe 路径（`desktop-release.yml`、`launcher/` 引导器与 3 个 `.iss`、`scripts/build_dual_installers.ps1`、7 个 `tests/test_launcher_*`），分卷便携包成为唯一发行产物；保留 `launcher/release-notes-portable.md` 与 `launcher/requirements-small.txt`（便携包链路继续使用）
 
 ## [1.3.0](https://github.com/ReSerendipity/SeedVR2-lite/compare/v1.2.0...v1.3.0) (2026-08-22)
 

@@ -410,7 +410,7 @@ function Start-SeedVR2TorchWheelPrepare {
     Write-Host "  pip download torch 家族（含传递依赖，约 2.8 GB，需联网）..."
     # 关键：不能加 --no-deps。离线安装用 pip --no-index --find-links，torch 的传递依赖
     # （filelock / fsspec / jinja2 / networkx / sympy / typing-extensions）必须一起落盘，
-    # 否则解包端 pip 会因找不到依赖而失败。现有 launcher\installer_torch.iss 正是踩了这个坑。
+    # 否则解包端 pip 会因找不到依赖而失败（旧 exe 安装器正是踩了这个坑，已删除）。
     $res = Invoke-SeedVR2Native -Exe $PythonExe -Arguments @(
         '-m', 'pip', 'download', 'torch', 'torchvision', 'torchaudio',
         '--index-url', $IndexUrl, '-d', $WheelDir, '--timeout', '300', '--retries', '3'
