@@ -336,11 +336,11 @@ const SeedVR2 = (() => {
     /**
      * @function csrfHeaders
      * @description 构造包含CSRF Token的请求头对象
-     * @returns {Object} 请求头对象，包含X-CSRF-Token字段（如果Token存在）
+     * @returns {Object} 请求头对象，始终包含X-CSRF-Token字段（Token为空时传空字符串）
      */
     function csrfHeaders() {
         const token = getCsrfToken();
-        return token ? { 'X-CSRF-Token': token } : {};
+        return { 'X-CSRF-Token': token || '' };
     }
 
     /**

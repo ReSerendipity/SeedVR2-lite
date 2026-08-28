@@ -678,6 +678,7 @@ a {
     font-weight: 400;
     transition: all var(--sv-transition);
     white-space: nowrap;
+    min-height: 44px;
 }
 
 .sv-nav-link:hover {
@@ -1296,6 +1297,7 @@ a {
     padding: 0.3rem var(--sv-space-3);
     font-size: 0.78rem;
     min-width: 44px;
+    min-height: 44px;
 }
 
 .sv-btn-lg {

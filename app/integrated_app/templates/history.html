@@ -341,12 +341,17 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div class="empty-icon"><i class="bi bi-exclamation-triangle"></i></div>
                             <div class="empty-title">${I["history.load_failed"]}</div>
                             <div class="empty-desc">${err.message}</div>
-                            <button class="sv-btn sv-btn-primary sv-btn-sm sv-mt-3" onclick="loadHistory(1)">
+                            <button class="sv-btn sv-btn-primary sv-btn-sm sv-mt-3 btn-retry-load" data-page="1">
                                 <i class="bi bi-arrow-clockwise"></i> ${I["common.retry"] || 'Retry'}
                             </button>
                         </div>
                     </td>
                 </tr>`;
+            // 事件委托：重试按钮
+            document.getElementById('historyBody').querySelector('.btn-retry-load')?.addEventListener('click', (e) => {
+                const page = parseInt(e.currentTarget.dataset.page || '1', 10);
+                loadHistory(page);
+            });
         } finally {
             if (loadingEl) loadingEl.classList.remove('htmx-request');
         }

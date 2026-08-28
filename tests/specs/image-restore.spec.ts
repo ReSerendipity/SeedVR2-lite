@@ -173,7 +173,7 @@ test.describe('Image Restore Flow', () => {
       // Wait for an error toast to appear. Do not silently swallow failures
       // with double-catch — if no toast appears, the test should fail with a
       // clear message pointing to the missing error feedback.
-      const toast = page.locator('#toastContainer .sv-toast-error, .toast.show, [role="alert"]');
+      const toast = page.locator('#toastContainer .sv-toast.toast-error');
       await expect(toast.first()).toBeVisible({ timeout: 10000 });
     });
   });
