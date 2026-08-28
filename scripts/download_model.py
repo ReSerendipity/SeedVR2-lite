@@ -31,6 +31,7 @@
 
 import argparse
 import importlib.util
+import sys
 from pathlib import Path
 
 # 各模型尺寸对应的权重文件名（与 config.yaml model.models.<size> 保持一致）
@@ -157,6 +158,12 @@ def download_model(
 
 
 if __name__ == "__main__":
+    # Windows 控制台/CI runner 的默认编码可能是 cp1252/GBK，本脚本输出含中文，
+    # 不显式改 UTF-8 会在 print 处抛 UnicodeEncodeError（与是否下载成功无关）。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="SeedVR2 模型下载工具")
     parser.add_argument(
         "--size",

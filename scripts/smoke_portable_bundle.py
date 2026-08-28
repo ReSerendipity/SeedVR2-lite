@@ -70,12 +70,7 @@ def make_test_png(width: int = 96, height: int = 96) -> bytes:
             rows.extend(((x * 255) // max(width - 1, 1), (y * 255) // max(height - 1, 1), 128))
 
     def chunk(tag: bytes, data: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(data))
-            + tag
-            + data
-            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-        )
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
 
     return (
         b"\x89PNG\r\n\x1a\n"
@@ -85,16 +80,12 @@ def make_test_png(width: int = 96, height: int = 96) -> bytes:
     )
 
 
-def build_multipart(
-    fields: dict[str, str], file_field: str, filename: str, filedata: bytes
-) -> tuple[bytes, str]:
+def build_multipart(fields: dict[str, str], file_field: str, filename: str, filedata: bytes) -> tuple[bytes, str]:
     """构造 multipart/form-data 请求体。"""
     boundary = f"----seedvr2smoke{uuid.uuid4().hex}"
     parts: list[bytes] = []
     for key, value in fields.items():
-        parts.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode()
-        )
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode())
     parts.append(
         f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; '
         f'filename="{filename}"\r\nContent-Type: image/png\r\n\r\n'.encode() + filedata + b"\r\n"
@@ -261,9 +252,7 @@ def submit_restore(base: str, token: str, png: bytes, resolution: int, timeout: 
         "Cookie": f"{CSRF_COOKIE_NAME}={token}",
         CSRF_HEADER_NAME: token,
     }
-    status, payload, _ = http_json(
-        f"{base}/api/restore/", method="POST", data=body, headers=headers, timeout=timeout
-    )
+    status, payload, _ = http_json(f"{base}/api/restore/", method="POST", data=body, headers=headers, timeout=timeout)
     if status == 403:
         raise SmokeError(f"CSRF 403（打包的中间件/配置异常）：{payload}")
     if status != 200:
@@ -335,9 +324,7 @@ def find_python(app_dir: Path, explicit: str) -> str:
     """确定用于跑冒烟的 python：显式参数 → 便携 WPy64 → 当前解释器。"""
     if explicit:
         return explicit
-    for py in sorted(app_dir.glob("WPy64-*/python*/python.exe")) + sorted(
-        app_dir.glob("WPy64-*/python/python.exe")
-    ):
+    for py in sorted(app_dir.glob("WPy64-*/python*/python.exe")) + sorted(app_dir.glob("WPy64-*/python/python.exe")):
         if py.is_file():
             return str(py)
     print("  警告：未找到便携解释器，退回当前 python（可能缺少应用依赖）")
@@ -378,16 +365,12 @@ def run(args: argparse.Namespace) -> int:
             png = make_test_png()
             print(f"  测试图：{len(png)} 字节 PNG")
             try:
-                task_id = submit_restore(
-                    base, token_value, png, args.resolution, args.submit_timeout
-                )
+                task_id = submit_restore(base, token_value, png, args.resolution, args.submit_timeout)
             except SmokeError as exc:
                 tolerable, why = classify_submit_failure(str(exc))
                 if tolerable and not args.require_inference:
                     print(f"WARN  未跑通推理但属可容忍原因：{why}\n      {exc}")
-                    print(
-                        "  打包层面验收通过：服务可启动 + 路由可达 + CSRF 链路正确 + torch 可导入"
-                    )
+                    print("  打包层面验收通过：服务可启动 + 路由可达 + CSRF 链路正确 + torch 可导入")
                     print("      （要强制真跑一次推理，请加 --require-inference）")
                     return 0
                 raise
@@ -396,9 +379,7 @@ def run(args: argparse.Namespace) -> int:
             verify_output(data, app_dir)
             elapsed = data.get("processing_time") or data.get("elapsed")
             print(f"  推理耗时：{elapsed}")
-            print(
-                f"PASS  解包后可真实完成一次修复（{'required' if args.require_inference else 'observed'}）"
-            )
+            print(f"PASS  解包后可真实完成一次修复（{'required' if args.require_inference else 'observed'}）")
             return 0
         finally:
             if proc is not None:
@@ -426,21 +407,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--python", default="", help="指定 python（默认自动取便携 WPy64 解释器）")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument(
-        "--boot-timeout", type=int, default=600, help="等待应用就绪的秒数（首次含模型加载）"
-    )
+    parser.add_argument("--boot-timeout", type=int, default=600, help="等待应用就绪的秒数（首次含模型加载）")
     parser.add_argument("--submit-timeout", type=int, default=180)
     parser.add_argument("--task-timeout", type=int, default=1800, help="等待修复任务完成的秒数")
     parser.add_argument("--resolution", type=int, default=512, help="冒烟任务目标分辨率，小才快")
-    parser.add_argument(
-        "--log", default="", help="服务日志路径，默认 <app-dir>/logs/smoke_portable.log"
-    )
-    parser.add_argument(
-        "--require-inference", action="store_true", help="必须真跑完一次修复（有 GPU 时使用）"
-    )
+    parser.add_argument("--log", default="", help="服务日志路径，默认 <app-dir>/logs/smoke_portable.log")
+    parser.add_argument("--require-inference", action="store_true", help="必须真跑完一次修复（有 GPU 时使用）")
     parser.add_argument("--keep-log", action="store_true", help="结束时打印日志路径")
     return parser.parse_args(argv)
 
 
+def force_utf8_output() -> None:
+    """把 stdout/stderr 切成 UTF-8。
+
+    Windows 控制台或 CI runner 的默认编码可能是 cp1252/GBK，本脚本输出含中文，
+    不显式改就会在 print 处抛 UnicodeEncodeError，把「验收通过」误报成失败。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 if __name__ == "__main__":
+    force_utf8_output()
     sys.exit(run(parse_args()))

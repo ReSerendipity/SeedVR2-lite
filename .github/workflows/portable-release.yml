@@ -1,14 +1,21 @@
 # .github/workflows/portable-release.yml
-# 便携离线分卷包：4 个组件 → 分卷产物（每个恒 < 2 GiB），上传 GitHub Release。
+# Portable offline multi-volume release bundles: 4 components -> volumes, every file < 2 GiB,
+# uploaded to GitHub Release.
 #
-# 与 desktop-release.yml 的关系：本工作流是「分卷压缩包」发行链路，是 tag 触发时唯一自动
-# 上传 Release 的产物；exe 安装包（Inno Setup）已降为仅 workflow_dispatch 手动构建。
+# Relationship with desktop-release.yml: this is the tag-triggered release path. The Inno Setup
+# exe path was reduced to workflow_dispatch-only on 2026-08-28, so the two no longer compete
+# for the same Release. Rationale: docs/project/PORTABLE_BUNDLES.md (local-only doc).
 #
-# 组件与预期卷数（1+2+1+2 = 6 卷，合计约 5.6 GB；model-* 为本地真实权重实测）：
-#   core          应用代码 + WinPython 便携解释器（torch 家族已摘除）      → 1 卷  ~0.2 GB
-#   torch         PyTorch cu128 wheels（含传递依赖，解包时离线 pip 安装）  → 2 卷  ~2.8 GB
-#   model-shared  ema_vae_fp16 + pos_emb + neg_emb                        → 1 卷  ~0.45 GB
-#   model-fp8     seedvr2_ema_3b_fp8_e4m3fn（唯一内置主模型，FP8）          → 2 卷  ~2.17 GB
+# Components and expected volume count (1+2+1+2 = 6 volumes, ~5.6 GB total):
+#   core          app code + WinPython portable interpreter (torch family removed)     1 vol  ~0.2 GB
+#   torch         PyTorch cu128 wheels incl. transitive deps (installed offline)       2 vol  ~2.8 GB
+#   model-shared  ema_vae_fp16 + pos_emb + neg_emb                                     1 vol  ~0.45 GB
+#   model-fp8     seedvr2_ema_3b_fp8_e4m3fn (the one bundled main model)               2 vol  ~2.17 GB
+#
+# IMPORTANT - keep every `run:` block ASCII-only. GitHub writes the step body to a temp .ps1
+# without a BOM and runs it under Windows PowerShell 5.1, which decodes BOM-less files using the
+# ANSI codepage: non-ASCII literals come out mojibake and can even break parsing. Step `name:`
+# values are safe (the YAML itself is parsed as UTF-8).
 name: Portable Release
 
 on:
@@ -48,6 +55,8 @@ jobs:
     timeout-minutes: 120
     env:
       BUNDLE_DIR: ${{ github.workspace }}\dist\bundles
+      PYTHONIOENCODING: utf-8
+      PYTHONUNBUFFERED: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -69,10 +78,10 @@ jobs:
           } else {
             $v = (& python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])").Trim()
           }
-          if (-not $v) { throw "无法确定版本号" }
+          if (-not $v) { throw "cannot resolve version" }
           "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           "tag=v$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
-          Write-Host "便携包版本：$v"
+          Write-Host "bundle version: $v"
 
       - name: 安装下载依赖
         shell: powershell
@@ -82,12 +91,12 @@ jobs:
         id: files
         shell: powershell
         run: |
-          # 与 build_portable_bundle.ps1 共用同一份文件名来源，工作流不硬编码权重名。
+          # Single source of truth for weight filenames: the build script reads config.yaml.
           $names = & .\scripts\build_portable_bundle.ps1 -PrintModelFiles
-          if ($LASTEXITCODE -ne 0) { throw "-PrintModelFiles 执行失败" }
+          if ($LASTEXITCODE -ne 0) { throw "-PrintModelFiles failed" }
           $names = @($names | Where-Object { $_ })
-          if ($names.Count -lt 1) { throw "未取到权重文件名" }
-          Write-Host "需要权重：$($names -join ', ')"
+          if ($names.Count -lt 1) { throw "no weight filenames resolved" }
+          Write-Host "required weights: $($names -join ', ')"
           "names=$($names -join ' ')" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
       - name: 下载便携包模型权重
@@ -96,7 +105,7 @@ jobs:
           $names = "${{ steps.files.outputs.names }}".Split(' ') | Where-Object { $_ }
           $argv = @("scripts/download_model.py", "--files") + $names
           & python $argv
-          if ($LASTEXITCODE -ne 0) { throw "模型权重下载失败" }
+          if ($LASTEXITCODE -ne 0) { throw "model weight download failed" }
           Get-ChildItem model | Select-Object Name, @{n='GB';e={[math]::Round($_.Length/1GB,3)}} | Format-Table -AutoSize
 
       - name: 构建分卷包
@@ -105,54 +114,54 @@ jobs:
           $comp = "${{ github.event.inputs.components }}"
           if (-not $comp) { $comp = "core,torch,model-shared,model-fp8" }
           $list = @($comp.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-          Write-Host "构建组件：$($list -join ', ')"
-          # -Format zip：Win10/11 自带 tar.exe 与资源管理器可直接解压，用户无需安装 7-Zip。
+          Write-Host "building components: $($list -join ', ')"
+          # -Format zip so end users can extract with built-in tar.exe / Explorer (no 7-Zip needed).
           & .\scripts\build_portable_bundle.ps1 `
             -Version "${{ steps.ver.outputs.version }}" `
             -Component $list `
             -OutDir $env:BUNDLE_DIR `
             -Format zip
-          if ($LASTEXITCODE -ne 0) { throw "便携包构建失败" }
+          if ($LASTEXITCODE -ne 0) { throw "bundle build failed" }
           Get-ChildItem $env:BUNDLE_DIR -File |
             Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}} | Format-Table -AutoSize
 
-      - name: 体积门禁复核（独立于构建脚本的第二道判定）
+      - name: 体积门禁复核
         id: gate
         shell: powershell
         run: |
           $limit = 2147483648
-          $bad = @(Get-ChildItem $env:BUNDLE_DIR -File | Where-Object { $_.Length -gt $limit -and $_.Name -ne 'upload-list.txt' })
-          foreach ($f in (Get-ChildItem $env:BUNDLE_DIR -File)) {
-            Write-Host ("{0,10:N1} MB  {1}" -f ($f.Length/1MB), $f.Name)
-          }
+          $all = @(Get-ChildItem $env:BUNDLE_DIR -File | Where-Object { $_.Name -ne 'upload-list.txt' })
+          foreach ($f in $all) { Write-Host ("{0,10:N1} MB  {1}" -f ($f.Length/1MB), $f.Name) }
+          $bad = @($all | Where-Object { $_.Length -gt $limit })
           if ($bad.Count -gt 0) {
-            foreach ($f in $bad) { Write-Host "::error::超过 2GiB 上限：$($f.Name)" }
-            throw "存在超过 GitHub 单文件上限的产物，禁止上传"
+            foreach ($f in $bad) { Write-Host "::error::oversize asset, refusing to upload: $($f.Name)" }
+            throw "one or more artifacts exceed the GitHub 2 GiB per-file limit"
           }
-          $total = (Get-ChildItem $env:BUNDLE_DIR -File | Where-Object { $_.Name -ne 'upload-list.txt' } | Measure-Object Length -Sum).Sum
-          Write-Host "产物合计：$([math]::Round($total/1GB,2)) GB"
+          $total = ($all | Measure-Object Length -Sum).Sum
+          Write-Host "artifacts total: $([math]::Round($total/1GB,2)) GB"
           "total_gb=$([math]::Round($total/1GB,2))" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
       - name: 解包冒烟验收（发布前门禁）
         shell: powershell
         run: |
-          # 用真实解包器把刚产出的分卷解到临时目录：一次跑完
-          # 逐卷校验 → 合并 → 解压 → 离线 pip 装 torch → 落地核对，等价于用户侧首装。
+          # Real unpacker run against the freshly produced volumes: per-part SHA256 -> merge ->
+          # extract -> offline torch install -> manifest cross-check. Equivalent to a user's first install.
           $smokeRoot = Join-Path $env:RUNNER_TEMP 'portable-smoke'
           & .\scripts\unpack_portable_bundle.ps1 -BundleDir $env:BUNDLE_DIR -TargetDir $smokeRoot
-          if ($LASTEXITCODE -ne 0) { throw "解包失败，禁止发布" }
+          if ($LASTEXITCODE -ne 0) { throw "unpack failed, refusing to publish" }
           $appDir = Join-Path $smokeRoot 'SeedVR2-Portable'
-          if (-not (Test-Path $appDir)) { throw "解包后未生成 $appDir" }
+          if (-not (Test-Path $appDir)) { throw "unpack did not produce $appDir" }
 
-          # 冒烟：启动便携服务 → 健康检查 → CSRF 双提交 → 提交修复任务。
-          # GitHub 托管 windows runner 无 GPU，因此不强制跑完推理；但打包层面的任何错误
-          # （服务起不来 / 路由 404 / CSRF 403 / import 失败 / 输出损坏）都会让本步骤失败。
-          # 有 GPU 的 self-hosted runner 可把 require_gpu_inference 勾上，强制真跑一次修复。
+          # Smoke: start portable server -> health -> CSRF double-submit -> restore task -> verify output.
+          # Hosted windows runners have no GPU, so real inference is not required here; but any packaging
+          # level error (server won't boot, 404 route, 403 CSRF, import failure, corrupt output) fails hard.
+          # On a self-hosted GPU runner, set require_gpu_inference=true to force a real restore.
           $extra = @()
           if ('${{ github.event.inputs.require_gpu_inference }}' -eq 'true') { $extra += '--require-inference' }
-          & python .\scripts\smoke_portable_bundle.py --app-dir $appDir --boot-timeout 600 --submit-timeout 600 --task-timeout 1800 --resolution 512 --keep-log @extra
-          if ($LASTEXITCODE -ne 0) { throw "解包冒烟验收未通过，禁止发布" }
-          Get-Content (Join-Path $appDir 'logs\smoke_portable.log') -Tail 20 -Encoding UTF8 | ForEach-Object { Write-Host "  | $_" }
+          & python .\scripts\smoke_portable_bundle.py --app-dir $appDir --boot-timeout 900 --submit-timeout 900 --task-timeout 1800 --resolution 512 --keep-log @extra
+          if ($LASTEXITCODE -ne 0) { throw "post-unpack smoke gate failed, refusing to publish" }
+          $log = Join-Path $appDir 'logs\smoke_portable.log'
+          if (Test-Path $log) { Get-Content $log -Tail 20 -Encoding UTF8 | ForEach-Object { Write-Host "  | $_" } }
 
       - name: 保留为 workflow artifact（未发布 Release 时）
         if: github.event_name == 'workflow_dispatch' && !inputs.upload_to_release
@@ -170,12 +179,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ steps.ver.outputs.tag }}"
-          gh release create $tag --title "SeedVR2 $tag（便携离线分卷包）" --target ${{ github.sha }} 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host "Release $tag 可能已存在，继续" }
-          # 显式 -Encoding UTF8：本模板含中文且不带 BOM，PS 5.1 的 Get-Content 默认按 ANSI 码页解码。
-          # （线上 v1.4.10 的中文正文未出问题，说明 runner 码页与本机 GBK 不同；此处显式声明属防御性。）
+          # ASCII-only title: PS 5.1 decodes this BOM-less step script with the ANSI codepage.
+          gh release create $tag --title "SeedVR2 $tag (portable offline bundles)" --target ${{ github.sha }} 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host "release $tag may already exist, continuing" }
+          # -Encoding UTF8 is required: the template holds Chinese and has no BOM.
           $notes = Get-Content -Raw -Encoding UTF8 launcher\release-notes-portable.md
-          if (-not $notes) { throw "读不到 launcher\release-notes-portable.md，Release 正文将为空" }
+          if (-not $notes) { throw "cannot read launcher/release-notes-portable.md, release body would be empty" }
           $notes = $notes.Replace('{{VERSION}}', "${{ steps.ver.outputs.version }}")
           $notes = $notes.Replace('{{TOTAL_GB}}', "${{ steps.gate.outputs.total_gb }}")
           $bodyFile = Join-Path $env:RUNNER_TEMP "portable-release-body.md"
@@ -191,10 +200,10 @@ jobs:
           $tag = "${{ steps.ver.outputs.tag }}"
           $skip = @('upload-list.txt')
           $files = @(Get-ChildItem $env:BUNDLE_DIR -File | Where-Object { $skip -notcontains $_.Name })
-          if ($files.Count -eq 0) { throw "没有可上传的产物" }
+          if ($files.Count -eq 0) { throw "no artifacts to upload" }
           foreach ($f in $files) {
-            Write-Host "上传 $($f.Name) ($([math]::Round($f.Length/1MB,1)) MB)"
+            Write-Host "uploading $($f.Name) ($([math]::Round($f.Length/1MB,1)) MB)"
             gh release upload $tag $f.FullName --clobber
-            if ($LASTEXITCODE -ne 0) { throw "上传 $($f.Name) 失败" }
+            if ($LASTEXITCODE -ne 0) { throw "upload failed: $($f.Name)" }
           }
           gh release view $tag --json assets -q '.assets[].name'
