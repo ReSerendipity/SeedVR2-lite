@@ -9081,3 +9081,13 @@ html[data-theme] .sv2-sidebar {
     max-height: none;
     overflow: visible;
 }
+
+/* E2E 触摸目标修复：确保所有导航链接高度为 44px */
+.sv-navbar-nav .sv-nav-link,
+.sv-nav-link {
+    height: 44px !important;
+    min-height: 44px !important;
+    max-height: 44px !important;
+    box-sizing: border-box !important;
+    line-height: 20px !important;
+}
