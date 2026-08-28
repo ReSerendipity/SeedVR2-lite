@@ -24,8 +24,8 @@ import re
 import threading
 import time
 import uuid
-from collections.abc import Awaitable, Callable
-from typing import MutableMapping, Any
+from collections.abc import Awaitable, Callable, MutableMapping
+from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request

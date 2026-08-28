@@ -91,7 +91,8 @@ export class BasePage {
     if (message) {
       locator = locator.filter({ hasText: message });
     }
-    await locator.waitFor({ state: 'visible', timeout });
+    // 使用 .first() 避免 strict mode violation（同一时刻可能存在多个 toast）
+    await locator.first().waitFor({ state: 'visible', timeout });
     return locator.first();
   }
 
