@@ -166,9 +166,7 @@ def download_model(
     print("=" * 60)
 
     if missing or not ok:
-        raise RuntimeError(
-            f"以下权重文件未能从 {repo_id} 下载到（或下载后缺失）：{', '.join(missing or files)}"
-        )
+        raise RuntimeError(f"以下权重文件未能从 {repo_id} 下载到（或下载后缺失）：{', '.join(missing or files)}")
 
 
 if __name__ == "__main__":
