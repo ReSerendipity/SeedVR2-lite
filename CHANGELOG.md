@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.5.0] - 2026-08-28
+
+### Features
+
+* **release:** 新增「便携离线分卷包」发行链路 `portable-release.yml`：4 组件（core / torch / model-shared / model-fp8）= 1+2+1+2 共 6 卷、合计约 5.6 GB，每个文件恒 < 2 GiB；tag 触发自动构建并上传全部产物 + `manifest.json` + `SHA256SUMS.txt` + 解包脚本
+* **release:** 便携包内置 3B FP8 主模型与 cu128 torch wheels（含传递依赖），解包器全程离线（逐卷 SHA256 → 合并 → 解压 → 离线 pip 安装 → 按清单核对落地）
+* **release:** 新增解包后冒烟推理验收 `scripts/smoke_portable_bundle.py` 作为发布前门禁（启动便携服务 → CSRF 双提交 → 真实修复任务 → 输出文件校验），托管 runner 无 GPU 时仅容忍 GPU 缺失原因，打包层面任何错误即失败
+* **scripts:** `download_model.py` 支持 `--files` 精确选择权重，发行构建只取 FP8、不拖下 6.3 GB FP16
+* **scripts:** 新增常驻端到端自测 `scripts/test_portable_bundle.ps1`（31 项断言）
+
+### Miscellaneous Chores
+
+* **ci:** `desktop-release.yml` 移除 `push: tags` 触发，Inno Setup exe 路线降为仅手动构建、产物只留 artifact，不再与分卷包争抢同一 Release
+
 ## [1.3.0](https://github.com/ReSerendipity/SeedVR2-lite/compare/v1.2.0...v1.3.0) (2026-08-22)
 
 

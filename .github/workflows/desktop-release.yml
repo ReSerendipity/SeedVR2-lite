@@ -1,15 +1,17 @@
 # .github/workflows/desktop-release.yml
-# 桌面发行：构建启动器（PyInstaller）→ 预装小依赖 → 编译安装包（ISCC）→ 上传。
+# 桌面发行（旧 exe 路线）：构建启动器（PyInstaller）→ 预装小依赖 → 编译安装包（ISCC）。
+#
+# ⚠️ 2026-08-28 起降级为「仅手动构建」：不再由 tag 自动发布到 Release。
+#    tag 发行改由 .github/workflows/portable-release.yml（分卷离线压缩包）负责，
+#    原因见 docs/project/PORTABLE_BUNDLES.md §1（含本路线已知缺陷：torch 包 dontcopy
+#    未 ExtractTemporaryFile、pip download --no-deps 使离线安装必败，见 KNOWN_ISSUES #23）。
+#    本工作流只产出 workflow artifact；确需发布 exe 时，从 artifact 手动上传。
 # 触发方式：
-#   - workflow_dispatch：手动验证构建（不上传 Release，只留 workflow artifact）
-#   - push tag v*：构建并上传安装包到对应 Release（GPG 签名由 gpg-signed-release.yml
-#     在 release published 时自动完成，本工作流不重复签名）
+#   - workflow_dispatch：手动构建，产物留 workflow artifact
 name: Desktop Release
 
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
 
 permissions:
   contents: write
@@ -140,25 +142,16 @@ jobs:
             dist/SeedVR2-Torch-Installer-*
             dist/SHA256SUMS
 
-      - name: 打 tag 时上传到 Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: 产物清单
+        shell: powershell
         run: |
-          $tag = "${{ github.ref_name }}"
-          # release-please 可能已创建 Release，已存在则忽略
-          gh release create $tag --title "$tag" --generate-notes 2>$null
-          # 组装发布说明：新手安装指引（顶部）+ 自动 changelog
-          $body = gh release view $tag --json body -q .body 2>$null
-          $intro = Get-Content -Raw launcher\release-notes-intro.md
-          $bodyFile = Join-Path $env:RUNNER_TEMP "relbody.md"
-          ($intro + "`n" + $body) | Set-Content -Path $bodyFile -Encoding utf8
-          gh release edit $tag --notes-file $bodyFile
-          # 上传所有产物：Full 包 + Torch 分卷包（exe + 多个 .bin）
-          $files = @()
-          $files += Get-ChildItem dist\SeedVR2-Setup-Full-*.exe
-          $files += Get-ChildItem dist\SeedVR2-Torch-Installer-*.*
-          foreach ($f in $files) {
-            gh release upload $tag "$($f.FullName)" --clobber
+          # 本工作流到此结束：只留 artifact，不碰 Release。
+          # Release 发布由 portable-release.yml 负责；若确需发布 exe，把下面 launcher\release-notes-intro.md
+          # 作为正文、把 dist\ 下的 exe/bin/SHA256SUMS 手动 gh release upload 上去。
+          Get-ChildItem dist\SeedVR2-Setup-Full-*.exe, dist\SeedVR2-Torch-Installer-*.*, dist\SHA256SUMS |
+            Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}} | Format-Table -AutoSize
+          $limit = 2147483648
+          $bad = @(Get-ChildItem dist\ | Where-Object { $_.Length -gt $limit })
+          if ($bad.Count -gt 0) {
+            foreach ($f in $bad) { Write-Host "::warning::$($f.Name) 超过 GitHub 2GiB 上限，需人工分卷" }
           }
-          gh release upload $tag dist\SHA256SUMS --clobber

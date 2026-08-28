@@ -1,6 +1,6 @@
 # SeedVR2-lite
 
-![Version](https://img.shields.io/badge/version-1.4.1-blue?style=for-the-badge) ![License](https://img.shields.io/badge/license-Apache%202.0-green?style=for-the-badge) ![Python](https://img.shields.io/badge/python-3.12+-yellow?style=for-the-badge&logo=python&logoColor=white) ![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white) ![Models](https://img.shields.io/badge/model-3B%20%7C%207B%20%7C%207B--Sharp-ff69b4?style=for-the-badge) [![CI](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/ReSerendipity/SeedVR2-lite/actions)
+![Version](https://img.shields.io/badge/version-1.5.0-blue?style=for-the-badge) ![License](https://img.shields.io/badge/license-Apache%202.0-green?style=for-the-badge) ![Python](https://img.shields.io/badge/python-3.12+-yellow?style=for-the-badge&logo=python&logoColor=white) ![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white) ![Models](https://img.shields.io/badge/model-3B%20%7C%207B%20%7C%207B--Sharp-ff69b4?style=for-the-badge) [![CI](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/ReSerendipity/SeedVR2-lite/actions)
 
 **基于 SeedVR2 扩散模型的视频与图像超分辨率修复工具箱 — 独立运行的 Web UI，一键修复，无需 ComfyUI**
 
@@ -20,6 +20,20 @@
 无需 GPU / Python / 模型权重，纯前端仿真环境即可体验完整界面与流程模拟：
 
 **<https://reserendipity.github.io/SeedVR2-lite/>** （由 `.github/workflows/pages-deploy.yml` 自动部署 `demo/` 目录，详见 [demo/README.md](demo/README.md)）
+
+## 📦 免安装便携包（GitHub Releases）
+
+不想装 Python、不想配环境？**直接下载分卷便携包**——已含便携 Python、全部依赖（含 CUDA 12.8 版 torch）与 3B FP8 模型，解压即用：
+
+**<https://github.com/ReSerendipity/SeedVR2-lite/releases/latest>**
+
+1. 下载 `core` / `torch` / `model-shared` / `model-fp8` 四个组件的**全部** `.00N` 分卷，外加 `manifest.json`、`SHA256SUMS.txt`、`unpack_portable_bundle.ps1`、`portable_bundle_lib.ps1`（因 GitHub 单文件 2 GiB 上限而拆分，合计约 5.6 GB）
+2. 放进同一文件夹，执行 `powershell -ExecutionPolicy Bypass -File .\unpack_portable_bundle.ps1 -TargetDir D:\SeedVR2`
+   （自动校验每个分卷的 SHA256 → 合并 → 解压 → 离线装 torch，全程不需联网）
+3. 双击 `SeedVR2-Portable\start-portable.bat`，浏览器打开 <http://127.0.0.1:7870>
+
+要求：Windows x64 + NVIDIA 显卡（显存 ≥ 8 GB）+ 磁盘 ≥ 15 GB。图片修复开箱即用；
+视频修复需自行安装 FFmpeg 并加入 PATH（许可证原因不随包分发，见 [NOTICE](NOTICE) 第 4 条）。
 
 ## 🆕 新手必看
 

@@ -19,6 +19,9 @@
     # 只下主权重，不下共享的 VAE / 嵌入
     python scripts/download_model.py --size 3b --no-vae
 
+    # 精确只取便携包需要的最小可运行集合（FP8 主权重 + 共享组件），不拖下 FP16
+    python scripts/download_model.py --files seedvr2_ema_3b_fp8_e4m3fn.safetensors ema_vae_fp16.safetensors pos_emb.pt neg_emb.pt
+
 特性:
     - 幂等：已存在的文件自动跳过，不会重复下载
     - 断点续传：由 huggingface_hub 内部机制保证
@@ -96,7 +99,11 @@ def _download_file(repo_id: str, filename: str, save_dir: Path, allow_missing: b
 
 
 def download_model(
-    model_size: str = "3b", save_dir: str = "model", repo_id: str = _DEFAULT_REPO, with_vae: bool = True
+    model_size: str = "3b",
+    save_dir: str = "model",
+    repo_id: str = _DEFAULT_REPO,
+    with_vae: bool = True,
+    only_files: list[str] | None = None,
 ) -> None:
     """从 HuggingFace 下载指定尺寸的 SeedVR2 模型权重到根目录。
 
@@ -105,6 +112,8 @@ def download_model(
         save_dir: 模型保存的根目录路径（权重文件直接写入该目录根下）。默认为 "model"。
         repo_id: HuggingFace 仓库 ID，默认为社区整理仓库 numz/SeedVR2_comfyUI。
         with_vae: 是否同时下载共享的 VAE 与文本嵌入文件。默认为 True。
+        only_files: 精确指定要下载的文件名列表，给出时忽略 model_size 清单与 with_vae。
+                    用于便携包只取单一精度（如只要 FP8）而不拖下整组权重。默认为 None。
 
     Returns:
         None
@@ -116,16 +125,18 @@ def download_model(
         print("请先安装 huggingface_hub: pip install huggingface_hub")
         return
 
-    if model_size not in _MODEL_FILES:
-        print(f"无效的模型大小: {model_size}，可选: {list(_MODEL_FILES.keys())}")
-        return
+    if only_files:
+        files = list(only_files)
+    else:
+        if model_size not in _MODEL_FILES:
+            print(f"无效的模型大小: {model_size}，可选: {list(_MODEL_FILES.keys())}")
+            return
+        files = list(_MODEL_FILES[model_size])
+        if with_vae:
+            files += _SHARED_FILES
 
     save_path = Path(save_dir)
     save_path.mkdir(parents=True, exist_ok=True)
-
-    files = list(_MODEL_FILES[model_size])
-    if with_vae:
-        files += _SHARED_FILES
 
     print(f"来源仓库: {repo_id}")
     print(f"保存目录: {save_path.resolve()}")
@@ -160,5 +171,12 @@ if __name__ == "__main__":
         action="store_true",
         help="不下载共享的 VAE / 文本嵌入文件",
     )
+    parser.add_argument(
+        "--files",
+        nargs="+",
+        default=None,
+        metavar="NAME",
+        help="只下载列出的文件名（忽略 --size/--no-vae 的整组清单），" "用于便携打包只取单一精度权重",
+    )
     args = parser.parse_args()
-    download_model(args.size, args.save_dir, args.repo, with_vae=not args.no_vae)
+    download_model(args.size, args.save_dir, args.repo, with_vae=not args.no_vae, only_files=args.files)

@@ -1,0 +1,200 @@
+# .github/workflows/portable-release.yml
+# 便携离线分卷包：4 个组件 → 分卷产物（每个恒 < 2 GiB），上传 GitHub Release。
+#
+# 与 desktop-release.yml 的关系：本工作流是「分卷压缩包」发行链路，是 tag 触发时唯一自动
+# 上传 Release 的产物；exe 安装包（Inno Setup）已降为仅 workflow_dispatch 手动构建。
+#
+# 组件与预期卷数（1+2+1+2 = 6 卷，合计约 5.6 GB；model-* 为本地真实权重实测）：
+#   core          应用代码 + WinPython 便携解释器（torch 家族已摘除）      → 1 卷  ~0.2 GB
+#   torch         PyTorch cu128 wheels（含传递依赖，解包时离线 pip 安装）  → 2 卷  ~2.8 GB
+#   model-shared  ema_vae_fp16 + pos_emb + neg_emb                        → 1 卷  ~0.45 GB
+#   model-fp8     seedvr2_ema_3b_fp8_e4m3fn（唯一内置主模型，FP8）          → 2 卷  ~2.17 GB
+name: Portable Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（留空则依次取 tag / pyproject.toml）"
+        required: false
+        default: ""
+      components:
+        description: "要构建的组件，逗号分隔"
+        required: false
+        default: "core,torch,model-shared,model-fp8"
+      upload_to_release:
+        description: "是否上传到 GitHub Release（false 时只留 workflow artifact）"
+        type: boolean
+        required: false
+        default: false
+      require_gpu_inference:
+        description: "冒烟是否强制跑完一次真实推理（需 self-hosted GPU runner；托管 runner 无 GPU）"
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: portable-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-bundles:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      BUNDLE_DIR: ${{ github.workspace }}\dist\bundles
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 解析版本号
+        id: ver
+        shell: powershell
+        run: |
+          $ref = "${{ github.ref_name }}"
+          $inputVer = "${{ github.event.inputs.version }}"
+          if ($ref -match '^v(.+)$') {
+            $v = $Matches[1]
+          } elseif ($inputVer) {
+            $v = $inputVer
+          } else {
+            $v = (& python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])").Trim()
+          }
+          if (-not $v) { throw "无法确定版本号" }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          "tag=v$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          Write-Host "便携包版本：$v"
+
+      - name: 安装下载依赖
+        shell: powershell
+        run: python -m pip install --upgrade pip huggingface_hub
+
+      - name: 从 config.yaml 取所需权重文件名
+        id: files
+        shell: powershell
+        run: |
+          # 与 build_portable_bundle.ps1 共用同一份文件名来源，工作流不硬编码权重名。
+          $names = & .\scripts\build_portable_bundle.ps1 -PrintModelFiles
+          if ($LASTEXITCODE -ne 0) { throw "-PrintModelFiles 执行失败" }
+          $names = @($names | Where-Object { $_ })
+          if ($names.Count -lt 1) { throw "未取到权重文件名" }
+          Write-Host "需要权重：$($names -join ', ')"
+          "names=$($names -join ' ')" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+
+      - name: 下载便携包模型权重
+        shell: powershell
+        run: |
+          $names = "${{ steps.files.outputs.names }}".Split(' ') | Where-Object { $_ }
+          $argv = @("scripts/download_model.py", "--files") + $names
+          & python $argv
+          if ($LASTEXITCODE -ne 0) { throw "模型权重下载失败" }
+          Get-ChildItem model | Select-Object Name, @{n='GB';e={[math]::Round($_.Length/1GB,3)}} | Format-Table -AutoSize
+
+      - name: 构建分卷包
+        shell: powershell
+        run: |
+          $comp = "${{ github.event.inputs.components }}"
+          if (-not $comp) { $comp = "core,torch,model-shared,model-fp8" }
+          $list = @($comp.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          Write-Host "构建组件：$($list -join ', ')"
+          # -Format zip：Win10/11 自带 tar.exe 与资源管理器可直接解压，用户无需安装 7-Zip。
+          & .\scripts\build_portable_bundle.ps1 `
+            -Version "${{ steps.ver.outputs.version }}" `
+            -Component $list `
+            -OutDir $env:BUNDLE_DIR `
+            -Format zip
+          if ($LASTEXITCODE -ne 0) { throw "便携包构建失败" }
+          Get-ChildItem $env:BUNDLE_DIR -File |
+            Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}} | Format-Table -AutoSize
+
+      - name: 体积门禁复核（独立于构建脚本的第二道判定）
+        id: gate
+        shell: powershell
+        run: |
+          $limit = 2147483648
+          $bad = @(Get-ChildItem $env:BUNDLE_DIR -File | Where-Object { $_.Length -gt $limit -and $_.Name -ne 'upload-list.txt' })
+          foreach ($f in (Get-ChildItem $env:BUNDLE_DIR -File)) {
+            Write-Host ("{0,10:N1} MB  {1}" -f ($f.Length/1MB), $f.Name)
+          }
+          if ($bad.Count -gt 0) {
+            foreach ($f in $bad) { Write-Host "::error::超过 2GiB 上限：$($f.Name)" }
+            throw "存在超过 GitHub 单文件上限的产物，禁止上传"
+          }
+          $total = (Get-ChildItem $env:BUNDLE_DIR -File | Where-Object { $_.Name -ne 'upload-list.txt' } | Measure-Object Length -Sum).Sum
+          Write-Host "产物合计：$([math]::Round($total/1GB,2)) GB"
+          "total_gb=$([math]::Round($total/1GB,2))" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+
+      - name: 解包冒烟验收（发布前门禁）
+        shell: powershell
+        run: |
+          # 用真实解包器把刚产出的分卷解到临时目录：一次跑完
+          # 逐卷校验 → 合并 → 解压 → 离线 pip 装 torch → 落地核对，等价于用户侧首装。
+          $smokeRoot = Join-Path $env:RUNNER_TEMP 'portable-smoke'
+          & .\scripts\unpack_portable_bundle.ps1 -BundleDir $env:BUNDLE_DIR -TargetDir $smokeRoot
+          if ($LASTEXITCODE -ne 0) { throw "解包失败，禁止发布" }
+          $appDir = Join-Path $smokeRoot 'SeedVR2-Portable'
+          if (-not (Test-Path $appDir)) { throw "解包后未生成 $appDir" }
+
+          # 冒烟：启动便携服务 → 健康检查 → CSRF 双提交 → 提交修复任务。
+          # GitHub 托管 windows runner 无 GPU，因此不强制跑完推理；但打包层面的任何错误
+          # （服务起不来 / 路由 404 / CSRF 403 / import 失败 / 输出损坏）都会让本步骤失败。
+          # 有 GPU 的 self-hosted runner 可把 require_gpu_inference 勾上，强制真跑一次修复。
+          $extra = @()
+          if ('${{ github.event.inputs.require_gpu_inference }}' -eq 'true') { $extra += '--require-inference' }
+          & python .\scripts\smoke_portable_bundle.py --app-dir $appDir --boot-timeout 600 --submit-timeout 600 --task-timeout 1800 --resolution 512 --keep-log @extra
+          if ($LASTEXITCODE -ne 0) { throw "解包冒烟验收未通过，禁止发布" }
+          Get-Content (Join-Path $appDir 'logs\smoke_portable.log') -Tail 20 -Encoding UTF8 | ForEach-Object { Write-Host "  | $_" }
+
+      - name: 保留为 workflow artifact（未发布 Release 时）
+        if: github.event_name == 'workflow_dispatch' && !inputs.upload_to_release
+        uses: actions/upload-artifact@v4
+        with:
+          name: SeedVR2-Portable-${{ steps.ver.outputs.version }}-win-x64
+          path: dist/bundles/**
+          retention-days: 5
+          if-no-files-found: error
+
+      - name: 创建或确认 Release
+        if: github.event_name == 'push' || inputs.upload_to_release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.ver.outputs.tag }}"
+          gh release create $tag --title "SeedVR2 $tag（便携离线分卷包）" --target ${{ github.sha }} 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host "Release $tag 可能已存在，继续" }
+          # 显式 -Encoding UTF8：本模板含中文且不带 BOM，PS 5.1 的 Get-Content 默认按 ANSI 码页解码。
+          # （线上 v1.4.10 的中文正文未出问题，说明 runner 码页与本机 GBK 不同；此处显式声明属防御性。）
+          $notes = Get-Content -Raw -Encoding UTF8 launcher\release-notes-portable.md
+          if (-not $notes) { throw "读不到 launcher\release-notes-portable.md，Release 正文将为空" }
+          $notes = $notes.Replace('{{VERSION}}', "${{ steps.ver.outputs.version }}")
+          $notes = $notes.Replace('{{TOTAL_GB}}', "${{ steps.gate.outputs.total_gb }}")
+          $bodyFile = Join-Path $env:RUNNER_TEMP "portable-release-body.md"
+          [System.IO.File]::WriteAllText($bodyFile, $notes, (New-Object System.Text.UTF8Encoding($false)))
+          gh release edit $tag --notes-file $bodyFile
+
+      - name: 上传全部分卷与校验文件
+        if: github.event_name == 'push' || inputs.upload_to_release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.ver.outputs.tag }}"
+          $skip = @('upload-list.txt')
+          $files = @(Get-ChildItem $env:BUNDLE_DIR -File | Where-Object { $skip -notcontains $_.Name })
+          if ($files.Count -eq 0) { throw "没有可上传的产物" }
+          foreach ($f in $files) {
+            Write-Host "上传 $($f.Name) ($([math]::Round($f.Length/1MB,1)) MB)"
+            gh release upload $tag $f.FullName --clobber
+            if ($LASTEXITCODE -ne 0) { throw "上传 $($f.Name) 失败" }
+          }
+          gh release view $tag --json assets -q '.assets[].name'
