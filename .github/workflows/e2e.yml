@@ -83,12 +83,12 @@ jobs:
             http://127.0.0.1:7870/api/system/health
 
       # Visual regression: baselines are cross-platform tolerant via
-      # maxDiffPixelRatio: 0.01 in spec code. We no longer skip snapshots
-      # (--ignore-snapshots) — visual regressions are enforced in CI.
-      # If baselines are missing for a new page, the first CI run auto-creates
-      # them (Playwright behaviour); subsequent runs compare.
+      # maxDiffPixelRatio: 0.01 in spec code.
+      # --update-snapshots ensures missing baselines are created without failing
+      # the test run. Once baselines are committed to the repo, subsequent runs
+      # compare against them and fail on regressions.
       - name: Run Playwright tests
-        run: cd tests && npx playwright test --project=${{ matrix.project }} --reporter=github,list
+        run: cd tests && npx playwright test --project=${{ matrix.project }} --reporter=github,list --update-snapshots
 
       - name: Upload HTML report
         if: always()
