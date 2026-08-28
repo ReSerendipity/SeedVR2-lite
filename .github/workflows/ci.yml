@@ -48,6 +48,7 @@ jobs:
 
       - name: Coverage Gate (>= 50%)
         if: always()
+        shell: bash
         run: |
           python - <<'PYEOF'
           import os, xml.etree.ElementTree as ET
