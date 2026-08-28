@@ -680,7 +680,10 @@ a {
     font-weight: 400;
     transition: all var(--sv-transition);
     white-space: nowrap;
+    height: 44px !important;
     min-height: 44px !important;
+    max-height: 44px !important;
+    box-sizing: border-box;
 }
 
 .sv-nav-link:hover {
@@ -6581,7 +6584,10 @@ input[type="number"].sv-form-control::-webkit-outer-spin-button {
     font-weight: 500;
     position: relative;
     overflow: hidden;
+    height: 44px !important;
     min-height: 44px !important;
+    max-height: 44px !important;
+    box-sizing: border-box;
 }
 
 .sv-nav-link::before {
