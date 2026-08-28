@@ -680,7 +680,7 @@ a {
     font-weight: 400;
     transition: all var(--sv-transition);
     white-space: nowrap;
-    min-height: 44px;
+    min-height: 44px !important;
 }
 
 .sv-nav-link:hover {
@@ -1346,7 +1346,7 @@ a {
     font-size: var(--sv-text-base);
     transition: border-color var(--sv-transition), box-shadow var(--sv-transition), background-color var(--sv-transition);
     outline: none;
-    min-height: 44px;
+    min-height: 44px !important;
 }
 
 .sv-form-control:hover:not(:focus) {
@@ -6581,7 +6581,7 @@ input[type="number"].sv-form-control::-webkit-outer-spin-button {
     font-weight: 500;
     position: relative;
     overflow: hidden;
-    min-height: 44px;
+    min-height: 44px !important;
 }
 
 .sv-nav-link::before {
@@ -6998,6 +6998,7 @@ input[type="number"].sv-form-control::-webkit-outer-spin-button {
     font-family: inherit;
     outline: none;
     transition: all var(--sv-transition);
+    min-height: 44px !important;
 }
 
 .sv-param-input:focus,
