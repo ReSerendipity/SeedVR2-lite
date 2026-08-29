@@ -130,8 +130,8 @@ packaging==25.0
 parso==0.8.7
 # NO HASH (run generate_lock.py with network): pathspec==1.1.1
 pathspec==1.1.1
-# NO HASH (run generate_lock.py with network): pillow==12.2.0
-pillow==12.2.0
+# NO HASH (run generate_lock.py with network): pillow==12.3.0
+pillow==12.3.0
 # NO HASH (run generate_lock.py with network): platformdirs==4.10.0
 platformdirs==4.10.0
 # NO HASH (run generate_lock.py with network): pluggy==1.6.0
@@ -176,8 +176,8 @@ rotary-embedding-torch==0.9.1
 ruff==0.15.17
 # NO HASH (run generate_lock.py with network): safetensors==0.8.0
 safetensors==0.8.0
-# NO HASH (run generate_lock.py with network): setuptools==79.0.1
-setuptools==79.0.1
+# NO HASH (run generate_lock.py with network): setuptools==83.0.0
+setuptools==83.0.0
 # NO HASH (run generate_lock.py with network): shellingham==1.5.4
 shellingham==1.5.4
 # NO HASH (run generate_lock.py with network): six==1.17.0
@@ -222,8 +222,8 @@ watchfiles==1.2.0
 wcwidth==0.8.1
 # NO HASH (run generate_lock.py with network): websockets==16.0
 websockets==16.0
-# NO HASH (run generate_lock.py with network): wheel==0.45.1
-wheel==0.45.1
+# NO HASH (run generate_lock.py with network): wheel==0.46.2
+wheel==0.46.2
 # NO HASH (run generate_lock.py with network): winpython==16.5.20250614
 winpython==16.5.20250614
 # NO HASH (run generate_lock.py with network): zipp==4.1.0
