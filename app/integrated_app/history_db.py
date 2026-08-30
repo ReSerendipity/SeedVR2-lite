@@ -48,6 +48,8 @@ class HistoryRecord:
         processing_time: 处理耗时（秒）。
         created_at: 记录创建时间（ISO 格式字符串）。
         error_message: 失败时的错误信息。
+        output_size_bytes: 输出文件大小（字节），用于按任务聚合存储成本（P1-1）。
+        vram_peak_mb: 本次推理的 VRAM 峰值（MB），无监控数据时为 0（P2-1）。
     """
 
     id: int | None = None
@@ -60,6 +62,8 @@ class HistoryRecord:
     processing_time: float = 0.0
     created_at: str = ""
     error_message: str = ""
+    output_size_bytes: int = 0
+    vram_peak_mb: float = 0.0
 
 
 @dataclass
@@ -99,7 +103,7 @@ class HistoryDB:
         _db: aiosqlite 持久连接对象，None 表示未连接。
     """
 
-    def __init__(self, db_path: str = "data/history.db", timeout: float = 30.0):
+    def __init__(self, db_path: str = "data/history.db", timeout: float = 30.0, max_records: int = 10000):
         """初始化历史数据库管理器。
 
         Args:
@@ -108,9 +112,12 @@ class HistoryDB:
             timeout: 获取数据库锁的最长等待时间（秒），默认 30.0。
                 传递给底层 sqlite3.connect，避免高并发写入时因锁竞争
                 立即抛出 "database is locked"，而是在超时窗口内重试等待。
+            max_records: 历史记录保留上限，超出时自动裁剪最旧记录（落实
+                config.yaml history.max_records 的"超出自动清理"承诺），0 表示不限制。
         """
         self.db_path = db_path
         self.timeout = timeout
+        self.max_records = max_records
         self._initialized = False
         self._db: aiosqlite.Connection | None = None
 
@@ -151,9 +158,19 @@ class HistoryDB:
                 parameters TEXT DEFAULT '{}',
                 processing_time REAL DEFAULT 0.0,
                 created_at TEXT NOT NULL,
-                error_message TEXT DEFAULT ''
+                error_message TEXT DEFAULT '',
+                output_size_bytes INTEGER DEFAULT 0,
+                vram_peak_mb REAL DEFAULT 0.0
             )
         """)
+
+        # 增量迁移：老库补列（成本治理 P1-1 每任务存储可见性 + P2-1 VRAM 峰值落库）
+        cursor = await db.execute("PRAGMA table_info(history)")
+        existing_cols = {row[1] for row in await cursor.fetchall()}
+        if "output_size_bytes" not in existing_cols:
+            await db.execute("ALTER TABLE history ADD COLUMN output_size_bytes INTEGER DEFAULT 0")
+        if "vram_peak_mb" not in existing_cols:
+            await db.execute("ALTER TABLE history ADD COLUMN vram_peak_mb REAL DEFAULT 0.0")
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
@@ -211,7 +228,14 @@ class HistoryDB:
 
     # ==================== 私有辅助方法 ====================
 
-    async def _execute_write(self, sql: str, params: tuple | list = (), *, many: bool = False) -> int:
+    async def _execute_write(
+        self,
+        sql: str,
+        params: tuple | list = (),
+        *,
+        many: bool = False,
+        want_rowcount: bool = False,
+    ) -> int:
         """统一写入入口（INSERT/UPDATE/DELETE），自动提交。
         使用持久连接；若未初始化则先初始化。
 
@@ -219,9 +243,13 @@ class HistoryDB:
             sql: SQL 语句
             params: 单条参数 tuple 或批量参数 list[tuple]（需配合 many=True）
             many: True 时使用 executemany 批量执行
+            want_rowcount: True 时返回受影响行数（DELETE/UPDATE 计数用）。
+                False（默认）时返回 lastrowid（INSERT 主键用）。注意部分
+                sqlite3 版本在 DELETE 后 lastrowid 仍非 None（残留上次
+                INSERT 的 rowid），因此需要行数时必须显式传 True。
 
         Returns:
-            lastrowid（INSERT）或 rowcount（UPDATE/DELETE）。
+            want_rowcount=True 时为 rowcount；否则为 lastrowid（INSERT）或 rowcount。
         """
         if not self._initialized:
             await self.initialize()
@@ -231,6 +259,8 @@ class HistoryDB:
         else:
             cursor = await self._db.execute(sql, params)
         await self._db.commit()
+        if want_rowcount:
+            return cursor.rowcount if cursor.rowcount is not None else 0
         return cursor.lastrowid if cursor.lastrowid is not None else cursor.rowcount
 
     async def _fetch_one(self, sql: str, params: tuple | list = ()) -> sqlite3.Row | None:
@@ -260,9 +290,9 @@ class HistoryDB:
         if not record.created_at:
             record.created_at = datetime.now().isoformat()
 
-        return await self._execute_write(
-            """INSERT INTO history (task_type, input_file, output_file, model_size, status, parameters, processing_time, created_at, error_message)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        record_id = await self._execute_write(
+            """INSERT INTO history (task_type, input_file, output_file, model_size, status, parameters, processing_time, created_at, error_message, output_size_bytes, vram_peak_mb)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 record.task_type,
                 record.input_file,
@@ -273,8 +303,12 @@ class HistoryDB:
                 record.processing_time,
                 record.created_at,
                 record.error_message,
+                record.output_size_bytes,
+                record.vram_peak_mb,
             ),
         )
+        await self._maybe_prune()
+        return record_id
 
     async def add_records(self, records: list[HistoryRecord]) -> list[int]:
         """批量添加历史记录，通过 _execute_write 统一入口写入，失败回退到逐条插入"""
@@ -297,11 +331,13 @@ class HistoryDB:
                     record.processing_time,
                     record.created_at,
                     record.error_message,
+                    record.output_size_bytes,
+                    record.vram_peak_mb,
                 )
             )
 
-        sql = """INSERT INTO history (task_type, input_file, output_file, model_size, status, parameters, processing_time, created_at, error_message)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        sql = """INSERT INTO history (task_type, input_file, output_file, model_size, status, parameters, processing_time, created_at, error_message, output_size_bytes, vram_peak_mb)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
         try:
             last_id = await self._execute_write(sql, rows, many=True)
@@ -325,6 +361,7 @@ class HistoryDB:
                 return []
 
         assert last_id is not None
+        await self._maybe_prune()
         return list(range(last_id - len(rows) + 1, last_id + 1))
 
     async def update_record(self, record_id: int, **kwargs) -> bool:
@@ -333,7 +370,15 @@ class HistoryDB:
             return False
 
         # 列名白名单验证，防止 SQL 注入；SET 子句中的列名来自白名单，不存在注入风险
-        allowed_columns = {"status", "output_file", "processing_time", "error_message", "parameters"}
+        allowed_columns = {
+            "status",
+            "output_file",
+            "processing_time",
+            "error_message",
+            "parameters",
+            "output_size_bytes",
+            "vram_peak_mb",
+        }
         invalid_keys = set(kwargs.keys()) - allowed_columns
         if invalid_keys:
             raise ValueError(f"不允许更新的列: {invalid_keys}，允许的列: {allowed_columns}")
@@ -461,7 +506,58 @@ class HistoryDB:
             conditions.append("status = ?")
             params.append(status)
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
-        return await self._execute_write(f"DELETE FROM history{where}", params)
+        return await self._execute_write(f"DELETE FROM history{where}", params, want_rowcount=True)
+
+    async def count_records(self) -> int:
+        """统计当前历史记录总数。"""
+        row = await self._fetch_one("SELECT COUNT(*) FROM history")
+        return int(row[0]) if row else 0
+
+    async def prune_old_records(self, max_records: int | None = None) -> int:
+        """按保留上限裁剪最旧的历史记录。
+
+        落实 config.yaml history.max_records 的"超出自动清理旧记录"语义：
+        保留最新 max_records 条（按自增 id 降序），删除其余。
+        DELETE 会触发 history_ad 触发器，FTS 全文索引自动同步。
+
+        Args:
+            max_records: 保留上限。None 时使用构造时传入的 self.max_records。
+
+        Returns:
+            实际删除的记录数（0 表示无需裁剪）。
+        """
+        limit = self.max_records if max_records is None else max_records
+        if not limit or limit <= 0:
+            return 0
+        count = await self.count_records()
+        if count <= limit:
+            return 0
+        # 两步确定式裁剪：先取「保留边界」的最新第 limit 条记录 id，
+        # 再删除该 id 之前的所有记录。避免 SQLite 中 DELETE 的 WHERE
+        # 含同表子查询时会看到删除中途表状态的歧义行为
+        row = await self._fetch_one(
+            "SELECT id FROM history ORDER BY id DESC LIMIT 1 OFFSET ?",
+            (limit - 1,),
+        )
+        if row is None:
+            return 0
+        cutoff_id = int(row[0])
+        deleted = await self._execute_write(
+            "DELETE FROM history WHERE id < ?",
+            (cutoff_id,),
+            want_rowcount=True,
+        )
+        if deleted:
+            logger.info(f"历史记录超出上限 {limit}，已自动裁剪最旧 {deleted} 条")
+        return deleted or 0
+
+    async def _maybe_prune(self) -> None:
+        """写入后按上限裁剪（best-effort，不影响插入主流程）。"""
+        try:
+            if self.max_records and self.max_records > 0:
+                await self.prune_old_records()
+        except Exception as e:
+            logger.warning(f"历史记录自动裁剪失败: {e}")
 
     # ==================== 任务状态持久化 ====================
 
@@ -558,11 +654,19 @@ class HistoryDB:
         avg_row = await self._fetch_one("SELECT AVG(processing_time) FROM history WHERE status = 'completed'")
         avg_time = avg_row[0] if avg_row and avg_row[0] else 0
 
+        # 成本可见性聚合（P1-1）：总耗时 / 总输出体积
+        agg_row = await self._fetch_one("""SELECT COALESCE(SUM(processing_time), 0), COALESCE(SUM(output_size_bytes), 0)
+               FROM history WHERE status = 'completed'""")
+        total_time = agg_row[0] if agg_row and agg_row[0] else 0
+        total_output_bytes = agg_row[1] if agg_row and agg_row[1] else 0
+
         return {
             "total_records": total,
             "by_type": by_type,
             "by_status": by_status,
             "avg_processing_time": round(avg_time, 2),
+            "total_processing_time": round(total_time, 2),
+            "total_output_bytes": int(total_output_bytes),
         }
 
     async def close(self):
@@ -580,6 +684,8 @@ class HistoryDB:
 
     def _row_to_record(self, row: sqlite3.Row) -> HistoryRecord:
         """将数据库行转换为 HistoryRecord"""
+        # 老库迁移前列可能不存在：用 keys() 集合兜底（Row 的 in 比较的是值，不能用）
+        cols = set(row.keys())
         return HistoryRecord(
             id=row["id"],
             task_type=row["task_type"],
@@ -591,6 +697,8 @@ class HistoryDB:
             processing_time=row["processing_time"],
             created_at=row["created_at"],
             error_message=row["error_message"],
+            output_size_bytes=row["output_size_bytes"] if "output_size_bytes" in cols else 0,
+            vram_peak_mb=row["vram_peak_mb"] if "vram_peak_mb" in cols else 0.0,
         )
 
     def _row_to_task_record(self, row: sqlite3.Row) -> TaskRecord:

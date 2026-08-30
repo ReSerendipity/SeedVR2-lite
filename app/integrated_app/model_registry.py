@@ -28,6 +28,7 @@
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -99,7 +100,49 @@ class _ModelRegistry:
         self._engine: Any = None
         self._listeners: list[Listener] = []
         self._engine_classes: dict[str, type] = {}
+        self._last_activity_ts: float = time.time()
         self._initialized = True
+
+    # ------------------------------------------------------------------
+    # 空闲活动跟踪（成本治理 P1-2：模型空闲超时自动卸载）
+    # ------------------------------------------------------------------
+
+    def touch_activity(self) -> None:
+        """记录一次推理/加载活动（线程安全）。
+
+        在任务提交、模型加载、任务开始执行等节点调用，
+        供空闲卸载判定使用。
+        """
+        with self._rlock:
+            self._last_activity_ts = time.time()
+
+    @property
+    def seconds_since_activity(self) -> float:
+        """距最近一次活动经过的秒数（线程安全）。"""
+        with self._rlock:
+            return max(0.0, time.time() - self._last_activity_ts)
+
+    @staticmethod
+    def should_idle_unload(
+        model_loaded: bool,
+        seconds_idle: float,
+        idle_minutes: int,
+        task_running: bool,
+    ) -> bool:
+        """空闲卸载判定（纯函数，便于测试）。
+
+        Args:
+            model_loaded: 当前是否有已加载模型。
+            seconds_idle: 已空闲秒数。
+            idle_minutes: 空闲卸载阈值（分钟），<=0 表示禁用。
+            task_running: 是否有推理任务正在执行。
+
+        Returns:
+            bool: 满足卸载条件返回 True。
+        """
+        if not model_loaded or idle_minutes <= 0 or task_running:
+            return False
+        return seconds_idle >= idle_minutes * 60
 
     # ------------------------------------------------------------------
     # 属性访问（线程安全）

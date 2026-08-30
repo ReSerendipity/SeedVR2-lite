@@ -181,7 +181,10 @@ class MetricsCollector:
             snap.gpu_name = gpu_info.name
             snap.gpu_vram_total_mb = gpu_info.total_vram_mb
             snap.gpu_vram_available_mb = gpu_info.available_vram_mb
-            snap.gpu_utilization_pct = gpu_info.utilization_pct
+            # P2-1: 优先 SM 真实利用率，nvidia-smi 不可用时回退显存占用比
+            snap.gpu_utilization_pct = (
+                gpu_info.sm_utilization_pct if gpu_info.sm_utilization_pct is not None else gpu_info.utilization_pct
+            )
         except Exception:
             snap.gpu_available = False
 

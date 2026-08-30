@@ -206,9 +206,7 @@ async def lifespan(app: FastAPI):
             )
         recheck_interval = int(security_cfg.get("integrity_recheck_interval_seconds", 1800) or 0)
         if recheck_interval > 0:
-            app.state.integrity_recheck_task = asyncio.create_task(
-                periodic_selfcheck_loop(recheck_interval)
-            )
+            app.state.integrity_recheck_task = asyncio.create_task(periodic_selfcheck_loop(recheck_interval))
             logger.info(f"运行时完整性周期重检已启用（间隔 {recheck_interval}s）")
     except RuntimeError as e:
         # enforce 模式下校验失败：阻断启动，禁止带病运行
@@ -281,6 +279,63 @@ async def lifespan(app: FastAPI):
     stale_cleanup_task = asyncio.create_task(_periodic_stale_cleanup())
     app.state.stale_cleanup_task = stale_cleanup_task
 
+    # outputs/ 保留策略清理（P0-1）：启动先执行一次回收残留，再挂周期任务。
+    # 推理任务运行期间跳过，避免与活动任务的临时帧写入竞争
+    try:
+        from app.integrated_app.services.output_retention import cleanup_outputs_once, periodic_output_cleanup
+
+        retention_cfg = config.get("retention", {}) or {}
+        outputs_dir = os.path.join(os.getcwd(), "outputs")
+        max_age_days = int(retention_cfg.get("outputs_max_age_days", 14) or 0)
+        max_files = int(retention_cfg.get("outputs_max_files", 0) or 0)
+        if max_age_days > 0 or max_files > 0:
+            removed, freed = await asyncio.to_thread(cleanup_outputs_once, outputs_dir, max_age_days, max_files)
+            if removed:
+                logger.info(f"启动 outputs 清理: 删除 {removed} 个过期文件，释放 {freed / (1024 * 1024):.1f}MB")
+            cleanup_interval = int(retention_cfg.get("outputs_cleanup_interval_seconds", 3600) or 0)
+
+            def _outputs_busy() -> bool:
+                current = app.state.task_queue.current_task_id
+                return (current() if callable(current) else current) is not None
+
+            output_cleanup_task = asyncio.create_task(
+                periodic_output_cleanup(outputs_dir, max_age_days, max_files, cleanup_interval, is_busy=_outputs_busy)
+            )
+            app.state.output_cleanup_task = output_cleanup_task
+            logger.info(
+                f"outputs 保留策略已启用: max_age_days={max_age_days}, max_files={max_files}, "
+                f"interval={cleanup_interval}s"
+            )
+    except Exception as e:
+        logger.warning(f"outputs 保留策略清理初始化失败（不影响服务启动）: {e}")
+
+    # 模型空闲超时自动卸载（P1-2）：cache_model 驻留模型时，
+    # 空闲超过阈值自动卸载释放 GPU/CPU 资源，兼顾跨任务复用与资源可用性
+    idle_unload_minutes = int(config.get("model", {}).get("idle_unload_minutes", 15) or 0)
+    if idle_unload_minutes > 0:
+
+        async def _periodic_model_idle_unload():
+            while True:
+                await asyncio.sleep(60)
+                try:
+                    current = app.state.task_queue.current_task_id
+                    task_running = (current() if callable(current) else current) is not None
+                    if model_registry.should_idle_unload(
+                        model_loaded=model_registry.model_loaded,
+                        seconds_idle=model_registry.seconds_since_activity,
+                        idle_minutes=idle_unload_minutes,
+                        task_running=task_running,
+                    ):
+                        logger.info(f"模型已空闲超过 {idle_unload_minutes} 分钟，自动卸载释放资源")
+                        await app.state.model_manager.unload_model()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning(f"模型空闲卸载失败: {e}")
+
+        app.state.model_idle_unload_task = asyncio.create_task(_periodic_model_idle_unload())
+        logger.info(f"模型空闲自动卸载已启用: {idle_unload_minutes} 分钟无任务即卸载")
+
     backend_value = gpu_manager.backend.value if gpu_manager.backend else "unavailable"
     logger.info(f"GPU 后端: {backend_value}, 设备: {gpu_manager.device_name}")
 
@@ -315,6 +370,20 @@ async def lifespan(app: FastAPI):
         stale_cleanup.cancel()
         with suppress(asyncio.CancelledError):
             await stale_cleanup
+
+    # 停止 outputs 保留策略周期清理任务
+    output_cleanup = getattr(app.state, "output_cleanup_task", None)
+    if output_cleanup:
+        output_cleanup.cancel()
+        with suppress(asyncio.CancelledError):
+            await output_cleanup
+
+    # 停止模型空闲卸载任务
+    idle_unload_task = getattr(app.state, "model_idle_unload_task", None)
+    if idle_unload_task:
+        idle_unload_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await idle_unload_task
 
     # 停止运行时完整性周期重检任务
     integrity_recheck = getattr(app.state, "integrity_recheck_task", None)
@@ -428,6 +497,7 @@ def create_app(config: dict | None = None) -> FastAPI:
     app.state.gpu_backend = gpu_manager
     app.state.history_db = HistoryDB(
         db_path=config.get("history", {}).get("db_path", "data/history.db"),
+        max_records=config.get("history", {}).get("max_records", 10000),
     )
     _runtime_task_cfg = config.get("runtime", {}).get("task", {})
     app.state.task_queue = TaskQueue(
