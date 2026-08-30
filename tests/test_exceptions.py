@@ -153,11 +153,12 @@ class TestExceptionHandlerMiddleware:
         exc = InsufficientVRAMError("需要 16GB 显存", detail={"required_gb": 16, "available_gb": 8})
         body = _build_error_body(exc)
         assert body == {
+            "success": False,
             "error": {
                 "code": "INSUFFICIENT_VRAM",
                 "message": "需要 16GB 显存",
                 "detail": {"required_gb": 16, "available_gb": 8},
-            }
+            },
         }
 
     def test_model_load_error_response(self):

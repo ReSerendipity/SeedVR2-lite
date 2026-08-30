@@ -107,7 +107,10 @@ class TestUnifiedRestoreAPI:
         response = csrf_post(test_app, "/api/restore/", data={})
         assert response.status_code == 400
         data = response.json()
-        assert "detail" in data
+        # P0-1 统一错误信封：HTTPException 不再走 FastAPI 默认 {"detail": ...}
+        assert data["success"] is False
+        assert data["error"]["code"] == "BAD_REQUEST"
+        assert data["error"]["message"]
 
     def test_restore_auto_loads_model_when_not_loaded(self, test_app):
         """模型未加载时 POST /api/restore/ 应自动加载模型，而非以 503 拒绝"""

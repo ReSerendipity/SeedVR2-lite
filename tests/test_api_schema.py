@@ -85,13 +85,15 @@ class TestAPIResponseStructure:
         assert "data" in data
 
     def test_error_response_has_detail_or_error(self, test_app):
-        """错误响应应包含 detail 或 error 字段"""
+        """错误响应应包含统一信封 error 字段"""
         # 触发 422 错误
         response = test_app.get("/api/system/history?page=0&page_size=10")
         assert response.status_code == 422
         data = response.json()
-        # FastAPI 的 422 响应应包含 detail
-        assert "detail" in data
+        # P0-1 统一错误信封：校验错误不再走 FastAPI 默认 {"detail": [...]}
+        assert data["success"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+        assert isinstance(data["error"]["detail"]["errors"], list)
 
     def test_history_response_structure(self, test_app):
         """历史记录响应结构应一致"""

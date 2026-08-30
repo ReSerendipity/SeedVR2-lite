@@ -216,7 +216,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         audit_event("CSRF_FAILURE", request=request)
         response = JSONResponse(
             status_code=403,
-            content={"error": "CSRF token 验证失败"},
+            content={
+                "success": False,
+                "error": {
+                    "code": "CSRF_INVALID",
+                    "message": "CSRF token 验证失败",
+                    "detail": {},
+                },
+            },
         )
         # 失败也补发有效 token：替换浏览器里的失效 cookie，下一次请求即可自愈
         self._set_csrf_cookie(response, request)

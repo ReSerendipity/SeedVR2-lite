@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.integrated_app.exceptions import (
     ConfigError,
@@ -260,3 +261,78 @@ class TestExceptionToDict:
         exc = RestoreError("msg")
         d = exc.to_dict()
         assert d["detail"] == {}
+
+
+class TestUnifiedEnvelopeIntegration:
+    """P0-1 统一错误信封：HTTPException / 校验错误 / success 标志"""
+
+    @pytest.fixture
+    def app_with_http_exc(self):
+        """创建注册了异常处理器并抛 HTTPException 的应用"""
+        app = FastAPI()
+
+        @app.get("/raise/http404")
+        async def raise_http404():
+            raise StarletteHTTPException(status_code=404, detail="任务不存在")
+
+        @app.get("/raise/http503")
+        async def raise_http503():
+            raise StarletteHTTPException(
+                status_code=503,
+                detail={"message": "模型加载中", "retry_after": 5},
+                headers={"Retry-After": "5"},
+            )
+
+        @app.post("/raise/validation")
+        async def raise_validation(item: dict):
+            return item
+
+        register_error_handlers(app)
+        return app
+
+    def test_http_exception_uses_envelope(self, app_with_http_exc):
+        """HTTPException 404 应返回统一信封而非 {"detail": ...}"""
+        client = TestClient(app_with_http_exc, raise_server_exceptions=False)
+        response = client.get("/raise/http404")
+        assert response.status_code == 404
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "NOT_FOUND"
+        assert body["error"]["message"] == "任务不存在"
+        assert "detail" not in body
+
+    def test_http_exception_dict_detail_and_headers(self, app_with_http_exc):
+        """HTTPException dict detail 进入 error.detail，headers 透传 Retry-After"""
+        client = TestClient(app_with_http_exc, raise_server_exceptions=False)
+        response = client.get("/raise/http503")
+        assert response.status_code == 503
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "SERVICE_UNAVAILABLE"
+        assert body["error"]["detail"]["retry_after"] == 5
+        assert response.headers["Retry-After"] == "5"
+
+    def test_validation_error_uses_envelope_without_input_echo(self, app_with_http_exc):
+        """请求校验错误返回 422 统一信封，且不回显原始输入"""
+        client = TestClient(app_with_http_exc, raise_server_exceptions=False)
+        response = client.post("/raise/validation", content=b"not-json", headers={"Content-Type": "application/json"})
+        assert response.status_code == 422
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "VALIDATION_ERROR"
+        errors = body["error"]["detail"]["errors"]
+        assert isinstance(errors, list)
+        assert all("input" not in err for err in errors)
+
+    def test_restore_error_body_has_success_flag(self):
+        """_build_error_body 顶层带 success=false"""
+        body = _build_error_body(RestoreError("msg", code="C"))
+        assert body["success"] is False
+        assert body["error"]["code"] == "C"
+
+    def test_status_code_fallback_code(self):
+        """未映射状态码回退为 HTTP_<status> 错误码"""
+        from app.integrated_app.middleware.error_handler import _error_code_for_status
+
+        assert _error_code_for_status(599) == "HTTP_599"
+        assert _error_code_for_status(404) == "NOT_FOUND"
