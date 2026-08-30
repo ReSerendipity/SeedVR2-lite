@@ -284,3 +284,6 @@ perf/benchmark/results/
 experiments/logs/
 data/heartbeats/
 data/checkpoints/
+
+# coverage XML 产物（CI coverage gate 用，属运行时生成）
+/coverage.xml

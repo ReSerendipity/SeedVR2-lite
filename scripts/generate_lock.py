@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 ReSerendipity
+# SPDX-License-Identifier: Apache-2.0
 """生成带 SHA256 哈希锁的 requirements-lock.txt
 
 防御供应链投毒 (CWE-912)：pip install --require-hashes 时会验证每个包的哈希值。
 
 用法:
-    # 使用项目 WinPython
-    WPy64-312101/python/python.exe scripts/generate_lock.py
+    # 使用项目虚拟环境 (需已安装全部依赖)
+    .venv/Scripts/python.exe scripts/generate_lock.py
 
     # 或使用系统 Python (需已安装依赖)
     python scripts/generate_lock.py
@@ -15,25 +17,40 @@
 
 原理:
     1. 从已安装包生成版本锁定列表 (pip freeze)
-    2. 下载每个包的 wheel/sdist 到临时目录
-    3. 计算每个文件的 SHA256 哈希
+    2. 优先通过 PyPI JSON API 获取该精确版本全部发布文件的官方 SHA256
+       (https://pypi.org/pypi/<name>/<version>/json, 与 pip-tools 同源可信)
+    3. 联网不可用时回退到本地 pip 缓存中的 wheel 哈希
     4. 生成 --hash=sha256:xxx 格式的锁定文件
 
 注意:
-    - torch/torchvision/torraudio 使用 CUDA 预编译包 (+cu128),
-      哈希值取决于下载源，切换 CUDA 版本时需重新生成。
+    - torch/torchvision/torchaudio 使用 CUDA 预编译包 (+cu128), 其发布文件
+      托管在 PyTorch 官方 index 而非 PyPI, PyPI JSON API 查不到对应哈希时
+      会保留 # NO HASH 标记, 需在有网的 PyTorch index 环境重新生成。
     - 生成的锁文件可用于: pip install --require-hashes -r requirements-lock.txt
 """
 
+import glob
 import hashlib
+import json
 import os
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
+
+PYPI_JSON_URL = "https://pypi.org/pypi/{name}/{version}/json"
+REQUEST_TIMEOUT_SECONDS = 30
 
 
 def get_installed_packages():
-    """获取已安装包列表及其版本。"""
+    """获取已安装包列表及其版本。
+
+    返回 (name, version, hashes) 元组列表。普通 PyPI 包 hashes 为空，稍后查询；
+    本地 wheel/file:// 直接安装的包（如 torch+cu132 CUDA 轮子）从 pip freeze
+    输出的 #sha256= 片段提取已验证的哈希。
+    """
     result = subprocess.run(
         [sys.executable, "-m", "pip", "freeze"],
         capture_output=True,
@@ -43,8 +60,26 @@ def get_installed_packages():
     packages = []
     for line in result.stdout.strip().split("\n"):
         line = line.strip()
-        if line and "==" in line and not line.startswith("#"):
-            packages.append(line)
+        if not line or line.startswith("#") or line.startswith("-"):
+            continue
+        if "@" in line.split("==")[0]:
+            # 直接 URL 安装: name @ file:///.../pkg-version-...whl#sha256=<hex>
+            name, _, url = line.partition(" @ ")
+            filename = os.path.basename(urllib.parse.unquote(url.split("#")[0]))
+            sha = ""
+            if "#sha256=" in url:
+                sha = url.split("#sha256=", 1)[1].split("&")[0]
+            # wheel 命名: {name}-{version}-{...}.whl → 版本为第 2 段
+            stem = filename[:-4] if filename.endswith(".whl") else filename
+            parts = stem.split("-")
+            if len(parts) >= 2 and sha:
+                packages.append((parts[0].replace("_", "-").lower(), parts[1], [sha]))
+            else:
+                print(f"  ! 跳过无法解析的直接安装包: {line[:80]}")
+            continue
+        if "==" in line:
+            name, version = line.split("==", 1)
+            packages.append((name, version, []))
     return packages
 
 
@@ -60,27 +95,45 @@ def compute_file_hash(filepath):
     return sha256.hexdigest()
 
 
-def generate_lock_file():
-    """生成带哈希锁的 requirements 文件。"""
-    output_path = Path(__file__).parent.parent / "requirements-lock.txt"
+def fetch_hashes_from_pypi(name, version, retries=3):
+    """从 PyPI JSON API 获取精确版本全部发布文件的 SHA256。
 
-    packages = get_installed_packages()
-    print(f"已安装包: {len(packages)} 个")
+    网络瞬断/限流时按退避重试；多次失败返回 []（调用方回退本地缓存）。
 
-    # 尝试从 pip 缓存获取哈希
-    cache_result = subprocess.run(
-        [sys.executable, "-m", "pip", "cache", "dir"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    cache_dir = cache_result.stdout.strip()
-    import glob
+    Returns:
+        list[str]: sha256 十六进制哈希列表; 查询失败或版本不在 PyPI 时返回 []。
+    """
+    url = PYPI_JSON_URL.format(name=name, version=version)
+    import time
 
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+                data = json.load(resp)
+            return [f["digests"]["sha256"] for f in data.get("urls", []) if f.get("digests", {}).get("sha256")]
+        except Exception as e:  # noqa: BLE001 — 网络层异常类型繁杂，统一按可重试处理
+            if attempt < retries - 1:
+                time.sleep(2 * (attempt + 1))
+                continue
+            print(f"  ! PyPI 查询失败 {name}=={version}: {type(e).__name__}")
+            return []
+    return []
+
+
+def collect_local_cache_hashes():
+    """从本地 pip 缓存收集 wheel 哈希 (联网不可用时的回退)。"""
+    try:
+        cache_result = subprocess.run(
+            [sys.executable, "-m", "pip", "cache", "dir"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        cache_dir = cache_result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return {}
     wheels = glob.glob(os.path.join(cache_dir, "**", "*.whl"), recursive=True)
-    print(f"pip 缓存中找到 {len(wheels)} 个 wheel 文件")
-
-    # Build package -> hashes mapping from cache
     pkg_hashes = {}
     for whl in wheels:
         basename = os.path.basename(whl)
@@ -88,11 +141,21 @@ def generate_lock_file():
         if len(parts) >= 2:
             pkg_name = parts[0].replace("_", "-").lower()
             h = compute_file_hash(whl)
-            if pkg_name not in pkg_hashes:
-                pkg_hashes[pkg_name] = []
-            pkg_hashes[pkg_name].append(h)
+            pkg_hashes.setdefault(pkg_name, [])
+            if h not in pkg_hashes[pkg_name]:
+                pkg_hashes[pkg_name].append(h)
+    return pkg_hashes
 
-    # Generate lock file
+
+def generate_lock_file():
+    """生成带哈希锁的 requirements 文件。"""
+    output_path = Path(__file__).parent.parent / "requirements-lock.txt"
+
+    packages = get_installed_packages()
+    print(f"已安装包: {len(packages)} 个")
+
+    local_cache = collect_local_cache_hashes()
+
     output = []
     output.append("# SeedVR2 依赖哈希锁文件 (CWE-912 供应链投毒防御)")
     output.append("#")
@@ -100,35 +163,54 @@ def generate_lock_file():
     output.append("# 重新生成: python scripts/generate_lock.py")
     output.append("#")
     output.append("# 注意:")
-    output.append("#   - torch/torchvision/torraudio 使用 CUDA 预编译包 (+cu128)")
+    output.append("#   - torch/torchvision/torchaudio 使用 CUDA 预编译包 (+cu128),")
+    output.append("#     发布文件托管在 PyTorch index, PyPI API 查不到时保留 NO HASH 标记")
     output.append("#   - 切换 CUDA 版本时需重新生成哈希")
-    output.append("#   - 无哈希的条目标记为 # NO HASH, 需联网下载后重新生成")
     output.append("")
 
     hash_count = 0
     no_hash_count = 0
-    for pkg in sorted(packages):
-        name, version = pkg.split("==", 1)
-        norm_name = name.replace("_", "-").lower()
-        hashes = pkg_hashes.get(norm_name, [])
+    no_hash_packages = []
+    # pip 续行规则：除最后一行外，链上每行都要以 " \\" 结尾，
+    # 否则后续 --hash 行会被当作独立行而忽略（孤儿 hash）。
+    continuation_bs = chr(92)
+    for name, version, hashes in sorted(packages):
+        if not hashes:
+            hashes = fetch_hashes_from_pypi(name, version)
+            source = "pypi"
+            if not hashes:
+                hashes = local_cache.get(name.replace("_", "-").lower(), [])
+                source = "cache"
+        else:
+            source = "local-wheel"
+
         if hashes:
             hash_lines = [f"    --hash=sha256:{h}" for h in hashes]
-            hash_count += len(hashes)
-            output.append(f"{name}=={version} \\")
-            output.extend(hash_lines)
+            hash_count += len(hash_lines)
+            body = (
+                [f"{name}=={version} {continuation_bs}"]
+                + [hl + f" {continuation_bs}" for hl in hash_lines[:-1]]
+                + [hash_lines[-1]]
+            )
+            output.extend(body)
+            print(f"  ✓ {name}=={version} [{source}: {len(hashes)} hashes]")
         else:
-            output.append(f"# NO HASH (run generate_lock.py with network): {pkg}")
-            output.append(pkg)
+            output.append(f"# NO HASH (run generate_lock.py with network): {name}=={version}")
+            output.append(f"{name}=={version}")
             no_hash_count += 1
+            no_hash_packages.append(f"{name}=={version}")
+            print(f"  ✗ {name}=={version} [NO HASH]")
 
     content = "\n".join(output) + "\n"
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(content)
 
-    print(f"已生成: {output_path}")
+    print(f"\n已生成: {output_path}")
     print(f"  总包数: {len(packages)}")
     print(f"  含哈希: {hash_count} 个哈希值")
-    print(f"  无哈希: {no_hash_count} 个包 (需联网重新生成)")
+    print(f"  无哈希: {no_hash_count} 个包")
+    if no_hash_packages:
+        print("  无哈希清单:", ", ".join(no_hash_packages))
 
     if no_hash_count > 0:
         print()
@@ -136,6 +218,8 @@ def generate_lock_file():
         print("  pip download -d /tmp/pip-wheels -r requirements.txt")
         print("  python scripts/generate_lock.py  # 再次运行即可自动拾取缓存")
 
+    return no_hash_count
+
 
 if __name__ == "__main__":
-    generate_lock_file()
+    sys.exit(0 if generate_lock_file() == 0 else 1)
