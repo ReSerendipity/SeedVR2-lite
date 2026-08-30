@@ -70,9 +70,7 @@ class TestCheckpointDurability:
         trainer._scaler.scale(torch.tensor(1.0, requires_grad=True)).backward()
         trainer._save_checkpoint(model, optimizer)
         ckpt_path = next(Path(trainer.config.checkpoint_dir).glob("checkpoint_step_*.pt"))
-        saved_scale = torch.load(ckpt_path, map_location="cpu", weights_only=False)[
-            "scaler_state_dict"
-        ]["scale"]
+        saved_scale = torch.load(ckpt_path, map_location="cpu", weights_only=False)["scaler_state_dict"]["scale"]
 
         trainer2 = _make_trainer(tmp_path, mixed_precision="fp16")
         model2 = nn.Linear(4, 2)
@@ -208,9 +206,7 @@ class TestExperimentTracking:
         assert trainer._tracker is None
 
     def test_finish_closes_tracker(self, tmp_path):
-        trainer = _make_trainer(
-            tmp_path, enable_experiment_tracking=True, experiment_name="finish_test"
-        )
+        trainer = _make_trainer(tmp_path, enable_experiment_tracking=True, experiment_name="finish_test")
         trainer.finish()
         assert trainer._tracker is None
 

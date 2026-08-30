@@ -443,11 +443,7 @@ class DistributedTrainer:
 
                     # 日志
                     if self.global_rank == 0 and self._step % self.config.log_interval == 0:
-                        norm_str = (
-                            f", GradNorm: {pre_clip_grad_norm:.4f}"
-                            if pre_clip_grad_norm is not None
-                            else ""
-                        )
+                        norm_str = f", GradNorm: {pre_clip_grad_norm:.4f}" if pre_clip_grad_norm is not None else ""
                         logger.info(
                             "Epoch %d/%d, Step %d, Loss: %.4f%s, LR: %.2e",
                             epoch + 1,

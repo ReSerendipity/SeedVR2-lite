@@ -196,17 +196,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 )
                 from app.integrated_app.security.audit import audit_event
 
-                audit_event(
-                    "RATE_LIMITED", request=request, client_ip=client_ip, limit_per_minute=self._limit
-                )
+                audit_event("RATE_LIMITED", request=request, client_ip=client_ip, limit_per_minute=self._limit)
                 return JSONResponse(
                     status_code=429,
                     content={
+                        "success": False,
                         "error": {
                             "code": "RATE_LIMITED",
                             "message": "请求过于频繁，请稍后重试",
                             "detail": {"retry_after_seconds": retry_after},
-                        }
+                        },
                     },
                     headers={
                         "Retry-After": str(retry_after),
