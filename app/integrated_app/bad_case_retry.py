@@ -72,6 +72,7 @@ _OOM_KEYWORDS = (
     "alloc",
     "hip out of memory",
     "runtimeerror: cuda",
+    "显存不足",  # 引擎侧中文错误消息（result.error / MemoryError 消息）
 )
 
 # 网络/瞬态错误关键词

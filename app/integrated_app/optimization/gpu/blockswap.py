@@ -154,6 +154,7 @@ def apply_block_swap_to_dit(
     main_device: str = "cuda",
     offload_device: str = "cpu",
     debug: bool = False,
+    prefetch: bool = False,
 ) -> None:
     """为 DiT 模型应用 BlockSwap 配置
 
@@ -179,6 +180,9 @@ def apply_block_swap_to_dit(
         main_device: 主计算设备（通常为 "cuda" 或 "cuda:0"）
         offload_device: 卸载目标设备（通常为 "cpu"）
         debug: 是否启用调试日志（当前未使用，保留参数）
+        prefetch: 是否启用下一块预取流水（P2-2）：在侧流上提前把第 i+1 块
+            拷入 GPU，与第 i 块计算重叠传输，显著降低同步换入的暴露延迟。
+            代价是稳态多驻留一个块（数百 MB 级）的瞬态显存。
     """
     with _BLOCKSWAP_LOCK:
         if blocks_to_swap <= 0 and not swap_io_components:
@@ -216,6 +220,8 @@ def apply_block_swap_to_dit(
 
         model.main_device = main_device
         model.offload_device = offload_device
+        # P2-2: 预取流水开关（仅块交换有意义；属性供 wrapped_forward 读取）
+        model._blockswap_prefetch = bool(prefetch and blocks_to_swap > 0)
 
         io_config = _configure_io_components(model, main_device, offload_device, swap_io_components)
 
@@ -422,12 +428,14 @@ def _wrap_block_forward(
 
     包装后的 forward 自动执行以下流程：
         1. 检查是否需要交换（当前块索引 <= blocks_to_swap）
-        2. 如块在 CPU，先移动到 GPU
-        3. 执行原始 forward 计算
-        4. （可选）VRAM 低时缓存输出到 CPU
-        5. 将块移回卸载设备（CPU）
-        6. 记录交换耗时
-        7. 内存压力高时清理缓存（限频调用）
+        2. 等待上一块发起的本块预取拷贝完成（P2-2，若有）
+        3. 如块在 CPU，先移动到 GPU
+        4. 在侧流上预取下一个被交换的块（P2-2，若有），传输与计算重叠
+        5. 执行原始 forward 计算
+        6. （可选）VRAM 低时缓存输出到 CPU
+        7. 将块移回卸载设备（CPU）
+        8. 记录交换耗时
+        9. 内存压力高时清理缓存（限频调用）
 
     使用 weakref 避免闭包持有 model 强引用导致内存泄漏。
 
@@ -455,8 +463,14 @@ def _wrap_block_forward(
             current_device = next(self.parameters()).device
             target_device = torch.device(model.main_device)
 
+            # P2-2: 等待上一块为当前块发起的预取拷贝完成，保证参数完整到达 GPU
+            _wait_for_prefetch(model)
+
             if current_device != target_device:
                 self.to(model.main_device, non_blocking=False)
+
+            # P2-2: 预取下一个被交换的块，H2D 传输与当前块计算重叠
+            _start_prefetch_next_block(model, self._block_idx)
 
             output = original_forward(*args, **kwargs)
 
@@ -476,6 +490,81 @@ def _wrap_block_forward(
 
     block.forward = types.MethodType(wrapped_forward, block)
     block._original_forward = original_forward
+
+
+# ===========================================================================
+# 下一块预取流水（P2-2，被 @torch._dynamo.disable 装饰以排除 compile 追踪）
+# ===========================================================================
+
+
+@torch._dynamo.disable
+def _get_prefetch_stream(model: torch.nn.Module):
+    """懒创建预取专用侧流（失败返回 None，调用方静默降级）。"""
+    stream = getattr(model, "_blockswap_prefetch_stream", None)
+    if stream is None:
+        try:
+            stream = torch.cuda.Stream(device=torch.device(model.main_device))
+        except Exception as e:
+            logger.debug(f"预取侧流创建失败（预取将静默降级为同步换入）: {e}")
+            stream = None
+        model._blockswap_prefetch_stream = stream
+    return stream
+
+
+@torch._dynamo.disable
+def _wait_for_prefetch(model: torch.nn.Module) -> None:
+    """等待上一个块为当前块发起的预取拷贝完成（无预取时为空操作）。"""
+    event = getattr(model, "_blockswap_prefetch_event", None)
+    if event is not None:
+        try:
+            event.wait(torch.cuda.current_stream())
+        except Exception as e:
+            logger.debug(f"预取事件等待失败: {e}")
+        model._blockswap_prefetch_event = None
+
+
+@torch._dynamo.disable
+def _start_prefetch_next_block(model: torch.nn.Module, block_idx: int) -> None:
+    """在侧流上把下一个被交换的块预取到 GPU（P2-2）。
+
+    传输与当前块的计算重叠；下一块的 forward 前通过事件等待保证拷贝完成。
+    满足任一条件时静默跳过：预取未启用、下一块不在交换范围（已在 GPU）、
+    当前块已是最后一块、侧流创建失败。
+
+    Args:
+        model: 父 DiT 模型。
+        block_idx: 刚完成设备迁入的当前块索引。
+    """
+    if not getattr(model, "_blockswap_prefetch", False):
+        return
+    blocks = getattr(model, "blocks", None)
+    if blocks is None:
+        return
+    next_idx = block_idx + 1
+    if next_idx > model.blocks_to_swap or next_idx >= len(blocks):
+        return
+
+    next_block = blocks[next_idx]
+    params = list(next_block.parameters())
+    if not params:
+        return
+    target_device = torch.device(model.main_device)
+    if params[0].device == target_device:
+        return  # 已在 GPU（双预取防御），无需拷贝
+
+    stream = _get_prefetch_stream(model)
+    if stream is None:
+        return
+
+    try:
+        with torch.cuda.stream(stream):
+            next_block.to(target_device, non_blocking=True)
+            event = torch.cuda.Event()
+            event.record(stream)
+        model._blockswap_prefetch_event = event
+    except Exception as e:
+        logger.debug(f"下一块预取失败（降级为同步换入）: {e}")
+        model._blockswap_prefetch_event = None
 
 
 def _get_cache_manager_for_blockswap(model: torch.nn.Module) -> TensorCacheManager | None:
@@ -810,6 +899,9 @@ def cleanup_blockswap(model: torch.nn.Module) -> None:
             "offload_device",
             "_block_swap_config",
             "_blockswap_bypass_protection",
+            "_blockswap_prefetch",
+            "_blockswap_prefetch_stream",
+            "_blockswap_prefetch_event",
         ]:
             if hasattr(model, attr):
                 delattr(model, attr)

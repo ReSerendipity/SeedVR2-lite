@@ -36,6 +36,7 @@
 """
 
 import gc
+import json
 import logging
 import os
 import sys
@@ -625,6 +626,35 @@ def dequantize_fp8_to_fp16(state_dict: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def build_dit_load_signature(
+    checkpoint_path: str,
+    precision: str,
+    blocks_to_swap: int,
+    swap_io_components: bool,
+    offload_device: str,
+    attention_mode: str,
+    torch_compile_args: dict | None,
+) -> tuple:
+    """构建 DiT 加载参数签名（成本治理 P1-2）。
+
+    缓存的 DiT 跨任务复用前，用签名比对判断加载参数是否变化：
+    变化（如 OOM 降级重试提高 blocks_to_swap、切换精度）时必须重载，
+    否则复用。纯函数，便于单元测试。
+
+    Returns:
+        tuple: 可比较的加载参数签名。
+    """
+    return (
+        str(checkpoint_path),
+        str(precision),
+        int(blocks_to_swap),
+        bool(swap_io_components),
+        str(offload_device),
+        str(attention_mode),
+        json.dumps(torch_compile_args or {}, sort_keys=True),
+    )
+
+
 @dataclass
 class ImageInferenceConfig:
     """图像推理配置数据类，封装 DiT/VAE/推理/后处理的所有参数
@@ -639,7 +669,8 @@ class ImageInferenceConfig:
         blocks_to_swap: BlockSwap 交换的 transformer 块数量，0 表示禁用
         swap_io_components: 是否交换 I/O 组件（输入/输出投影层）到 CPU
         dit_offload_device: DiT 卸载目标设备，通常为 "cpu"
-        dit_cache_model: 是否缓存 DiT 模型（当前实现为推理后销毁，此参数保留）
+        dit_cache_model: 是否缓存 DiT 模型（P1-2 已落地：True 时采样后跨任务保留，
+            由空闲超时卸载与加载签名守卫兜底；False 时推理后销毁）
         attention_mode: 注意力实现模式，"sdpa"（PyTorch SDPA）或 "xformers"
         vae_model: VAE 模型标识
         vae_device: VAE 推理设备

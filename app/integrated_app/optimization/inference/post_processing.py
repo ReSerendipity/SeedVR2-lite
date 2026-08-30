@@ -37,6 +37,7 @@ Key Features:
 import contextlib
 import logging
 import os
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -373,33 +374,39 @@ class MultiStepUpscaler:
         # 多步放大
         import tempfile
 
-        temp_files = []
+        temp_files: list[str] = []
+        temp_dirs: list[str] = []
 
         current_input = input_path
 
-        for i, step_scale in enumerate(steps):
-            if i < len(steps) - 1:
-                # 中间步骤: 使用临时文件
-                temp_dir = tempfile.mkdtemp()
-                temp_output = os.path.join(temp_dir, f"step_{i}_{step_scale}x.png")
-                temp_files.append(temp_output)
-            else:
-                # 最后一步: 使用最终输出路径
-                temp_output = output_path
+        try:
+            for i, step_scale in enumerate(steps):
+                if i < len(steps) - 1:
+                    # 中间步骤: 使用临时文件
+                    temp_dir = tempfile.mkdtemp()
+                    temp_dirs.append(temp_dir)
+                    temp_output = os.path.join(temp_dir, f"step_{i}_{step_scale}x.png")
+                    temp_files.append(temp_output)
+                else:
+                    # 最后一步: 使用最终输出路径
+                    temp_output = output_path
 
-            # 放大
-            upscale_fn(current_input, temp_output, scale=step_scale)
+                # 放大
+                upscale_fn(current_input, temp_output, scale=step_scale)
 
-            # 颹色校正 (除最后一步外)
-            if color_fix_fn and i < len(steps) - 1:
-                color_fix_fn(current_input, temp_output)
+                # 颜色校正 (除最后一步外)
+                if color_fix_fn and i < len(steps) - 1:
+                    color_fix_fn(current_input, temp_output)
 
-            current_input = temp_output
-
-        # 清理临时文件
-        for temp_file in temp_files[:-1]:
-            with contextlib.suppress(OSError):
-                os.remove(temp_file)
+                current_input = temp_output
+        finally:
+            # 统一回收全部中间文件与 mkdtemp 目录（成功/失败路径均执行）。
+            # 原实现漏掉最后一个中间文件且从不删除临时目录，系统 temp 会持续积累
+            for temp_file in temp_files:
+                with contextlib.suppress(OSError):
+                    os.remove(temp_file)
+            for temp_dir in temp_dirs:
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
         return output_path
 

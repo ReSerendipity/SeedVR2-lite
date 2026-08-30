@@ -27,8 +27,10 @@ from app.integrated_app.engines._memory_utils import (
     _force_release_memory,
     _log_memory,
     _tensor_to_uint8_np,
+    build_dit_load_signature,
 )
 from app.integrated_app.exceptions import InferenceCancelledError
+from app.integrated_app.gpu_utils import oom_protect
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +96,7 @@ def _resolve_unique_path(output_dir: str, filename: str) -> str:
 class _ImagePipelineMixin:
     """Mixin: pipeline methods extracted from SeedVR2Engine."""
 
+    @oom_protect
     async def infer_image(
         self,
         image_path: str,
@@ -128,7 +131,30 @@ class _ImagePipelineMixin:
 
         # REFACTOR [E4-1]: 每次推理开始前重置取消令牌
         self._reset_cancel_token()
+        # P2-1: 图像路径启用 VRAM 峰值监控（原实现仅视频路径有），峰值随结果落库
+        try:
+            from app.integrated_app.optimization.gpu.vram_monitor import VRAMPeakMonitor
+
+            self._vram_monitor = VRAMPeakMonitor(device=self.device, enabled=True)
+        except Exception:
+            self._vram_monitor = None
         return await asyncio.to_thread(self._infer_image_impl, image_path, output_dir, config, output_name=output_name)
+
+    def _vram_stage(self, name: str):
+        """获取 VRAM 阶段监控上下文（监控不可用时返回空上下文，P2-1）。
+
+        Args:
+            name: 阶段名（如 "vae_encode"/"dit_sample"/"vae_decode"）。
+
+        Returns:
+            上下文管理器：进入时记录阶段起点快照，退出时统计峰值。
+        """
+        import contextlib
+
+        monitor = getattr(self, "_vram_monitor", None)
+        if monitor is None:
+            return contextlib.nullcontext()
+        return monitor.stage(name)
 
     def _prepare_image_input(self, image_path: str, resolution: int, max_resolution: int = 0) -> tuple:
         """读取图像并预处理为模型输入
@@ -426,6 +452,19 @@ class _ImagePipelineMixin:
         del result_np
         _cleanup_cuda_cache(deep=True)
 
+        # P2-1: 结束 VRAM 监控并把全局峰值写入 metadata（由上传路由落库 history.vram_peak_mb）
+        vram_peak_mb = 0.0
+        monitor = getattr(self, "_vram_monitor", None)
+        if monitor is not None:
+            try:
+                monitor.end_inference()
+                monitor.log_report()
+                vram_peak_mb = float(monitor.get_report().get("global_peak_allocated_mb", 0.0))
+            except Exception as e:
+                logger.debug(f"VRAM 监控报告生成失败: {e}")
+            finally:
+                self._vram_monitor = None
+
         return RestoreResult(
             success=True,
             output_path=output_path,
@@ -442,6 +481,7 @@ class _ImagePipelineMixin:
                 "output_format": requested_format,  # 实际使用的输出格式
                 "mean": float(mean_val),
                 "std": float(std_val),
+                "vram_peak_mb": vram_peak_mb,
                 "postprocessing": {
                     "wavelet": enable_wavelet,
                     "sharpen": sharpen_strength > 0,
@@ -572,7 +612,8 @@ class _ImagePipelineMixin:
                 logger.info("cache_model=True: 复用已缓存的 VAE 模型（已迁移到 GPU）")
 
             self._report_progress(current_frame=0, total_frames=4, progress=15.0, message="VAE 编码中...")
-            cond_latents = self._vae_encode([cond_latent])
+            with self._vram_stage("vae_encode"):
+                cond_latents = self._vae_encode([cond_latent])
             del cond_latent
             gc.collect()
 
@@ -598,6 +639,24 @@ class _ImagePipelineMixin:
             # cache_model=True 时复用上一次任务缓存的 DiT，跳过加载；
             # force_reload_dit=True 时即使有缓存也按当前参数（如 blocks_to_swap）强制重载
             force_reload_dit = bool(getattr(cfg, "force_reload_dit", False))
+            # P1-2: 加载签名守卫——缓存的 DiT 与当前请求的加载参数不一致时
+            # 自动重载（典型场景：OOM 降级重试提高了 blocks_to_swap）
+            if self.dit is not None and not force_reload_dit:
+                request_signature = build_dit_load_signature(
+                    checkpoint_path=self._dit_checkpoint_path,
+                    precision=self._dit_precision,
+                    blocks_to_swap=cfg.blocks_to_swap,
+                    swap_io_components=cfg.swap_io_components,
+                    offload_device=cfg.dit_offload_device,
+                    attention_mode=cfg.attention_mode,
+                    torch_compile_args=inf.get("torch_compile") or None,
+                )
+                if getattr(self, "_dit_load_signature", None) != request_signature:
+                    logger.info("检测到 DiT 加载参数变化，重载缓存的 DiT 模型...")
+                    self._destroy_dit()
+                    gc.collect()
+                    _force_release_memory()
+                    force_reload_dit = True
             if self.dit is None or force_reload_dit:
                 if force_reload_dit and self.dit is not None:
                     logger.info("force_reload_dit=True: 销毁缓存的 DiT 并按当前参数重载...")
@@ -626,17 +685,18 @@ class _ImagePipelineMixin:
             text_embeds = self._get_text_embeds()
 
             logger.info(f"开始 DiT 采样: cfg={cfg_scale}, steps={sample_steps}, blockswap={self._blockswap_active}")
-            samples = self._generation_step(
-                cond_latents=cond_latents,
-                text_embeds=text_embeds,
-                cfg_scale=cfg_scale,
-                cfg_rescale=cfg_rescale,
-                sample_steps=sample_steps,
-                seed=seed,
-                input_noise_scale=input_noise_scale,
-                latent_noise_scale=latent_noise_scale,
-                restoration_guidance_scale=inf.get("restoration_guidance_scale", 0.0),
-            )
+            with self._vram_stage("dit_sample"):
+                samples = self._generation_step(
+                    cond_latents=cond_latents,
+                    text_embeds=text_embeds,
+                    cfg_scale=cfg_scale,
+                    cfg_rescale=cfg_rescale,
+                    sample_steps=sample_steps,
+                    seed=seed,
+                    input_noise_scale=input_noise_scale,
+                    latent_noise_scale=latent_noise_scale,
+                    restoration_guidance_scale=inf.get("restoration_guidance_scale", 0.0),
+                )
 
             # 释放中间变量
             del cond_latents, text_embeds
@@ -645,10 +705,13 @@ class _ImagePipelineMixin:
             # 保存 blockswap 状态 (销毁 DiT 后会清除标志)
             blockswap_was_active = self._blockswap_active
 
-            # 销毁 DiT 释放全部 VRAM
-            self._destroy_dit()
-            _log_memory("DiT销毁后")
-            _check_memory()
+            # P1-2: dit_cache_model=True 时保留 DiT 供后续任务复用
+            # （跨任务省去 6.8-16.5GB 权重重载；由空闲超时卸载与签名守卫兜底）；
+            # 否则销毁释放显存
+            if not cfg.dit_cache_model:
+                self._destroy_dit()
+                _log_memory("DiT销毁后")
+                _check_memory()
 
             # ==================== 阶段3: 加载VAE → 解码 → 销毁VAE ====================
             # REFACTOR [E4-1]: 阶段切换点检查取消信号
@@ -677,7 +740,8 @@ class _ImagePipelineMixin:
                 self.vae.to(device=self.device)
                 logger.info("cache_model=True: 复用已缓存的 VAE 模型（已迁移到 GPU）")
 
-            decoded = self._vae_decode(samples)
+            with self._vram_stage("vae_decode"):
+                decoded = self._vae_decode(samples)
 
             # 释放 samples
             del samples

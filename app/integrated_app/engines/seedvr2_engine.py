@@ -65,6 +65,7 @@ from app.integrated_app.engines._memory_utils import (  # noqa: E402
     _cleanup_cuda_cache,
     _force_release_memory,
     _log_memory,
+    build_dit_load_signature,
 )
 from app.integrated_app.engines._vae_pipeline import _VAEPipelineMixin  # noqa: E402
 from app.integrated_app.engines._video_pipeline import _VideoPipelineMixin  # noqa: E402
@@ -149,6 +150,8 @@ class SeedVR2Engine(
         self._dit_checkpoint_path = None
         self._dit_model_size = None
         self._dit_precision = None
+        # P1-2: DiT 加载参数签名，缓存复用前比对（参数变化自动重载）
+        self._dit_load_signature: tuple | None = None
         self._cancel_event = threading.Event()
         self._thread_lock = threading.Lock()
         self._ffmpeg = FFmpegWrapper()
@@ -426,6 +429,7 @@ class SeedVR2Engine(
         """完全销毁 DiT 模型，释放全部 VRAM 和 RAM"""
         if self.dit is None:
             return
+        self._dit_load_signature = None
         self._destroy_module("dit", do_cleanup_blockswap=True, cleanup_rope=True, label="DiT 模型", log_tag="DiT销毁后")
 
     def _destroy_vae(self):
@@ -877,6 +881,7 @@ class SeedVR2Engine(
                 main_device=device,
                 offload_device=offload_device,
                 debug=False,
+                prefetch=inf_cfg.get("blockswap_prefetch", False),
             )
             self._blockswap_active = True
 
@@ -937,6 +942,17 @@ class SeedVR2Engine(
 
         num_params = sum(p.numel() for p in model.parameters())
         logger.info(f"DiT 参数数量: {num_params:,}, dtype={dit_dtype}, " f"blockswap={self._blockswap_active}")
+
+        # P1-2: 记录加载参数签名，供缓存复用前比对（参数变化时自动重载）
+        self._dit_load_signature = build_dit_load_signature(
+            checkpoint_path=checkpoint_path,
+            precision=precision,
+            blocks_to_swap=blocks_to_swap or 0,
+            swap_io_components=bool(swap_io_components),
+            offload_device=offload_device or "cpu",
+            attention_mode=attention_mode or "sdpa",
+            torch_compile_args=torch_compile_args,
+        )
 
         return model
 

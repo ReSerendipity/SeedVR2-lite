@@ -19,6 +19,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 
+from app.integrated_app.optimization.gpu.nvml_monitor import query_gpu_utilization
+
 logger = logging.getLogger(__name__)
 
 _GPU_INFO_CACHE_TTL = 0.5
@@ -53,6 +55,8 @@ class GPUInfo:
         utilization_pct: 当前显存利用率百分比（0-100）
         driver_version: NVIDIA 驱动版本号（暂未实现）
         cuda_version: CUDA 运行时版本号
+        sm_utilization_pct: nvidia-smi 查询的 SM 真实利用率（P2-1）；查询不可用时为 None
+        temperature_c: GPU 温度（摄氏度，P2-1）；查询不可用时为 None
     """
 
     backend: GPUBackend
@@ -62,6 +66,8 @@ class GPUInfo:
     utilization_pct: float
     driver_version: str = ""
     cuda_version: str = ""
+    sm_utilization_pct: float | None = None
+    temperature_c: float | None = None
 
 
 class _GPUStrategy(ABC):
@@ -396,6 +402,11 @@ class GPUBackendManager:
                     driver_version="",
                     cuda_version=info.get("cuda_version", ""),
                 )
+                # P2-1: nvidia-smi 叠加 SM 真实利用率与温度（查询不可用时保持 None）
+                nvml_info = query_gpu_utilization()
+                if nvml_info is not None:
+                    result.sm_utilization_pct = nvml_info.get("sm_utilization_pct")
+                    result.temperature_c = nvml_info.get("temperature_c")
             except ImportError as e:
                 logger.error(f"PyTorch 未安装，无法获取 GPU 信息: {e}")
                 result = self._get_unavailable_info()

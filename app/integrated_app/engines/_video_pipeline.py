@@ -32,8 +32,10 @@ from app.integrated_app.engines._memory_utils import (
     _NaResize,
     _RearrangeTCHW2CTHW,
     _tensor_to_uint8_np,
+    build_dit_load_signature,
 )
 from app.integrated_app.exceptions import InferenceCancelledError
+from app.integrated_app.gpu_utils import oom_protect
 from app.integrated_app.optimization.gpu.cache_manager import get_cache_manager
 from app.integrated_app.optimization.gpu.memory_manager import clear_memory
 
@@ -43,6 +45,7 @@ logger = logging.getLogger(__name__)
 class _VideoPipelineMixin:
     """Mixin: pipeline methods extracted from SeedVR2Engine."""
 
+    @oom_protect
     async def infer_video(
         self, video_path: str, output_dir: str, output_name: str | None = None, **kwargs
     ) -> RestoreResult:
@@ -94,6 +97,10 @@ class _VideoPipelineMixin:
             tensor_cache.clear()
         except Exception as e:
             logger.debug(f"TensorCacheManager init skipped: {e}")
+
+        # 临时帧目录引用：创建前为 None，供失败/取消路径统一回收。
+        # 长视频帧文件可达数十 GB，任何退出路径泄漏都会写满磁盘
+        frames_dir: str | None = None
 
         try:
             os.makedirs(output_dir, exist_ok=True)
@@ -281,6 +288,8 @@ class _VideoPipelineMixin:
             try:
                 cap = cv2.VideoCapture(video_path)
                 if not cap.isOpened():
+                    if frames_dir:
+                        shutil.rmtree(frames_dir, ignore_errors=True)
                     return RestoreResult(success=False, error="无法打开视频文件")
 
                 for seg_idx, (seg_start, seg_end) in enumerate(temporal_segments):
@@ -353,9 +362,28 @@ class _VideoPipelineMixin:
 
                     # ---- 阶段2: DiT 采样 (DiT=GPU/BlockSwap, VAE=CPU) ----
                     self._check_cancelled(f"video:segment-{seg_idx}:dit-sample")
+                    model_cfg = self.config.get("model", {})
                     force_reload_dit = bool(inf.get("force_reload_dit", False))
+                    # P1-2: 加载签名守卫——缓存的 DiT 与当前加载参数不一致时自动重载
+                    if self.dit is not None and not force_reload_dit:
+                        request_signature = build_dit_load_signature(
+                            checkpoint_path=self._dit_checkpoint_path,
+                            precision=self._dit_precision,
+                            blocks_to_swap=inf.get("blocks_to_swap", model_cfg.get("blocks_to_swap", 0)),
+                            swap_io_components=inf.get(
+                                "swap_io_components", model_cfg.get("swap_io_components", False)
+                            ),
+                            offload_device=inf.get("offload_device", model_cfg.get("offload_device", "cpu")),
+                            attention_mode=inf.get("attention_mode", model_cfg.get("attention_mode", "sdpa")),
+                            torch_compile_args=inf.get("torch_compile") or None,
+                        )
+                        if getattr(self, "_dit_load_signature", None) != request_signature:
+                            logger.info("检测到 DiT 加载参数变化，重载缓存的 DiT 模型...")
+                            self._destroy_dit()
+                            gc.collect()
+                            _force_release_memory()
+                            force_reload_dit = True
                     if self.dit is None or force_reload_dit:
-                        model_cfg = self.config.get("model", {})
                         if force_reload_dit and self.dit is not None:
                             logger.info("force_reload_dit=True: 销毁缓存的 DiT 并按当前参数重载...")
                             self._destroy_dit()
@@ -564,6 +592,8 @@ class _VideoPipelineMixin:
                     logger.info("cache_model=True: 保留 DiT/VAE 模型供跨任务复用")
 
             if total_written == 0:
+                if frames_dir:
+                    shutil.rmtree(frames_dir, ignore_errors=True)
                 return RestoreResult(success=False, error="视频处理失败: 未能读取任何帧")
 
             # 帧文件连续性校验: 存在编号缺口时重排 (ffprobe 帧数估算偏差安全网)
@@ -590,6 +620,8 @@ class _VideoPipelineMixin:
             )
             if not composed_ok:
                 logger.error(f"视频合成失败: {output_path}")
+                if frames_dir:
+                    shutil.rmtree(frames_dir, ignore_errors=True)
                 return RestoreResult(success=False, error="ffmpeg 视频合成失败")
 
             logger.info(f"视频修复完成: {output_path} ({output_frames} 帧)")
@@ -610,10 +642,16 @@ class _VideoPipelineMixin:
                     f"peak={cache_stats['peak_cache_mb']:.1f}MB"
                 )
 
-            # VRAM 监控: 结束并输出报告
+            # VRAM 监控: 结束并输出报告（峰值随 metadata 落库，P2-1）
+            vram_peak_mb = 0.0
             if self._vram_monitor is not None:
                 self._vram_monitor.end_inference()
                 self._vram_monitor.log_report()
+                try:
+                    vram_peak_mb = float(self._vram_monitor.get_report().get("global_peak_allocated_mb", 0.0))
+                except Exception as e:
+                    logger.debug(f"VRAM 监控报告生成失败: {e}")
+                self._vram_monitor = None
 
             _cleanup_cuda_cache(deep=True)
 
@@ -638,6 +676,7 @@ class _VideoPipelineMixin:
                     "prepend_frames": prepend_frames,
                     "cache_model": cache_model,
                     "blockswap_active": self._blockswap_active,
+                    "vram_peak_mb": vram_peak_mb,
                     "processing_fps": output_frames / processing_time if processing_time > 0 else 0,
                     "avg_frame_time_ms": (processing_time / output_frames * 1000) if output_frames > 0 else 0,
                     "cfg_scale": cfg_scale,
@@ -649,6 +688,8 @@ class _VideoPipelineMixin:
         except InferenceCancelledError as e:
             logger.warning(f"视频推理被取消: {e}")
             self._cleanup_after_error()
+            if frames_dir:
+                shutil.rmtree(frames_dir, ignore_errors=True)
             return RestoreResult(
                 success=False,
                 error="推理已被取消",
@@ -658,6 +699,8 @@ class _VideoPipelineMixin:
         except Exception as e:
             logger.error(f"视频修复失败: {e}", exc_info=True)
             self._cleanup_after_error()
+            if frames_dir:
+                shutil.rmtree(frames_dir, ignore_errors=True)
             return RestoreResult(success=False, error=str(e), processing_time=time.time() - start_time)
 
     # ------------------------------------------------------------------

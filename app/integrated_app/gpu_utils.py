@@ -222,7 +222,11 @@ def oom_protect(func: Callable) -> Callable:
         try:
             return await func(*args, **kwargs)
         except RuntimeError as e:
-            if "out of memory" in str(e).lower() or "CUDA" in str(e):
+            # 仅识别显存不足类错误。不能用宽泛的 "CUDA" 关键词匹配：
+            # device-side assert / 驱动错误等非 OOM 失败会被误转成 MemoryError，
+            # 进而被坏案例重试链路当成 OOM 降级重试，白烧 GPU 时间
+            msg = str(e).lower()
+            if "out of memory" in msg or "no available memory" in msg:
                 logger.error(f"GPU 显存不足: {e}")
                 # OOM 后立即强制清理，尽可能回收显存
                 force_garbage_collect()
