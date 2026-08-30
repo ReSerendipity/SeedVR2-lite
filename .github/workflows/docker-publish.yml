@@ -1,0 +1,88 @@
+# 镜像构建发布流水线（对应云原生评估报告 P1-4：补齐 12-Factor V 因素）
+#
+# 触发：
+#   - push tag v*      → 发布版本化镜像（semver / major.minor / commit-sha）
+#   - push main        → 发布开发镜像（branch 名 + commit-sha）
+#   - PR               → 仅构建验证，不推送
+#
+# 版本化纪律：不使用 floating `latest` tag（评估报告反模式 #3）。
+# 基础镜像 tag 在 Dockerfile 内锁定；发布前可用
+#   docker manifest inspect -v python:3.12-slim-bookworm
+# 核对 digest 后改写 FROM 行。
+name: docker-publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  # metadata-action 会自动将镜像名小写化，满足 ghcr.io 命名要求
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-push:
+    name: Build & push container image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # PR 只做构建验证，不登录不推送
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata (tags / labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # v1.5.0 → 1.5.0 / 1.5 / 1（版本化 tag，禁止 latest）
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            # main 分支开发镜像
+            type=ref,event=branch
+            # 每次构建的不可变 sha tag
+            type=sha,format=long
+          labels: |
+            org.opencontainers.image.title=SeedVR2
+
+      - name: Build (and push on main/tags)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # GPU 推理目标平台：CUDA 用户态库与 NVIDIA 驱动仅提供 amd64 变体
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ github.ref_name }}
+          # gha 缓存：依赖层（torch 等）变更频率低，命中率高
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Output image digest
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "digest=${{ steps.meta.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
