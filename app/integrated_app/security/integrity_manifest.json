@@ -1,18 +1,18 @@
 {
-  "generated_at": "2026-08-30T17:38:02.874879",
+  "generated_at": "2026-08-30T19:06:06.406237",
   "generator": "scripts/generate_integrity_manifest.py",
   "description": "核心安全模块 SHA256 完整性清单，用于启动时自检",
   "files": {
-    "app_server.py": "b048ba9a072dcee87c077155807fb876bf03972eaac3c70796e921e20f7ed4e2",
+    "app_server.py": "1bb9f4252d74d244a1d8b72126ce87ef30ac515623f6c39134955032ab67936f",
     "config.py": "fd512ba10591647419c0d3f7a4e681abe352538efec1bb4b0ef75cdf0bca08e7",
-    "model_manager.py": "a23e197f17527a57da76caa1a7f64d7edbde04dda510e74fcf49e05eb4d4e040",
+    "model_manager.py": "754fd61dea6284df832bd84e5574f945f7fa7f05b078584bace2d17e9e8075df",
     "security/path_guard.py": "c28d7118a71d9c69284e46139386baa1d0e6b29563cbae6dfb89a08a55e637a5",
     "security/integrity_check.py": "6fe45d5fc8230757f9ad92e7f7411c6973d85dc65fed18b8570e678e00e8f305",
     "security/watermark.py": "f064671629fcc269f350eb963656930512297539dfee2c6158129e7f299735c9",
     "security/integrity_selfcheck.py": "1a00155195b435e264e7f1602efbac43adedeb7f83b790c26c7dafbcab40f8d6",
-    "middleware/csrf.py": "f375b1d8d78c3c1b01cf83851679b3758bf57ba3aae8fc8b68c6b817837acb4c",
+    "middleware/csrf.py": "404ec306efaaaa702ad7a350fad574137d7b4819308e61ed71ccf80d75507c75",
     "middleware/basic_auth.py": "8fc11e0bf340c8ee20efa3b957df0960d4f53bbacf9a6a92f9fcb0ef269e8c1a",
-    "middleware/rate_limit.py": "73aaa4ee6848a6870c5baf00beef7b31e40a0667f446abf9ecd51e19a21f11b9",
+    "middleware/rate_limit.py": "ef612fc6188c83df96c54860ead6b9a8094bfaa49227a13da16aec71a1d824cf",
     "engines/seedvr2_engine.py": "33726dfdfd419c184b5f8c5864397e0367a9dbaebe5ffa6303a7dd6cc40d9365"
   }
 }
