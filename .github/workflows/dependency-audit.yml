@@ -10,6 +10,7 @@ on:
       - 'tests/package-lock.json'
   schedule:
     - cron: '0 6 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -30,6 +31,11 @@ jobs:
         run: pip install pip-audit
 
       - name: Run pip-audit on requirements
+        env:
+          # requirements-lock.txt 里 torch/torchvision 是 +cu132 本地版本号，仅存在于
+          # PyTorch 源；不注入 extra index 时 pip 在 PyPI 找不到分发，触及依赖清单的
+          # PR 与每周定时审计必红（pip-audit 需真实安装被审环境）
+          PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cu132
         run: |
           if [ -f requirements-lock.txt ]; then
             pip-audit -r requirements-lock.txt || exit 1
