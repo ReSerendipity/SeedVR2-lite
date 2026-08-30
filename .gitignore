@@ -278,3 +278,9 @@ precheck.ps1
 
 # CI 修复交接日志（本地）
 FIX_LOG.md
+
+# MLOps 产物（本地生成，不入库）
+perf/benchmark/results/
+experiments/logs/
+data/heartbeats/
+data/checkpoints/

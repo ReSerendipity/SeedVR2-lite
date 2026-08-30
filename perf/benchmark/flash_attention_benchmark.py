@@ -230,14 +230,41 @@ def benchmark_precision(
     }
 
 
+def _hardware_context() -> dict[str, object]:
+    """采集硬件与软件上下文，随结果一起落盘。
+
+    没有硬件上下文的 benchmark 数字无法横向对比（不同 GPU/驱动/torch 版本
+    的结论不可迁移），因此每次运行都把环境一并记录。
+
+    Returns:
+        环境信息字典。
+    """
+    import platform
+
+    ctx: dict[str, object] = {
+        "gpu_name": torch.cuda.get_device_name(0),
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda,
+        "cudnn_version": torch.backends.cudnn.version(),
+        "python_version": platform.python_version(),
+        "os": platform.platform(),
+    }
+    return ctx
+
+
 def main() -> None:
     """运行完整的 Flash Attention 基准测试套件。"""
+    import json
+    from datetime import datetime
+    from pathlib import Path
+
     if not torch.cuda.is_available():
         print("❌ CUDA 不可用，无法运行基准测试")
         sys.exit(1)
 
     print("🔥 Flash Attention 2 性能基准测试")
     print(f"GPU: {torch.cuda.get_device_name(0)}")
+    hw_ctx = _hardware_context()
 
     # 速度 + 显存基准
     results: list[dict[str, object]] = []
@@ -247,7 +274,7 @@ def main() -> None:
             results.append(result)
 
     # 精度验证
-    benchmark_precision()
+    precision = benchmark_precision()
 
     # 验收标准汇总
     if results:
@@ -264,6 +291,21 @@ def main() -> None:
                 f"Seq={seq}: Speedup={speedup:.2f}x ({'✅' if speed_ok else '❌'} ≥2x), "
                 f"VRAM Save={vram_save:.1f}% ({'✅' if vram_ok else '❌'} ≥80%)",
             )
+
+    # 结果 + 硬件上下文落盘 JSON，形成可跨机器对比的档案
+    report = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "hardware": hw_ctx,
+        "flash_attn_available": bool(results),
+        "results": results,
+        "precision": precision,
+    }
+    out_dir = Path(__file__).resolve().parent / "results"
+    out_dir.mkdir(exist_ok=True)
+    gpu_tag = str(hw_ctx["gpu_name"]).replace(" ", "_").replace("/", "-")
+    out_path = out_dir / f"flash_attn_{gpu_tag}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"\n📄 结果已归档: {out_path}")
 
 
 if __name__ == "__main__":
