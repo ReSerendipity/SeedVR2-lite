@@ -454,6 +454,8 @@ class RuntimeTaskConfig(BaseModel):
         checkpoint_dir: 断点续跑 checkpoint 文件存储目录，相对于项目根目录。
         checkpoint_every: 每处理多少个文件写一次 checkpoint，1 表示每个文件都写。
         stale_threshold_minutes: processing 任务超过该分钟数无更新视为卡死（0-1440，0=禁用）。
+        progress_stall_timeout_minutes: 当前运行任务进度停滞超过该分钟数自动取消
+            （0-1440，0=禁用；防止单文件推理挂死占住唯一 worker）。
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -479,6 +481,12 @@ class RuntimeTaskConfig(BaseModel):
         ge=0,
         le=1440,
         description="processing 任务无更新超过该分钟数视为卡死并清理；0 表示禁用",
+    )
+    progress_stall_timeout_minutes: int = Field(
+        30,
+        ge=0,
+        le=1440,
+        description="运行中任务进度停滞超过该分钟数自动取消；0 表示禁用",
     )
 
 

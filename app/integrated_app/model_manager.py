@@ -25,6 +25,7 @@
 - 显存保护: 加载前严格检查显存，避免 OOM 导致系统不稳定
 """
 
+import asyncio
 import logging
 import os
 
@@ -66,6 +67,9 @@ class ModelManager:
         self.config = config
         self.model_config = config.get("model", {})
         self._engine: RestoreEngine | None = None
+        # P1-5：加载互斥锁——并发请求触发加载时串行化，第二个等待者拿到锁后
+        # 走幂等短路，杜绝重复加载与后写者覆盖
+        self._load_lock = asyncio.Lock()
 
     @property
     def is_loaded(self) -> bool:
@@ -236,6 +240,26 @@ class ModelManager:
                 "precision": precision,
             }
 
+        # P1-5：持锁加载（锁内二次幂等检查，见 _load_model_locked）
+        async with self._load_lock:
+            return await self._load_model_locked(model_size=model_size, device=device, precision=precision)
+
+    async def _load_model_locked(self, model_size: str, device: str | None, precision: str | None) -> dict:
+        """执行实际加载（必须持有 self._load_lock 调用）。"""
+        # 锁内二次幂等检查：并发场景下第一个等待者进入时模型可能已被前者加载
+        if (
+            model_registry.model_loaded
+            and model_registry.current_model_size == model_size
+            and model_registry.current_precision == precision
+        ):
+            logger.info(f"模型 {model_size}/{precision} 已加载（锁内短路），跳过")
+            return {
+                "status": "ok",
+                "message": f"模型 {model_size}/{precision} 已加载",
+                "model_size": model_size,
+                "precision": precision,
+            }
+
         from app.integrated_app.gpu_backend import gpu_manager
 
         if not gpu_manager.is_gpu_available:
@@ -282,11 +306,16 @@ class ModelManager:
 
         logger.info(f"正在加载模型: {model_cfg.get('name', model_size)}/{precision}, 设备: {device}")
 
-        engine = SeedVR2Engine(self.config)
-        await engine.load_model(model_size=model_size, device=device, precision=precision)
+        # P1-5：加载中状态经 model_status 事件广播（SSE 客户端可感知）
+        model_registry.set_load_in_progress(True)
+        try:
+            engine = SeedVR2Engine(self.config)
+            await engine.load_model(model_size=model_size, device=device, precision=precision)
 
-        model_registry.set_engine(engine)
-        self._engine = engine  # type: ignore[assignment]
+            model_registry.set_engine(engine)
+            self._engine = engine  # type: ignore[assignment]
+        finally:
+            model_registry.set_load_in_progress(False)
 
         logger.info(f"模型加载完成: {model_size}/{precision}")
         return {

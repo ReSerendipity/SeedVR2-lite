@@ -27,6 +27,7 @@ import logging
 import logging.handlers
 import os
 import sys
+import time
 import webbrowser
 from contextlib import asynccontextmanager, suppress
 
@@ -287,6 +288,50 @@ async def lifespan(app: FastAPI):
     stale_cleanup_task = asyncio.create_task(_periodic_stale_cleanup())
     app.state.stale_cleanup_task = stale_cleanup_task
 
+    # 进度停滞看门狗（P1-8）：唯一 worker 被单个挂死的推理任务无限占用时，
+    # 依据任务状态缓存中 (progress, message, current_frame/current_index/current_file)
+    # 的签名是否变化判定停滞，超过阈值自动 request_cancel（引擎在阶段检查点协作退出）。
+    # progress 回调由推理线程逐帧/逐阶段驱动，真实推理即使整帧计算很慢，
+    # current_frame/current_progress 也会持续变化，误杀窗口极大（默认 30 分钟）。
+    stall_minutes = int(config.get("runtime", {}).get("task", {}).get("progress_stall_timeout_minutes", 30) or 0)
+    if stall_minutes > 0:
+        from app.integrated_app.services.task_state import task_state_store
+
+        async def _progress_stall_watchdog():
+            last_signature = None
+            last_change_monotonic = time.monotonic()
+            while True:
+                await asyncio.sleep(60)
+                try:
+                    current = app.state.task_queue.current_task_id
+                    running_id = current() if callable(current) else current
+                    if not running_id:
+                        last_signature = None
+                        continue
+                    state = task_state_store.get_cached(running_id) or {}
+                    signature = (
+                        state.get("progress"),
+                        state.get("message", ""),
+                        state.get("current_frame"),
+                        state.get("current_index"),
+                        state.get("current_file", ""),
+                    )
+                    if signature != last_signature:
+                        last_signature = signature
+                        last_change_monotonic = time.monotonic()
+                        continue
+                    if time.monotonic() - last_change_monotonic >= stall_minutes * 60:
+                        logger.warning(f"任务 {running_id} 进度停滞超过 {stall_minutes} 分钟，看门狗自动取消")
+                        app.state.task_queue.request_cancel(running_id)
+                        last_change_monotonic = time.monotonic()  # 防止重复触发刷日志
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning(f"进度停滞看门狗检查失败: {e}")
+
+        app.state.progress_watchdog_task = asyncio.create_task(_progress_stall_watchdog())
+        logger.info(f"进度停滞看门狗已启用（阈值 {stall_minutes} 分钟）")
+
     # outputs/ 保留策略清理（P0-1）：启动先执行一次回收残留，再挂周期任务。
     # 推理任务运行期间跳过，避免与活动任务的临时帧写入竞争
     try:
@@ -385,6 +430,13 @@ async def lifespan(app: FastAPI):
         output_cleanup.cancel()
         with suppress(asyncio.CancelledError):
             await output_cleanup
+
+    # 停止进度停滞看门狗
+    progress_watchdog = getattr(app.state, "progress_watchdog_task", None)
+    if progress_watchdog:
+        progress_watchdog.cancel()
+        with suppress(asyncio.CancelledError):
+            await progress_watchdog
 
     # 停止模型空闲卸载任务
     idle_unload_task = getattr(app.state, "model_idle_unload_task", None)

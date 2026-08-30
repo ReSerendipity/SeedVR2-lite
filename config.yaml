@@ -170,6 +170,7 @@ runtime:
     checkpoint_every: 1
     id_length: 16
     max_timeout_seconds: 86400
+    progress_stall_timeout_minutes: 30
     queue_maxsize: 100
     stale_threshold_minutes: 30
   upload:

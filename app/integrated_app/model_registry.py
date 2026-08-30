@@ -101,7 +101,27 @@ class _ModelRegistry:
         self._listeners: list[Listener] = []
         self._engine_classes: dict[str, type] = {}
         self._last_activity_ts: float = time.time()
+        self._load_in_progress: bool = False
         self._initialized = True
+
+    # ------------------------------------------------------------------
+    # 加载中状态（P1-5：模型加载互斥 + 加载状态 SSE 广播）
+    # ------------------------------------------------------------------
+
+    @property
+    def load_in_progress(self) -> bool:
+        """是否有模型加载正在进行（线程安全）。
+
+        经观察者桥随 model_status 事件广播，前端可据此显示加载进度。
+        """
+        with self._rlock:
+            return self._load_in_progress
+
+    def set_load_in_progress(self, value: bool) -> None:
+        """标记加载中状态（线程安全，状态变更时通知监听器）。"""
+        with self._rlock:
+            self._load_in_progress = value
+        self._notify_listeners()
 
     # ------------------------------------------------------------------
     # 空闲活动跟踪（成本治理 P1-2：模型空闲超时自动卸载）
@@ -332,6 +352,7 @@ class _ModelRegistry:
                 "current_model_size": self._current_model_size,
                 "current_precision": self._current_precision,
                 "model_info": self._model_info,
+                "load_in_progress": self._load_in_progress,
             }
 
     # ------------------------------------------------------------------

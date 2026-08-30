@@ -609,3 +609,91 @@ class TestModelStatus:
         manager = ModelManager(cfg)
         status = manager.get_status()
         assert status["available_models"] == []
+
+
+class TestConcurrentLoad:
+    """P1-5：并发加载互斥。"""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_load_loads_engine_once(self, mock_registry, config):
+        """并发两次 load_model：引擎加载只执行一次，第二请求锁内短路。"""
+        import asyncio
+
+        manager = ModelManager(config)
+        load_calls: list[str] = []
+
+        class FakeEngine:
+            def __init__(self, config):
+                pass
+
+            async def load_model(self, model_size, device, precision):
+                load_calls.append(model_size)
+                await asyncio.sleep(0.05)  # 放大竞态窗口
+                return True
+
+            def is_loaded(self):
+                return True
+
+            def get_model_info(self):
+                return {"model_size": "3b", "precision": "fp16"}
+
+        def _mark_loaded(engine):
+            mock_registry.model_loaded = True
+            mock_registry.current_model_size = "3b"
+            mock_registry.current_precision = "fp16"
+
+        mock_registry.set_engine.side_effect = _mark_loaded
+
+        with (
+            patch("app.integrated_app.gpu_backend.gpu_manager") as mock_gpu,
+            patch("app.integrated_app.model_manager.SeedVR2Engine", FakeEngine),
+            patch.object(manager, "check_model_exists", return_value=True),
+            patch("app.integrated_app.model_manager.estimate_model_vram", return_value=8192),
+            patch("app.integrated_app.model_manager.check_vram_available", return_value=(True, 16384)),
+        ):
+            mock_gpu.is_gpu_available = True
+            results = await asyncio.gather(
+                manager.load_model(model_size="3b", precision="fp16"),
+                manager.load_model(model_size="3b", precision="fp16"),
+            )
+
+        assert len(load_calls) == 1
+        assert all(r["status"] == "ok" for r in results)
+
+    @pytest.mark.asyncio
+    async def test_load_in_progress_flag_roundtrip(self, mock_registry, config):
+        """加载中标志在加载前后正确翻转（经 set_load_in_progress 通知）。"""
+        manager = ModelManager(config)
+        flags: list[bool] = []
+        mock_registry.set_load_in_progress.side_effect = lambda v: flags.append(v)
+
+        class FakeEngine:
+            def __init__(self, config):
+                pass
+
+            async def load_model(self, model_size, device, precision):
+                return True
+
+            def is_loaded(self):
+                return True
+
+            def get_model_info(self):
+                return {"model_size": "3b", "precision": "fp16"}
+
+        mock_registry.set_engine.side_effect = lambda e: (
+            setattr(mock_registry, "model_loaded", True),
+            setattr(mock_registry, "current_model_size", "3b"),
+            setattr(mock_registry, "current_precision", "fp16"),
+        )
+
+        with (
+            patch("app.integrated_app.gpu_backend.gpu_manager") as mock_gpu,
+            patch("app.integrated_app.model_manager.SeedVR2Engine", FakeEngine),
+            patch.object(manager, "check_model_exists", return_value=True),
+            patch("app.integrated_app.model_manager.estimate_model_vram", return_value=8192),
+            patch("app.integrated_app.model_manager.check_vram_available", return_value=(True, 16384)),
+        ):
+            mock_gpu.is_gpu_available = True
+            await manager.load_model(model_size="3b", precision="fp16")
+
+        assert flags == [True, False]
