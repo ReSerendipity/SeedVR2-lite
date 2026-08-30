@@ -46,6 +46,9 @@ jobs:
           # PyTorch 源；不注入 extra index 时 pip 在 PyPI 找不到分发，触及依赖清单的
           # PR 与每周定时审计必红（pip-audit 需真实安装被审环境）
           PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cu132
+          # 锁文件头部的中文注释是 UTF-8：Windows runner 缺省 cp1252 会让
+          # pip_requirements_parser.auto_decode 解码崩溃（0x9d@12），强制 UTF-8
+          PYTHONUTF8: "1"
         run: |
           if [ -f requirements-lock.txt ]; then
             # --no-deps：锁文件已全量钉版（含传递依赖），跳过依赖解析；

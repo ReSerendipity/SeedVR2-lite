@@ -164,13 +164,8 @@ async def upload_and_restore(
                 }
             )
 
-    if not gpu_manager.is_gpu_available:
-        raise HTTPException(
-            status_code=503,
-            detail="SeedVR2 仅支持 NVIDIA GPU 推理，当前未检测到 NVIDIA GPU。请安装 NVIDIA GPU 并配置 CUDA 驱动。",
-        )
-
-    # OOM 熔断检查（P2-12）：连续 OOM 达到阈值后拒绝新任务，避免队列白烧 GPU
+    # OOM 熔断检查（P2-12）：连续 OOM 达到阈值后拒绝新任务，避免队列白烧 GPU。
+    # 先于 GPU 能力检查：熔断是全局安全状态，无 GPU 环境（CI）也应观测到该语义
     from app.integrated_app.services.restore_service import oom_breaker_remaining
 
     _breaker_remaining = oom_breaker_remaining(config)
@@ -181,6 +176,12 @@ async def upload_and_restore(
                 f"连续推理 OOM 触发熔断，请降低分辨率/切换更小模型后重试（约 {_breaker_remaining:.0f} 秒后自动恢复）"
             ),
             headers={"Retry-After": str(int(_breaker_remaining) + 1)},
+        )
+
+    if not gpu_manager.is_gpu_available:
+        raise HTTPException(
+            status_code=503,
+            detail="SeedVR2 仅支持 NVIDIA GPU 推理，当前未检测到 NVIDIA GPU。请安装 NVIDIA GPU 并配置 CUDA 驱动。",
         )
 
     # 自动加载模型：未加载（或尺寸不符）时先加载再修复，避免用户手动预加载

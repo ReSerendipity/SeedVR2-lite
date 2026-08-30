@@ -10,6 +10,7 @@
 """
 
 import io
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -112,8 +113,14 @@ class TestUnifiedRestoreAPI:
         assert data["error"]["code"] == "BAD_REQUEST"
         assert data["error"]["message"]
 
-    def test_restore_auto_loads_model_when_not_loaded(self, test_app):
+    def test_restore_auto_loads_model_when_not_loaded(self, test_app, monkeypatch):
         """模型未加载时 POST /api/restore/ 应自动加载模型，而非以 503 拒绝"""
+        # 本用例验证自动加载编排而非 GPU 探测：模拟 GPU 可用，否则无 GPU 环境（CI）
+        # 会在 GPU 能力门处短路、根本走不到 ensure_model_loaded
+        monkeypatch.setattr(
+            "app.integrated_app.routes.restore.upload.gpu_manager",
+            MagicMock(is_gpu_available=True),
+        )
         response = csrf_post(
             test_app,
             "/api/restore/",

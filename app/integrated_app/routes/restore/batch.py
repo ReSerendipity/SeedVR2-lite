@@ -117,26 +117,8 @@ async def batch_restore_from_folder(
     Raises:
         HTTPException: 校验失败或服务不可用时抛出。
     """
-    if not gpu_manager.is_gpu_available:
-        raise HTTPException(
-            status_code=503,
-            detail="SeedVR2 仅支持 NVIDIA GPU 推理，当前未检测到 NVIDIA GPU。请安装 NVIDIA GPU 并配置 CUDA 驱动。",
-        )
-
-    # OOM 熔断检查（P2-12）：连续 OOM 达到阈值后拒绝新任务，避免队列白烧 GPU
-    from app.integrated_app.services.restore_service import oom_breaker_remaining
-
-    _breaker_remaining = oom_breaker_remaining(config)
-    if _breaker_remaining > 0:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"连续推理 OOM 触发熔断，请降低分辨率/切换更小模型后重试（约 {_breaker_remaining:.0f} 秒后自动恢复）"
-            ),
-            headers={"Retry-After": str(int(_breaker_remaining) + 1)},
-        )
-
     # ============== 幂等键（P1-4） ==============
+    # 先于 GPU 能力检查：同键重复提交返回既有任务，与 GPU 是否可用无关
     client_key = _resolve_idempotency_key(request, idempotency_key)
     if client_key is not None:
         existing_task = await history_db.get_task(client_key)
@@ -151,6 +133,26 @@ async def batch_restore_from_folder(
                     "message": "幂等命中：同键批量任务已存在，未重复创建",
                 }
             )
+
+    # OOM 熔断检查（P2-12）：连续 OOM 达到阈值后拒绝新任务，避免队列白烧 GPU。
+    # 先于 GPU 能力检查：熔断是全局安全状态，无 GPU 环境（CI）也应观测到该语义
+    from app.integrated_app.services.restore_service import oom_breaker_remaining
+
+    _breaker_remaining = oom_breaker_remaining(config)
+    if _breaker_remaining > 0:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"连续推理 OOM 触发熔断，请降低分辨率/切换更小模型后重试（约 {_breaker_remaining:.0f} 秒后自动恢复）"
+            ),
+            headers={"Retry-After": str(int(_breaker_remaining) + 1)},
+        )
+
+    if not gpu_manager.is_gpu_available:
+        raise HTTPException(
+            status_code=503,
+            detail="SeedVR2 仅支持 NVIDIA GPU 推理，当前未检测到 NVIDIA GPU。请安装 NVIDIA GPU 并配置 CUDA 驱动。",
+        )
 
     # 自动加载模型：未加载（或尺寸不符）时先加载再修复
     await common.ensure_model_loaded(model_manager, raw_params.dit_model)
