@@ -189,9 +189,14 @@ async def lifespan(app: FastAPI):
 
     # 核心模块完整性自检 (CWE-912 防御)
     try:
-        from app.integrated_app.security.integrity_selfcheck import run_startup_selfcheck
+        from app.integrated_app.security.integrity_selfcheck import (
+            periodic_selfcheck_loop,
+            run_startup_selfcheck,
+        )
 
-        selfcheck = run_startup_selfcheck()
+        security_cfg = config.get("runtime", {}).get("security", {})
+        enforce = bool(security_cfg.get("integrity_enforce", False))
+        selfcheck = run_startup_selfcheck(enforce=enforce)
         if selfcheck["failed"] > 0:
             logger.error(
                 "=" * 60 + "\n"
@@ -199,6 +204,16 @@ async def lifespan(app: FastAPI):
                 f"    失败文件: {', '.join(selfcheck['failed_files'])}\n"
                 "    请检查代码是否被篡改或重新生成清单。\n" + "=" * 60
             )
+        recheck_interval = int(security_cfg.get("integrity_recheck_interval_seconds", 1800) or 0)
+        if recheck_interval > 0:
+            app.state.integrity_recheck_task = asyncio.create_task(
+                periodic_selfcheck_loop(recheck_interval)
+            )
+            logger.info(f"运行时完整性周期重检已启用（间隔 {recheck_interval}s）")
+    except RuntimeError as e:
+        # enforce 模式下校验失败：阻断启动，禁止带病运行
+        logger.error(f"[SECURITY] 完整性自检强制模式失败，拒绝启动: {e}")
+        raise
     except Exception as e:
         logger.debug(f"核心模块完整性自检跳过: {e}")
 
@@ -301,6 +316,13 @@ async def lifespan(app: FastAPI):
         with suppress(asyncio.CancelledError):
             await stale_cleanup
 
+    # 停止运行时完整性周期重检任务
+    integrity_recheck = getattr(app.state, "integrity_recheck_task", None)
+    if integrity_recheck:
+        integrity_recheck.cancel()
+        with suppress(asyncio.CancelledError):
+            await integrity_recheck
+
     task_queue = app.state.task_queue
     try:
         await asyncio.wait_for(task_queue.stop(), timeout=30.0)
@@ -382,6 +404,9 @@ def create_app(config: dict | None = None) -> FastAPI:
             username=auth_cfg.get("username", "admin"),
             password=_os.environ.get("SEEDVR2_AUTH_PASSWORD", auth_cfg.get("password", "")),
             realm=auth_cfg.get("realm", "SeedVR2"),
+            max_auth_failures=int(auth_cfg.get("max_auth_failures", 5)),
+            auth_failure_window_seconds=float(auth_cfg.get("auth_failure_window_seconds", 300)),
+            auth_ban_seconds=float(auth_cfg.get("auth_ban_seconds", 600)),
         )
         logger.info("Basic Auth 中间件已注册")
 
