@@ -1,5 +1,21 @@
 # Changelog
 
+## [未发布] - 2026-08-30
+
+### 安全合规修复（评估报告 P0-P3 全量落地，docs/reports/安全合规体系深度完整性评估_20260830.md）
+
+* **security(P0):** 路径白名单收敛——`config.yaml` 的 `runtime.security.allowed_base_dirs` 从 C:/~G:/ 全盘根收敛为 outputs/、data/uploads/、data/checkpoints/、model/；`path_guard.py` 新增 `warn_overbroad_whitelist()`，白名单含盘符根/文件系统根时打 `[SECURITY]` 告警
+* **security(P0):** 完整性自检支持 fail-fast 与运行时周期重检——`run_startup_selfcheck(enforce=True)` 校验失败抛 `RuntimeError` 拒绝启动（`runtime.security.integrity_enforce`，默认 false 不影响现有部署）；新增 `periodic_selfcheck_loop()` 由 lifespan 托管的后台任务低频重检（`integrity_recheck_interval_seconds`，默认 1800s，0 禁用）
+* **security(P1):** 依赖哈希锁真正落地——`scripts/generate_lock.py` 重写（PyPI JSON API 获取精确版本官方 SHA256、本地 wheel 直装哈希提取、修复 pip 续行规则），`requirements-lock.txt` 108 包全带 `--hash=` 且 `pip install --require-hashes --dry-run` 零告警；新增 `.github/dependabot.yml`（pip / npm×2 / github-actions 四生态周更）
+* **security(P1):** Basic Auth 防暴力破解——新增 `AuthFailureTracker` 滑动窗口失败计数与临时封禁（默认 5 次失败/300s → 封禁 600s，封禁期 429+Retry-After；成功认证清零；`max_auth_failures=0` 禁用），可经 `security.auth.max_auth_failures` 等配置
+* **security(P1):** CSP nonce 化——`render_page` 每次渲染生成 per-request nonce，`base.html` CSP meta 条件拼接 `'nonce-...'`（CSP3 下浏览器忽略 unsafe-inline，内联脚本转为 nonce 白名单制；无 nonce 上下文自动回退旧策略），6 个模板 7 处内联 `<script>` 全部注入 nonce 属性
+* **security(P2):** 权重加密接入主加载路径——`weight_encryption.resolve_weight_for_loading()` 实现 `.encrypted` 优先（AES-GCM 解密到临时文件、加载后清理）→ 明文魔数识别 → 明文回退单次告警；许可证取 `SEEDVR2_LICENSE_KEY` 环境变量或 `data/license.json`；接入 `seedvr2_engine.py` DiT/VAE 两处权重加载；新增 `scripts/encrypt_weights.py`（generate-license / encrypt / verify 子命令）
+* **security(P2):** 水印签名密钥缺省自持——`.watermark_key` 缺失时首次运行自动生成（原为降级未签名水印）；核实该文件本就被 `.gitignore` 忽略且未入库
+* **security(P3):** 新增独立安全审计日志通道 `security/audit.py`（`logs/security_audit.log` JSONL 轮转 10MB×5），接入 CSRF_FAILURE / AUTH_FAILURE / AUTH_BAN / RATE_LIMITED / PATH_DENIED / INTEGRITY_FAILURE 六类事件，写入失败绝不阻断业务
+* **test:** 新增 `tests/test_csp_nonce.py`（3 项）、`tests/test_security_audit.py`（4 项）；`test_basic_auth.py` 扩展 9 项防爆破用例、`test_weight_encryption.py` 扩展 4 项加密加载用例
+* **test(e2e):** 修复 4 处既有 E2E 缺陷——security.spec 补 onboarding 遮罩预置与 `waitForResponse` 先注册后点击（Playwright 事件竞态）；uiux-compatibility 两处 v1.8 重构前的过时选择器 `.sv-restore-workspace` 更新为 `.sv2-body`；a11y 键盘导航按 Firefox `activeElement` 环绕语义修正采样终止条件，axe 注入上下文加 `bypassCSP`（CSP3 nonce 下 addScriptTag 内联注入被拦）
+* **docs:** `generate_integrity_manifest.py` 重新生成清单（SOP-4，覆盖本批 9 个核心模块改动）
+
 ## [1.5.0] - 2026-08-28
 
 ### Bug Fixes
