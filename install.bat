@@ -11,6 +11,17 @@ echo.
 set "PYTHON_CMD="
 
 :: ============================================================
+:: 0. Prefer project-local .venv (consistent with start.bat / precheck.ps1)
+::    统一环境策略：安装目标 = 运行目标 = 检查目标，全部指向 .venv，
+::    消除"装进系统 Python、运行却用 .venv"的分裂（DX 评估 P1-5）。
+:: ============================================================
+if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PYTHON_CMD=%~dp0.venv\Scripts\python.exe"
+    echo [OK] Found project venv: %~dp0.venv\Scripts\python.exe
+    goto :python_found
+)
+
+:: ============================================================
 :: 1. First, try system Python (preferred)
 :: ============================================================
 
@@ -123,6 +134,23 @@ exit /b 1
 echo Using Python: %PYTHON_CMD%
 echo.
 
+:: ============================================================
+:: 4. Unify on project-local .venv（与 start.bat / precheck.ps1 同一优先级）
+:: ============================================================
+if exist "%~dp0.venv\Scripts\python.exe" goto :venv_ready
+
+echo [Setup] Creating project-local virtual environment .venv ...
+"%PYTHON_CMD%" -m venv "%~dp0.venv"
+if errorlevel 1 (
+    echo [WARN] Failed to create .venv - continuing with base interpreter
+) else (
+    echo [OK] Created .venv - all dependencies will be installed into it
+    set "PYTHON_CMD=%~dp0.venv\Scripts\python.exe"
+)
+
+:venv_ready
+echo Using interpreter: %PYTHON_CMD%
+
 :: Check Python version
 "%PYTHON_CMD%" --version
 if errorlevel 1 (
@@ -140,7 +168,9 @@ if errorlevel 1 (
     echo     Run: VC_redist\VC_redist.x64.exe
     echo.
     set /p INSTALL_VC="Install now? (Y/N): "
-    if /i "%INSTALL_VC%"=="Y" (
+    :: 注意必须用 !INSTALL_VC!（延迟展开）：%VAR% 在整个 if 块解析时即展开，
+    :: 此时 set /p 还没执行，恒为空 → 选择 Y 永远不会触发安装（DX 评估 P1-5 修复）
+    if /i "!INSTALL_VC!"=="Y" (
         if exist "%~dp0VC_redist\VC_redist.x64.exe" (
             start "" "%~dp0VC_redist\VC_redist.x64.exe"
             echo Please re-run this script after installation
@@ -205,6 +235,23 @@ echo [Install] Installing Python dependencies...
 
 if errorlevel 1 (
     echo [WARN] Some dependencies failed to install
+)
+
+:: Install git hooks (pre-push 快检) - best effort, 无 git 时跳过
+where git >nul 2>&1
+if not errorlevel 1 (
+    echo [Setup] Installing git hooks (pre-push fast checks)...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\install-hooks.ps1"
+) else (
+    echo [SKIP] git not found - skipping git hooks installation
+)
+
+:: pre-commit runner（可选）：装了 pre-commit 才注册，否则给出提示
+"%PYTHON_CMD%" -m pre_commit --version >nul 2>&1
+if not errorlevel 1 (
+    "%PYTHON_CMD%" -m pre_commit install
+) else (
+    echo [SKIP] pre-commit not installed (optional): pip install pre-commit ^&^& pre-commit install
 )
 
 echo.

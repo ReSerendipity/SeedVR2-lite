@@ -14,12 +14,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # ============================================================
-# 1. Detect Python interpreter (prefer system Python 3.12+)
+# 1. Detect Python interpreter (prefer project-local .venv, then 3.12+)
 # ============================================================
 PYTHON_CMD=""
 
-# 1a. Check for python3.12 explicitly
-if command -v python3.12 &>/dev/null; then
+# 1a. Prefer project-local .venv (consistent with install.bat priority)
+if [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+    PYTHON_CMD="$SCRIPT_DIR/.venv/bin/python"
+    echo "[OK] Found project venv: $SCRIPT_DIR/.venv"
+fi
+
+# 1b. Check for python3.12 explicitly
+if [ -z "$PYTHON_CMD" ] && command -v python3.12 &>/dev/null; then
     PYTHON_CMD="python3.12"
     echo "[OK] Found Python 3.12: $(which python3.12)"
 elif command -v python3 &>/dev/null; then
@@ -72,6 +78,19 @@ $PYTHON_CMD --version
 echo ""
 
 # ============================================================
+# 2b. Unify on project-local .venv（与 install.bat 同一策略）
+# ============================================================
+if [ ! -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+    echo "[Setup] Creating project-local virtual environment .venv ..."
+    if ! "$PYTHON_CMD" -m venv "$SCRIPT_DIR/.venv"; then
+        echo "[WARN] Failed to create .venv - continuing with base interpreter"
+    else
+        echo "[OK] Created .venv - all dependencies will be installed into it"
+        PYTHON_CMD="$SCRIPT_DIR/.venv/bin/python"
+    fi
+fi
+
+# ============================================================
 # 3. Check NVIDIA GPU
 # ============================================================
 echo "[Check] NVIDIA GPU..."
@@ -93,14 +112,38 @@ echo "          If download is too slow, install manually from:"
 echo "          https://pytorch.org/get-started/locally/"
 echo ""
 
-# Detect CUDA version from nvidia-smi
+# Detect CUDA version from nvidia-smi — compatible with both the classic
+# "CUDA Version: X.Y" and the newer "CUDA UMD Version: X.Y" driver formats
+# (see KNOWN_ISSUES #10). Tier mapping mirrors install.bat so both platforms
+# provision the same PyTorch build from one driver report.
+TORCH_INDEX="https://download.pytorch.org/whl/cu128"
 CUDA_VERSION=""
 if command -v nvidia-smi &>/dev/null; then
-    CUDA_VERSION=$(nvidia-smi | grep "CUDA Version" | awk '{print $9}' 2>/dev/null || echo "")
+    CUDA_LINE=$(nvidia-smi 2>/dev/null | grep -oE 'CUDA( UMD)? Version: [0-9.]+' | head -1)
+    CUDA_VERSION="${CUDA_LINE##*: }"
 fi
 
-# Install PyTorch (default to cu121 for broad compatibility)
-$PYTHON_CMD -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --timeout 1200 --retries 10 || {
+if [ -n "$CUDA_VERSION" ]; then
+    CUDA_MAJOR="${CUDA_VERSION%%.*}"
+    CUDA_MINOR=$(echo "$CUDA_VERSION" | cut -s -d. -f2)
+    echo "[OK] Detected CUDA Version: $CUDA_VERSION"
+    if [ "${CUDA_MAJOR:-0}" -ge 13 ] 2>/dev/null; then
+        TORCH_INDEX="https://download.pytorch.org/whl/cu132"
+    elif [ "${CUDA_MAJOR:-0}" -eq 12 ] 2>/dev/null; then
+        if [ "${CUDA_MINOR:-0}" -ge 8 ] 2>/dev/null; then
+            TORCH_INDEX="https://download.pytorch.org/whl/cu128"
+        else
+            TORCH_INDEX="https://download.pytorch.org/whl/cu121"
+        fi
+    elif [ "${CUDA_MAJOR:-0}" -eq 11 ] 2>/dev/null; then
+        TORCH_INDEX="https://download.pytorch.org/whl/cu118"
+    fi
+else
+    echo "[!] nvidia-smi not found or no CUDA line - defaulting to the cu128 build."
+fi
+
+echo "[Install] Installing PyTorch from: $TORCH_INDEX"
+$PYTHON_CMD -m pip install torch torchvision torchaudio --index-url "$TORCH_INDEX" --timeout 1200 --retries 10 || {
     echo "[WARN] PyTorch CUDA install failed, trying default index..."
     $PYTHON_CMD -m pip install torch torchvision torchaudio --timeout 1200 --retries 10
 }
