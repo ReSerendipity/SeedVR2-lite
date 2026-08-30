@@ -1,0 +1,103 @@
+# .github/workflows/gpu-smoke.yml
+# Weekly + manual REAL-INFERENCE smoke on a self-hosted GPU runner (label: gpu).
+#
+# Closes the hardware blind spot of portable-release.yml: hosted runners have no GPU,
+# so the release gate only proves packaging correctness (boot / route / CSRF / torch
+# import), never "the model actually repairs an image". This workflow downloads a
+# published portable release, unpacks it exactly like an end user, and forces one real
+# restore task (--require-inference).
+#
+# Runner prerequisites (one-time, on the GPU machine):
+#   1. Register a self-hosted runner with the extra label `gpu`
+#      (Settings -> Actions -> Runners -> New self-hosted runner -> --labels gpu)
+#   2. gh CLI on PATH (release asset download)
+#   3. Python 3.11+ on PATH (the smoke script is stdlib-only)
+#   4. NVIDIA driver ready; ~7 GB free disk for download + unpack
+# Without an online `gpu` runner the weekly schedule skips itself (see runner-precheck).
+name: GPU Smoke (real inference, self-hosted)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to smoke (empty = newest published release)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 3 * * 1" # every Monday 03:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  runner-precheck:
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.check.outputs.available }}
+    steps:
+      - name: Check for an online self-hosted GPU runner
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          COUNT=$(gh api "repos/${{ github.repository }}/actions/runners" \
+            --jq '[.runners[] | select(.status == "online") | select(any(.labels[]; .name == "gpu"))] | length')
+          echo "online gpu-labelled runners: ${COUNT}"
+          if [ "${COUNT}" -gt 0 ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::no online self-hosted runner with label 'gpu'; weekly smoke skipped"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  gpu-smoke:
+    needs: runner-precheck
+    if: needs.runner-precheck.outputs.available == 'true'
+    runs-on: [self-hosted, gpu]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target release tag
+        id: tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $t = "${{ github.event.inputs.tag }}"
+          if (-not $t) {
+            $t = gh release list --limit 20 --json tagName,isDraft,isPrerelease |
+              ConvertFrom-Json |
+              Where-Object { -not $_.isDraft -and -not $_.isPrerelease } |
+              Select-Object -First 1 -ExpandProperty tagName
+          }
+          if (-not $t) { throw "no published release found" }
+          Write-Host "smoking release: $t"
+          "tag=$t" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+
+      - name: Download release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Path bundle -Force | Out-Null
+          gh release download "${{ steps.tag.outputs.tag }}" --dir bundle
+          Get-ChildItem bundle |
+            Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}} |
+            Format-Table -AutoSize
+
+      - name: Unpack (per-volume SHA256 -> merge -> extract -> offline torch install)
+        shell: pwsh
+        run: |
+          $target = Join-Path $PWD 'target'
+          & powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\unpack_portable_bundle.ps1 `
+            -BundleDir "$PWD\bundle" -TargetDir $target
+          if ($LASTEXITCODE -ne 0) { throw "unpack failed" }
+
+      - name: Smoke with REAL inference (--require-inference)
+        shell: pwsh
+        run: |
+          python .\scripts\smoke_portable_bundle.py `
+            --app-dir (Join-Path $PWD 'target\SeedVR2-Portable') `
+            --require-inference --boot-timeout 900 --task-timeout 1800 --resolution 512
+          if ($LASTEXITCODE -ne 0) { throw "GPU smoke failed" }
