@@ -17,8 +17,14 @@ permissions:
 
 jobs:
   audit:
-    runs-on: ubuntu-latest
+    # 必须与锁的平台一致：requirements-lock.txt 的 --hash 是 Windows 轮实测值，
+    # ubuntu 解析 manylinux 轮必报 hash mismatch（pip-audit -r 模式必定真实安装，
+    # --no-deps 只跳过解析跳不过哈希校验，2026-08-30 两轮实测）
+    runs-on: windows-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
