@@ -254,15 +254,16 @@ test.describe('Responsive layout - Desktop (1920x1080)', () => {
     const videoPage = new VideoRestorePage(page);
     await videoPage.goto();
 
-    // On desktop, the sv-restore-workspace uses CSS Grid with two columns:
-    // - Left column: .sv-restore-main (canvas / upload / progress / result)
+    // On desktop, the sv2-body workbench uses CSS Grid with two columns:
+    // - Left column: .sv2-main (canvas / upload / progress / result)
     // - Right column: .sv-param-sidebar (parameter sidebar)
     // They should be displayed side-by-side at desktop width.
-    const layoutContainer = page.locator('.sv-restore-workspace');
+    // （.sv-restore-workspace 为 v1.8 工作台重构前的旧容器类，已不存在）
+    const layoutContainer = page.locator('.sv2-body');
     await expect(layoutContainer).toBeVisible();
 
     // Get the two direct children of the layout container
-    const leftColumn = layoutContainer.locator('> .sv-restore-main');
+    const leftColumn = layoutContainer.locator('> .sv2-main');
     const rightColumn = layoutContainer.locator('> .sv-param-sidebar');
 
     // Both columns should be visible
@@ -296,14 +297,13 @@ test.describe('Responsive layout - Desktop (1920x1080)', () => {
     await imagePage.goto();
 
     // Same side-by-side check for the image restore page
-    // The sv-restore-workspace uses CSS Grid with two columns at desktop width
     // (both video and image restore share the unified restore.html template:
-    // .sv-restore-main + .sv-param-sidebar)
-    const layoutContainer = page.locator('.sv-restore-workspace');
+    // .sv2-body grid with .sv2-main + .sv-param-sidebar)
+    const layoutContainer = page.locator('.sv2-body');
     await expect(layoutContainer).toBeVisible();
 
     // Get the two direct children of the layout container
-    const leftColumn = layoutContainer.locator('> .sv-restore-main');
+    const leftColumn = layoutContainer.locator('> .sv2-main');
     const rightColumn = layoutContainer.locator('> .sv-param-sidebar');
 
     // Both columns should be visible

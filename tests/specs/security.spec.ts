@@ -223,6 +223,14 @@ test.describe('Security - CSRF Protection', () => {
   test('POST requests include CSRF token header', async ({ page }) => {
     await setupAllMocks(page);
 
+    // 预置"已看过首次引导"标记：fresh context 下 onboardingModal 会在
+    // 页面脚本执行后立即显示并拦截指针事件，导致 startBtn 点击被遮罩
+    // 吞掉（既有 flake：modal 显示与点击存在竞态）。测试关注的是 CSRF
+    // 头而非引导流程，故在文档脚本运行前预置 seen 标记跳过引导。
+    await page.addInitScript(() => {
+      localStorage.setItem('sv_onboarding_seen_v2', '1');
+    });
+
     // Capture request headers to verify CSRF token
     const requestHeaders: Record<string, string>[] = [];
 
@@ -258,12 +266,14 @@ test.describe('Security - CSRF Protection', () => {
     const startBtn = page.locator('#btnStartRestore');
     await expect(startBtn).toBeVisible({ timeout: 10000 });
     await expect(startBtn).toBeEnabled({ timeout: 15000 });
-    await startBtn.click();
-    // Wait for POST request to be sent
-    await page.waitForResponse(
+    // 先注册 waitForResponse 再点击：mock 响应可能先于监听器注册完成，
+    // 先 click 后 wait 会漏接事件导致偶发超时（Playwright 事件竞态反模式）
+    const restoreResponse = page.waitForResponse(
       (resp) => resp.url().includes('/api/restore') && resp.request().method() === 'POST',
       { timeout: 10000 },
     );
+    await startBtn.click();
+    await restoreResponse;
 
     // Verify that at least one POST request was made and check for CSRF token
     expect(requestHeaders.length, 'At least one POST request should have been made').toBeGreaterThan(0);
