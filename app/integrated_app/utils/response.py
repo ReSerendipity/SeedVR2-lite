@@ -44,7 +44,7 @@ def respond_error(
     code: str,
     message: str,
     status: int = 400,
-    detail: dict[str, Any] | None = None,
+    detail: dict[str, Any] | list[Any] | None = None,
 ) -> JSONResponse:
     """错误响应包装工厂函数。
 
@@ -59,7 +59,8 @@ def respond_error(
         code: 业务错误码字符串（如 PATH_NOT_ALLOWED、MODEL_NOT_LOADED、INSUFFICIENT_RAM）
         message: 面向用户的友好错误消息，应清晰说明问题并给出建议
         status: HTTP 状态码，默认 400 Bad Request
-        detail: 附加详情字典，默认为空字典；不应包含堆栈或敏感信息
+        detail: 附加详情（字典或列表——请求校验错误的 detail 天然是列表），
+            默认为空；不应包含堆栈或敏感信息
 
     Returns:
         JSONResponse: FastAPI JSON 响应对象
