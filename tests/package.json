@@ -13,7 +13,7 @@
     "screenshots": "node capture-screenshots.js"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^25.9.3",
     "axe-core": "^4.10.0",
     "jsdom": "^24.1.0",
