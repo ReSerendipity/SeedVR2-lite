@@ -1,30 +1,85 @@
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1
+# SeedVR2 容器镜像
+#
+# 设计要点（对应云原生评估报告 P0/P1 项）：
+# 1. Multi-stage：依赖安装在 builder 层，运行时层只携带成品，减小体积与攻击面。
+# 2. 基础镜像精确锁 tag；发布前建议用以下命令取得 digest 并改写 FROM 行
+#    （本仓库开发环境无法联网校验 digest，故不硬编码以免伪造）：
+#      docker manifest inspect -v python:3.12-slim-bookworm | findstr digest
+# 3. GPU 说明：torch 的 Linux wheel 自带 CUDA 用户态运行库（nvidia-*-cu12 pip 包），
+#    运行时仅需 NVIDIA 驱动经 nvidia-container-toolkit 注入：
+#      docker run --gpus all ...
+#    下面的 NVIDIA_VISIBLE_DEVICES / NVIDIA_DRIVER_CAPABILITIES 保证 nvidia runtime 自动生效。
+# 4. 依赖锁定：安装 requirements.txt（版本区间声明）。
+#    requirements-lock.txt 是按当前开发机（Windows + torch+cu132 本地轮子）生成的带哈希锁，
+#    直接在 Linux 容器内 --require-hashes 安装会因平台轮子哈希不同而失败；
+#    如需容器内哈希锁定，请在 Linux 环境重跑 scripts/generate_lock.py 生成平台化锁文件。
+# 5. 优雅关闭：gunicorn 收到 SIGTERM 后等待 --graceful-timeout，
+#    覆盖应用 lifespan 关闭链（任务队列排空 ≤30s + 模型卸载），避免强杀丢任务。
+FROM python:3.12-slim-bookworm AS builder
 
 WORKDIR /app
 
-# Install system dependencies
+# 仅复制依赖清单以最大化层缓存命中（代码变更不击穿依赖层）
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# ---------------------------------------------------------------- runtime stage
+FROM python:3.12-slim-bookworm
+
+# OCI 标准标签：来源与版本可追溯（APP_VERSION 由 CI 构建参数注入）
+ARG APP_VERSION=0.0.0-dev
+LABEL org.opencontainers.image.title="SeedVR2" \
+      org.opencontainers.image.description="AI-powered video & image super-resolution backend (FastAPI + CUDA)" \
+      org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.source="https://github.com/ReSerendipity/SeedVR2-lite" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    PIP_NO_CACHE_DIR=1 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+WORKDIR /app
+
+# opencv 运行所需系统库（libgl1 / libglib2.0-0，bookworm 包名）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
+        libgl1 \
+        libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better layer caching
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 从 builder 层复制已安装依赖（不携带 pip 缓存与构建痕迹）
+COPY --from=builder /install /usr/local
 
-# Copy application code
+# 应用代码
 COPY . .
 
-# Create data directories and non-root user
-RUN mkdir -p data/uploads data/logs model && \
+# 创建运行时数据目录并切换非 root 用户（CWE-250）
+RUN mkdir -p data/uploads data/logs model outputs && \
     groupadd -r appuser && useradd -r -g appuser appuser && \
     chown -R appuser:appuser /app
 
 USER appuser
 
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app
-
 EXPOSE 7870
 
-CMD ["gunicorn", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:7870", "app.integrated_app.app_server:app"]
+# 容器级健康检查：复用轻量探针 /api/system/ping（无需 curl，用标准库 urllib）
+# start-period=180s 覆盖慢速 GPU 初始化 / 权重 SHA256 校验 / 模型预热
+HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7870/api/system/ping', timeout=4)"]
+
+# 显式声明停止信号（Docker/K8s 默认即 SIGTERM，写明以防基础镜像变更）
+STOPSIGNAL SIGTERM
+
+# 模型引擎为进程内单例，worker 必须为 1（多 worker 重复加载模型到 GPU 会 OOM）
+# --graceful-timeout 90：覆盖 lifespan 关闭链（队列 30s 排空 + 模型卸载）
+# --timeout 120：worker 级心跳超时，容忍长推理帧间无心跳的间隙
+CMD ["gunicorn", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", \
+     "--bind", "0.0.0.0:7870", \
+     "--graceful-timeout", "90", \
+     "--timeout", "120", \
+     "--keep-alive", "5", \
+     "app.integrated_app.app_server:app"]

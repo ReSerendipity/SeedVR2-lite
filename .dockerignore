@@ -1,10 +1,49 @@
-WPy64-312101/
-data/
-model/
-.trae/
-*.pyc
+# Python
 __pycache__/
-.git/
-*.md
+*.pyc
+*.pyo
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
 *.egg-info/
+
+# 版本控制 / IDE / 助手配置
+.git/
+.github/
+.trae/
+.vscode/
+.idea/
+
+# 本地开发产物（约 1.6 万无关文件，禁止打入镜像）
+dist/
+build/
+website/
+screenshots/
+dogfood-output/
+experiments/
+examples/
+node_modules/
+
+# 测试与文档
+tests/
+docs/
+*.md
+!README.md
+
+# 运行时数据与本地环境（卷挂载提供，不打入镜像）
+data/
+outputs/
+logs/
+model/
+demo/
+perf/
+
+# Windows 便携包链路与本地脚本
+*.ps1
+*.bat
+launcher/
+
+# Python 解释器残留（便携安装目录）
+WPy64-312101/
