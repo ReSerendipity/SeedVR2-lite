@@ -22,7 +22,7 @@ from app.integrated_app.config_models import ImageRestoreParams, VideoRestorePar
 from app.integrated_app.history_db import HistoryDB
 from app.integrated_app.model_registry import model_registry
 from app.integrated_app.routes.restore import common
-from app.integrated_app.routes.restore.upload import _process_image_task, _process_video_task
+from app.integrated_app.services.restore_service import process_image_task, process_video_task
 from app.integrated_app.task_queue import TaskQueue
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ async def recover_tasks(
         if record.task_type == "image":
             p_img: ImageRestoreParams = params  # type: ignore[assignment]
             image_task = (  # type: ignore[misc]  # mypy cannot infer lambda type with complex defaults  # noqa: E731
-                lambda t=task_record, r=record, p=p_img: _process_image_task(
+                lambda t=task_record, r=record, p=p_img: process_image_task(
                     t.task_id, r.id, r.input_file, p, history_db, task_queue
                 )
             )
@@ -96,7 +96,7 @@ async def recover_tasks(
         else:
             p_vid: VideoRestoreParams = params  # type: ignore[assignment]
             video_task = (  # type: ignore[misc]  # mypy cannot infer lambda type with complex defaults  # noqa: E731
-                lambda t=task_record, r=record, p=p_vid, m=use_model_size, h=history_db, q=task_queue: _process_video_task(
+                lambda t=task_record, r=record, p=p_vid, m=use_model_size, h=history_db, q=task_queue: process_video_task(
                     t.task_id, r.id, r.input_file, m, p, h, q
                 )
             )

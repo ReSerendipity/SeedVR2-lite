@@ -14,8 +14,8 @@ import sqlite3
 import time
 
 import pytest
-from fastapi import HTTPException
 
+from app.integrated_app.exceptions import DiskSpaceError
 from app.integrated_app.history_db import HistoryDB, HistoryRecord
 from app.integrated_app.routes.restore.common import ensure_disk_space
 from app.integrated_app.services.output_retention import cleanup_outputs_once
@@ -180,10 +180,12 @@ class TestEnsureDiskSpace:
         ensure_disk_space(str(tmp_path), -1.0)
 
     def test_unreachable_threshold_rejects_with_507(self, tmp_path):
-        with pytest.raises(HTTPException) as exc_info:
+        # P0-2 分层治理：服务层抛领域异常 DiskSpaceError（http_status=507），
+        # 由全局异常处理器转换为 HTTP 响应
+        with pytest.raises(DiskSpaceError) as exc_info:
             ensure_disk_space(str(tmp_path), 1e9)
-        assert exc_info.value.status_code == 507
-        assert "磁盘剩余空间不足" in str(exc_info.value.detail)
+        assert exc_info.value.http_status() == 507
+        assert "磁盘剩余空间不足" in str(exc_info.value.message)
 
     def test_reasonable_threshold_passes(self, tmp_path):
         # 正常机器剩余空间远大于 1KB
@@ -192,9 +194,8 @@ class TestEnsureDiskSpace:
     def test_missing_dir_still_checks(self, tmp_path):
         # 目标目录不存在时以其父目录所在磁盘为检查对象（disk_usage 语义），
         # 极大阈值仍应拒绝
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(DiskSpaceError):
             ensure_disk_space(str(tmp_path / "outputs"), 1e9)
-        assert exc_info.value.status_code == 507
 
 
 @pytest.mark.asyncio

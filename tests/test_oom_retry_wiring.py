@@ -23,8 +23,8 @@ from app.integrated_app.bad_case_retry import (
     retry_with_bad_case_detection,
 )
 from app.integrated_app.gpu_utils import oom_protect
-from app.integrated_app.routes.restore.batch import _apply_oom_degradation
 from app.integrated_app.routes.restore.common import build_retry_config
+from app.integrated_app.services.restore_service import apply_oom_degradation
 
 
 @dataclass
@@ -204,7 +204,7 @@ class TestApplyOomDegradation:
         current = {"resolution": 2048, "blocks_to_swap": 32, "seed": 42}
         batch_cfg = dict(current)
 
-        applied = _apply_oom_degradation(current, batch_cfg, "CUDA out of memory", attempt=1, app_config={})
+        applied = apply_oom_degradation(current, batch_cfg, "CUDA out of memory", attempt=1, app_config={})
 
         assert applied
         assert current["blocks_to_swap"] == 36
@@ -216,7 +216,7 @@ class TestApplyOomDegradation:
         current = {"resolution": 2048, "blocks_to_swap": 32, "seed": 42}
         batch_cfg = dict(current)
 
-        applied = _apply_oom_degradation(current, batch_cfg, "连接超时 timeout", attempt=1, app_config={})
+        applied = apply_oom_degradation(current, batch_cfg, "连接超时 timeout", attempt=1, app_config={})
 
         # 网络类失败只换种子不降级（enable_seed_rotation 默认开启）
         assert isinstance(applied, bool)
@@ -226,7 +226,7 @@ class TestApplyOomDegradation:
         current = {"seed": 42}
         batch_cfg = dict(current)
 
-        applied = _apply_oom_degradation(current, batch_cfg, "CUDA out of memory", attempt=1, app_config={})
+        applied = apply_oom_degradation(current, batch_cfg, "CUDA out of memory", attempt=1, app_config={})
 
         # current_config 中没有可降级字段时不应崩溃
         assert isinstance(applied, bool)

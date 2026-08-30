@@ -1,35 +1,37 @@
 #!/usr/bin/env python3
-"""修复路由公共工具模块。
+"""修复路由公共工具模块（HTTP 适配层）。
 
-提取图像/视频修复路由的公共状态管理、常量定义与工具函数，
-供 upload/batch/task/scan/recovery 等子路由模块复用。
-
-主要功能：
+P0-2 分层治理后，本模块只保留 HTTP 路由侧的公共设施：
 - 支持的媒体文件扩展名常量定义
 - 文件大小限制常量
 - 统一修复参数解析（表单到 Pydantic 模型）
-- 模型尺寸推断与媒体类型检测
-- 任务状态管理（代理到 TaskStateStore，单真源）
-- 批量任务项创建工具
+- 模型自动加载（HTTP 503 语义）
+- 两倍模式后端强制校验
 - TaskStateStoreProxy 兼容类（保持原 dict-like 接口）
+
+任务执行编排（状态机、OOM 降级重试、断点续跑、历史落账）已迁移到
+services/restore_service.py —— 本模块对其做**再导出**以保持既有
+`from ...routes.restore import common` 调用方兼容；新代码应直接
+从 `app.integrated_app.services.restore_service` 导入。
 
 API 路由前缀：/api/restore（由子模块注册）
 所属项目：SeedVR2 (SeedVR2 视频/图像修复工具)
 """
 
-import asyncio
-import contextlib
 import logging
 import os
-import shutil
-import time
 
 from fastapi import Form, HTTPException
 
-from app.integrated_app.bad_case_retry import RetryConfig
 from app.integrated_app.config_models import UnifiedRestoreParams
-from app.integrated_app.history_db import HistoryDB
 from app.integrated_app.model_registry import model_registry
+from app.integrated_app.services.restore_service import (  # noqa: F401 — 再导出保持兼容
+    build_retry_config,
+    create_batch_item,
+    create_db_progress_persister,
+    ensure_disk_space,
+    model_size_from_dit_model,
+)
 from app.integrated_app.services.task_state import task_state_store
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff", ".tif"}
@@ -40,91 +42,14 @@ ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff"}
 
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv"}
 
+# 上传大小默认上限；实际值从 config.yaml runtime.security.max_upload_*_mb 读取
+# （见 upload.py / batch.py），此常量仅作配置缺失时的回退默认值。
 MAX_IMAGE_SIZE = 50 * 1024 * 1024
 MAX_VIDEO_SIZE = 500 * 1024 * 1024
 
 MAX_RETRIES = 2
 
-
-def ensure_disk_space(target_dir: str, min_free_gb: float) -> None:
-    """任务启动前磁盘剩余空间预检（成本治理 P0-1）。
-
-    检查输出目录所在磁盘的剩余空间，不足时直接拒绝创建任务，
-    避免推理中途（尤其长视频帧落盘阶段）写满磁盘导致服务不可用。
-
-    Args:
-        target_dir: 输出目录（以其所在磁盘为检查对象，无需事先存在）。
-        min_free_gb: 最低剩余空间（GB），<=0 时跳过预检。
-
-    Raises:
-        HTTPException: 剩余空间低于阈值时抛出 507 Insufficient Storage。
-    """
-    if not min_free_gb or min_free_gb <= 0:
-        return
-    # shutil.disk_usage 要求路径存在：向上回溯到最近存在的祖先目录
-    # （输出目录通常在任务启动后才创建，其所在磁盘与最终落盘磁盘一致）
-    probe = target_dir
-    while not os.path.exists(probe):
-        parent = os.path.dirname(probe)
-        if parent == probe:
-            break
-        probe = parent
-    try:
-        usage = shutil.disk_usage(probe)
-    except OSError:
-        # 磁盘信息不可用时放行，不阻塞正常推理
-        return
-    free_gb = usage.free / (1024**3)
-    if free_gb < min_free_gb:
-        raise HTTPException(
-            status_code=507,
-            detail=(
-                f"磁盘剩余空间不足（当前 {free_gb:.1f}GB < 最低要求 {min_free_gb:.1f}GB），"
-                f"请清理 outputs/ 输出目录或释放磁盘空间后重试"
-            ),
-        )
-
-
-def build_retry_config(app_config: dict | None = None) -> RetryConfig:
-    """从应用配置构建推理坏案例自动重试配置（成本治理 P0-2 接线）。
-
-    读取 config.yaml 的 runtime.retry 段；enabled=false 或 max_retries=0
-    时返回不重试的空配置。
-
-    Args:
-        app_config: 应用配置字典（get_app_config() 或依赖注入的 config）。
-
-    Returns:
-        RetryConfig: 传给 retry_with_bad_case_detection 的重试配置。
-    """
-    cfg = (app_config or {}).get("runtime", {}).get("retry", {}) or {}
-    if not cfg.get("enabled", True):
-        return RetryConfig(max_retries=0, enable_degradation=False, enable_seed_rotation=False)
-    return RetryConfig(
-        max_retries=int(cfg.get("max_retries", 2) or 0),
-        base_delay_seconds=float(cfg.get("base_delay_seconds", 1.0) or 0.0),
-        max_delay_seconds=float(cfg.get("max_delay_seconds", 30.0) or 1.0),
-    )
-
-
-def model_size_from_dit_model(dit_model: str) -> str:
-    """根据 dit_model 参数确定使用的模型尺寸。
-
-    解析模型名称字符串，提取模型尺寸标识。对于 sharp 变体保留 "size_sharp" 格式，
-    其他模型只返回尺寸前缀。如参数为空则返回当前已加载模型尺寸或默认 "3b"。
-
-    Args:
-        dit_model: DiT 模型名称字符串，如 "3b_fp16"、"7b_sharp_fp16"。
-
-    Returns:
-        模型尺寸字符串，如 "3b"、"7b_sharp"。
-    """
-    if dit_model:
-        parts = dit_model.split("_")
-        if len(parts) >= 3 and parts[1] in ("sharp",):
-            return f"{parts[0]}_{parts[1]}"
-        return parts[0]
-    return model_registry.current_model_size or "3b"
+logger = logging.getLogger(__name__)
 
 
 async def ensure_model_loaded(model_manager, dit_model: str = "") -> None:
@@ -149,53 +74,6 @@ async def ensure_model_loaded(model_manager, dit_model: str = "") -> None:
     except Exception as e:
         logger.error(f"自动加载模型失败: {e}")
         raise HTTPException(status_code=503, detail=f"模型自动加载失败: {e}") from e
-
-
-def create_db_progress_persister(
-    task_id: str,
-    history_db: HistoryDB,
-    interval_seconds: float = 30.0,
-):
-    """创建「定期写数据库进度」的同步持久化器（断点续传 / 心跳）。
-
-    引擎的进度回调运行在 `asyncio.to_thread` 的工作线程、且为同步函数，无法直接
-    await 写数据库。此工厂在异步上下文调用时捕获主事件循环，返回一个同步 `persist(progress)`
-    函数：按 `interval_seconds` 节流，通过 `asyncio.run_coroutine_threadsafe` 把进度
-    写回数据库。
-
-    好处：
-    1. 定期同步 DB 的 `progress` 与 `updated_at` → 长视频工作期间 DB 时间戳保持新鲜，
-       卡死清理不会因时间戳陈旧而误杀正常任务；
-    2. 进度落盘 → 服务重启后 `recover_tasks`/断点续传能拿到更接近实时的进度。
-
-    Args:
-        task_id: 任务 ID。
-        history_db: 历史数据库实例。
-        interval_seconds: 两次写库的最小间隔秒数，默认 30 秒。
-
-    Returns:
-        `Callable[[float], None]`：同步进度持久化函数。
-    """
-    loop = asyncio.get_running_loop()
-    last_persist = [0.0]
-
-    def _consume(_fut) -> None:
-        # 消费 future 结果，避免「异常未被获取」告警；忽略写库失败
-        with contextlib.suppress(Exception):
-            _fut.exception()
-
-    def persist(progress: float) -> None:
-        now = time.monotonic()
-        if now - last_persist[0] < interval_seconds:
-            return
-        last_persist[0] = now
-        fut = asyncio.run_coroutine_threadsafe(
-            update_task_state(task_id, history_db, progress=float(progress)),
-            loop,
-        )
-        fut.add_done_callback(_consume)
-
-    return persist
 
 
 def detect_media_type(file_ext: str) -> str | None:
@@ -264,6 +142,7 @@ def parse_unified_params(
         swap_io_components: 是否交换 I/O 组件，默认 True。
         dit_offload_device: DiT 卸载设备，默认 "cpu"。
         dit_cache_model: 是否缓存 DiT 模型，默认 True。
+        force_reload_dit: 是否强制重载 DiT，默认 False。
         attention_mode: 注意力实现模式，默认 "sdpa"。
         vae_model: VAE 模型名称，默认 "ema_vae_fp16"。
         vae_device: VAE 推理设备，默认 "cuda:0"。
@@ -282,12 +161,14 @@ def parse_unified_params(
         batch_size: 批处理大小（需满足 4n+1，非法值自动修正），默认 5。
         uniform_batch_size: 是否统一批处理大小，默认 True。
         color_correction: 颜色校正模式，默认 "lab"。
-        temporal_overlap: 视频帧时序重叠数，默认 0。
+        temporal_overlap: 视频帧时序重叠数，默认 2。
         prepend_frames: 前置参考帧数，默认 0。
         input_noise_scale: 输入噪声缩放，默认 0.0。
         latent_noise_scale: 隐空间噪声缩放，默认 0.0。
         offload_device: 通用卸载设备，默认 "cpu"。
         enable_debug: 是否启用调试模式，默认 False。
+        double_res: 两倍模式（短边×2），默认 False。
+        output_format: 输出格式，空串表示自动匹配输入。
 
     Returns:
         构造完成的 UnifiedRestoreParams 实例。
@@ -337,9 +218,6 @@ def parse_unified_params(
         f"[restore/params] output_format={output_format!r} double_res={double_res} resolution={resolution} task_type={task_type}"
     )
     return _params
-
-
-logger = logging.getLogger(__name__)
 
 
 def enforce_double_resolution_if_enabled(
@@ -490,7 +368,7 @@ def _read_media_dimensions(
     return None, None
 
 
-async def create_task_state(task_id: str, record_id: int, history_db: HistoryDB, task_type: str = "single") -> dict:
+async def create_task_state(task_id: str, record_id: int, history_db, task_type: str = "single") -> dict:
     """在数据库与内存缓存中创建任务初始状态。
 
     Args:
@@ -505,7 +383,7 @@ async def create_task_state(task_id: str, record_id: int, history_db: HistoryDB,
     return await task_state_store.create(task_id, record_id, history_db, task_type=task_type)
 
 
-async def get_task_state(task_id: str, history_db: HistoryDB) -> dict | None:
+async def get_task_state(task_id: str, history_db) -> dict | None:
     """获取任务状态；优先读内存缓存，缓存未命中则回源数据库。
 
     Args:
@@ -518,7 +396,7 @@ async def get_task_state(task_id: str, history_db: HistoryDB) -> dict | None:
     return await task_state_store.get(task_id, history_db)
 
 
-async def update_task_state(task_id: str, history_db: HistoryDB, **kwargs) -> dict:
+async def update_task_state(task_id: str, history_db, **kwargs) -> dict:
     """更新数据库任务状态并同步到内存缓存。
 
     Args:
@@ -578,7 +456,7 @@ class TaskStateStoreProxy:
     """
 
     def __init__(self, store):
-        """初始化 TaskStateStoreProxy。
+        """初始化任务状态存储代理。
 
         Args:
             store: TaskStateStore 实例。
@@ -595,7 +473,7 @@ class TaskStateStoreProxy:
             任务状态字典（浅拷贝）。
 
         Raises:
-            KeyError: 任务不存在时抛出。
+            KeyError: 任务不存在。
         """
         cached = self._store.get_cached(task_id)
         if cached is None:
@@ -648,23 +526,3 @@ class TaskStateStoreProxy:
             更新后的完整任务状态字典；任务不存在返回 None。
         """
         return self._store.update_cached(task_id, **kwargs)
-
-
-def create_batch_item(path: str) -> dict:
-    """创建批量任务中的单文件项结构。
-
-    Args:
-        path: 文件的绝对路径。
-
-    Returns:
-        批量任务项字典，包含 path/name/status/output_path/error/processing_time/retry_count 字段。
-    """
-    return {
-        "path": path,
-        "name": os.path.basename(path),
-        "status": "pending",
-        "output_path": None,
-        "error": None,
-        "processing_time": None,
-        "retry_count": 0,
-    }

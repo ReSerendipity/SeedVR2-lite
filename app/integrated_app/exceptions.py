@@ -309,3 +309,27 @@ class InferenceCancelledError(RestoreError):
         # 客户端可视为 499（Client Closed Request）的语义，但保持 499 非标准
         # 这里返回 400 以兼容标准 HTTP 状态码
         return 400
+
+
+class DiskSpaceError(RestoreError):
+    """磁盘剩余空间不足
+
+    任务启动前的磁盘预检（P0-2 分层治理：由服务层抛出领域异常，
+    全局异常处理器转换为 HTTP 507 Insufficient Storage），
+    防止长视频帧落盘阶段写满磁盘导致服务不可用。
+    """
+
+    code = "INSUFFICIENT_DISK"
+
+    def __init__(self, message: str = "磁盘剩余空间不足", *, detail: dict | None = None):
+        """初始化磁盘空间不足异常。
+
+        Args:
+            message: 面向用户的错误消息。
+            detail: 结构化上下文（如 free_gb / min_required_gb）。
+        """
+        super().__init__(message, detail=detail)
+
+    @classmethod
+    def http_status(cls) -> int:
+        return 507

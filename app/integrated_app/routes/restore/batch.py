@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""批量修复路由模块。
+"""批量修复路由模块（HTTP 适配层）。
 
-提供文件夹批量媒体修复功能，支持自动指数退避重试失败任务。
-批量任务在后台单 worker 队列中顺序执行，避免并发推理导致 GPU OOM。
+提供文件夹批量媒体修复功能。任务执行编排（逐文件顺序执行、指数退避重试、
+OOM 分类降级、断点续跑）已迁移到 services/restore_service.py（P0-2 分层治理），
+本模块只负责 HTTP 参数解析、校验与任务入队。
 
 API 端点：
 - POST /api/restore/batch: 创建批量修复任务
@@ -13,7 +14,6 @@ API 端点：
 """
 
 import asyncio
-import contextlib
 import logging
 import os
 import uuid
@@ -21,8 +21,6 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException
 
-from app.integrated_app.bad_case_retry import FailureType, adjust_params_for_retry, classify_failure
-from app.integrated_app.checkpoint import TaskCheckpoint, _file_fingerprint
 from app.integrated_app.config_models import (
     ImageRestoreParams,
     UnifiedRestoreParams,
@@ -34,16 +32,17 @@ from app.integrated_app.dependencies import (
     get_model_manager,
     get_task_queue,
 )
-from app.integrated_app.engines.seedvr2_engine import ImageInferenceConfig
 from app.integrated_app.gpu_backend import gpu_manager
-from app.integrated_app.history_db import HistoryDB, HistoryRecord
-from app.integrated_app.metrics import metrics_collector
+from app.integrated_app.history_db import HistoryDB
 from app.integrated_app.model_manager import ModelManager
 from app.integrated_app.model_registry import model_registry
 from app.integrated_app.routes.restore import common
+from app.integrated_app.services.restore_service import (
+    model_size_from_dit_model,
+    process_batch_background,
+)
 from app.integrated_app.task_queue import TaskQueue
 from app.integrated_app.utils.response import respond_success
-from app.integrated_app.utils.retry import exponential_backoff_with_jitter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/restore", tags=["修复"])
@@ -82,6 +81,7 @@ async def batch_restore_from_folder(
     错误响应：
     - 400: 参数错误（文件夹不存在、无可处理文件等）
     - 503: GPU 不可用，或模型自动加载失败
+    - 507: 磁盘剩余空间不足
 
     Args:
         folder_path: 目标文件夹路径。
@@ -90,6 +90,7 @@ async def batch_restore_from_folder(
         config: 应用配置。
         history_db: 历史数据库实例。
         task_queue: 任务队列实例。
+        model_manager: 模型管理器。
 
     Returns:
         包含 batch_id 的 JSON 响应。
@@ -106,7 +107,8 @@ async def batch_restore_from_folder(
     # 自动加载模型：未加载（或尺寸不符）时先加载再修复
     await common.ensure_model_loaded(model_manager, raw_params.dit_model)
 
-    # 磁盘空间预检（成本治理 P0-1）：空间不足直接 507，避免任务入队后静默失败
+    # 磁盘空间预检（成本治理 P0-1）：空间不足直接 507（DiskSpaceError → 全局处理器），
+    # 避免任务入队后静默失败
     common.ensure_disk_space(
         os.path.join(os.getcwd(), "outputs"),
         float((config.get("retention", {}) or {}).get("disk_min_free_gb", 5.0) or 0),
@@ -133,7 +135,7 @@ async def batch_restore_from_folder(
     actual_type = task_type if task_type != "auto" else media_files[0][1]
 
     dit_model = raw_params.dit_model
-    use_model_size = common.model_size_from_dit_model(dit_model)
+    use_model_size = model_size_from_dit_model(dit_model)
 
     params: ImageRestoreParams | VideoRestoreParams
     if actual_type == "image":
@@ -182,7 +184,7 @@ async def batch_restore_from_folder(
     double_res_flag = raw_params.double_res
     await task_queue.submit(
         batch_id,
-        lambda: _process_batch_background(
+        lambda: process_batch_background(
             batch_id,
             paths_only,
             actual_type,
@@ -204,432 +206,6 @@ async def batch_restore_from_folder(
             "status": "processing",
         }
     )
-
-
-def _apply_oom_degradation(
-    current_config: dict,
-    batch_config: dict,
-    error: str,
-    attempt: int,
-    app_config: dict,
-) -> bool:
-    """批量重试前的 OOM 分类与参数降级（成本治理 P0-2）。
-
-    按 bad_case_retry 阶梯降级（blocks_to_swap↑ → resolution↓ → 种子轮换），
-    调整结果同时写回当前文件配置与批量级配置——OOM 在批内通常是持续性
-    显存约束，后续文件复用降级参数可避免逐文件重复 OOM 白烧 GPU 时间。
-
-    Args:
-        current_config: 当前文件的推理配置副本（就地更新）。
-        batch_config: 批量级推理配置（就地更新，影响后续文件）。
-        error: 失败错误信息。
-        attempt: 即将进行的重试序号（1-based）。
-        app_config: 应用全局配置（读取 runtime.retry）。
-
-    Returns:
-        是否发生了参数降级。
-    """
-    has_failure, failure_type, _reason = classify_failure(message=error)
-    if not has_failure or failure_type != FailureType.OOM:
-        return False
-    adjusted = adjust_params_for_retry(current_config, failure_type, attempt, common.build_retry_config(app_config))
-    merged = {k: v for k, v in adjusted.items() if k in current_config and v != current_config[k]}
-    if not merged:
-        return False
-    current_config.update(merged)
-    batch_config.update(merged)
-    logger.warning(f"批量任务 OOM，参数已自动降级并应用于后续文件: {merged}")
-    return True
-
-
-async def _process_batch_background(
-    batch_id: str,
-    media_files: list,
-    media_type: str,
-    config: dict,
-    use_model_size: str,
-    history_db: HistoryDB,
-    task_queue: TaskQueue,
-    app_config: dict,
-    results_to_update: list | None = None,
-    double_res: bool = False,
-):
-    """后台逐个处理批量任务（含自动重试 + 断点续跑）（内部函数）。
-
-    顺序处理媒体文件列表，每个文件失败后使用指数退避 + 抖动自动重试，
-    重试次数和间隔从配置读取。处理过程中实时更新缓存和数据库状态。
-    支持断点续跑：每个文件处理完成后保存 checkpoint，崩溃重启后可恢复。
-
-    Args:
-        batch_id: 批量任务 ID。
-        media_files: 待处理文件路径列表。
-        media_type: 媒体类型 "image"/"video"。
-        config: 推理参数配置。
-        use_model_size: 模型尺寸标识。
-        history_db: 历史数据库实例。
-        task_queue: 任务队列实例。
-        app_config: 应用全局配置。
-        results_to_update: 重试时传入的已有结果项列表（复用原结构），可选。
-    """
-    task_state = await common.get_task_state(batch_id, history_db)
-    if task_state is None:
-        return
-
-    # 心跳持久化器：在批量处理期间定期把进度写入 DB（刷新 updated_at + 断点续传），
-    # 避免长视频被「卡死清理」因 DB 时间戳陈旧而误杀。
-    db_persist = common.create_db_progress_persister(batch_id, history_db)
-
-    # 初始化断点续跑管理器
-    task_cfg = app_config.get("runtime", {}).get("task", {})
-    checkpoint_dir = task_cfg.get("checkpoint_dir", "data/checkpoints")
-    checkpoint_every = task_cfg.get("checkpoint_every", 1)
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    checkpoint_mgr = TaskCheckpoint(os.path.join(project_root, checkpoint_dir))
-
-    # 加载已有 checkpoint，跳过已完成的文件
-    completed_fingerprints = checkpoint_mgr.get_completed_fingerprints(batch_id)
-    completed_files_list: list[dict] = []
-    if completed_fingerprints:
-        # 从 checkpoint 恢复已完成文件列表
-        ckpt_data = checkpoint_mgr.load_checkpoint(batch_id)
-        if ckpt_data:
-            completed_files_list = ckpt_data.get("completed_files", [])
-        logger.info(f"批量任务 {batch_id} 从断点恢复：已完成 {len(completed_fingerprints)} 个文件")
-
-    cached = common.get_cached_or_create(
-        batch_id,
-        template={
-            "task_id": batch_id,
-            "type": "batch",
-            "media_type": media_type,
-            "total": len(media_files),
-            "completed": 0,
-            "failed": 0,
-            "current_index": -1,
-            "current_file": "",
-            "results": [],
-            "config": config,
-            "use_model_size": use_model_size,
-        },
-    )
-
-    results = cached["results"]
-    completed = 0
-    failed = 0
-    engine = model_registry.get_engine()
-
-    if engine is None:
-        await common.update_task_state(
-            batch_id,
-            history_db,
-            status="failed",
-            error_message="引擎实例不可用",
-        )
-        return
-
-    # 磁盘空间预检（成本治理 P0-1）：批量任务输出量大，启动前先确认剩余空间。
-    # 批量任务的历史记录在全部文件处理完后才落库，此处直接标记任务失败并返回
-    try:
-        common.ensure_disk_space(
-            os.path.join(os.getcwd(), "outputs"),
-            float((app_config.get("retention", {}) or {}).get("disk_min_free_gb", 5.0) or 0),
-        )
-    except HTTPException as e:
-        await common.update_task_state(batch_id, history_db, status="failed", error_message=str(e.detail))
-        return
-
-    records_to_insert: list[HistoryRecord] = []
-    # 默认输出子目录名 (仅模板解析失败时回退时使用)
-    output_subdir = "image" if media_type == "image" else "video"
-
-    batch_cfg = app_config.get("runtime", {}).get("batch", {})
-    max_retries = batch_cfg.get("max_retries", 2)
-    retry_base = batch_cfg.get("retry_base_delay_seconds", 1.0)
-    retry_max = batch_cfg.get("retry_max_delay_seconds", 30.0)
-
-    for i, media_path in enumerate(media_files):
-        # 断点续跑：跳过已完成的文件
-        if media_path in completed_fingerprints:
-            fp = completed_fingerprints[media_path]
-            # 验证文件指纹（大小 + 修改时间）是否一致
-            current_fp = _file_fingerprint(media_path)
-            if fp.get("size", 0) == current_fp.get("size", 0) and fp.get("mtime", 0) == current_fp.get("mtime", 0):
-                logger.debug(f"断点续跑：跳过已结束文件 {media_path}")
-                completed += 1
-                common.get_task_cache().update(batch_id, completed=completed)
-                # 为跳过的文件创建结果项
-                task_item = common.create_batch_item(media_path)
-                task_item["status"] = "completed"
-                task_item["output_path"] = fp.get("output_path", "")
-                results.append(task_item)
-                records_to_insert.append(
-                    HistoryRecord(
-                        task_type=media_type,
-                        input_file=media_path,
-                        model_size=use_model_size,
-                        status="completed",
-                        output_file=fp.get("output_path", ""),
-                    )
-                )
-                continue
-            else:
-                logger.warning(f"断点续跑：文件指纹不匹配，重新处理 {media_path}")
-
-        if task_queue.is_cancelled(batch_id):
-            for remaining in media_files[i:]:
-                records_to_insert.append(
-                    HistoryRecord(
-                        task_type=media_type,
-                        input_file=remaining,
-                        model_size=use_model_size,
-                        status="cancelled",
-                        error_message="批量任务被取消",
-                    )
-                )
-            break
-
-        if results_to_update is not None and i < len(results_to_update):
-            task_item = results_to_update[i]
-            task_item["status"] = "processing"
-            task_item["retry_count"] = 0
-        else:
-            task_item = common.create_batch_item(media_path)
-            task_item["status"] = "processing"
-            results.append(task_item)
-        current_filename = os.path.basename(media_path)
-        common.get_task_cache().update(batch_id, current_index=i, current_file=current_filename)
-
-        last_error = None
-
-        # 两倍模式：每个文件需要单独计算分辨率（因为不同文件分辨率可能不同）
-        current_config = config.copy()  # 为当前文件创建配置副本
-        if double_res and media_type == "image":
-            try:
-                from PIL import Image
-
-                with Image.open(media_path) as im:
-                    width, height = im.size
-                    short_edge = min(width, height)
-                    target_res = short_edge * 2
-                    current_config["resolution"] = target_res
-                    logger.info(
-                        f"[double_res] 文件 {os.path.basename(media_path)}: 图片尺寸 {width}x{height} -> 短边 {short_edge} -> 分辨率 {target_res}"
-                    )
-            except Exception as e:
-                logger.warning(f"[double_res] 无法读取图片尺寸 {media_path}, 保留原分辨率：{e}")
-
-        for attempt in range(max_retries + 1):
-            task_item["retry_count"] = attempt
-            try:
-                # 输出路径模板渲染 (user_preferences.output_path_template):
-                # 占位符 {project_root}/{task_type}/{input_dir}/{input_name}/{ext}
-                # -> 项目根目录/任务类型 (image/video)/输入目录/输入文件名 (不含扩展名)/扩展名 (含点号)
-                # 默认模板 "{project_root}/outputs/{task_type}/restored/{input_name}{ext}" 输出到项目根目录的 outputs 子目录
-                try:
-                    template = app_config.get("user_preferences", {}).get(
-                        "output_path_template", "{project_root}/outputs/{task_type}/restored/{input_name}{ext}"
-                    )
-                    project_root = os.getcwd()
-                    task_type_for_template = media_type  # "image" or "video"
-                    input_dir = os.path.dirname(media_path)
-                    input_stem = os.path.splitext(os.path.basename(media_path))[0]
-                    input_ext = os.path.splitext(media_path)[1]  # 含点号，如 ".png"
-                    rendered = (
-                        template.replace("{project_root}", project_root)
-                        .replace("{task_type}", task_type_for_template)
-                        .replace("{input_dir}", input_dir)
-                        .replace("{input_name}", input_stem)
-                        .replace("{ext}", input_ext)
-                    )
-                    # 渲染结果缺少文件名 (空模板/以分隔符结尾): 视为解析失败
-                    # 注：必须在 normpath 之前检查，否则空串被归一化为 "." 会绕过校验
-                    if not os.path.basename(rendered):
-                        raise ValueError(f"模板渲染结果缺少文件名：{rendered!r}")
-                    # 归一化分隔符 (模板用 / 而 Windows 用反斜杠): 保证输出路径风格统一
-                    rendered = os.path.normpath(rendered)
-                    output_dir = os.path.dirname(rendered)
-                    output_name = os.path.basename(rendered)
-                    # 模板未含目录 (如仅文件名) 时回退到输入文件所在目录，再回退当前工作目录
-                    if not output_dir:
-                        output_dir = input_dir or os.getcwd()
-                    # 渲染结果为 "."/".." 等相对名：视为解析失败
-                    if output_name in (".", ".."):
-                        raise ValueError(f"模板渲染结果缺少有效文件名：{rendered!r}")
-                except Exception as e:
-                    # 模板解析失败：回退到原行为 (outputs/{image|video} + 默认随机命名), 不中断批量任务
-                    logger.warning(f"输出路径模板解析失败，回退默认输出目录：{e}")
-                    output_dir = os.path.join(os.getcwd(), "outputs", output_subdir)
-                    output_name = None
-                await asyncio.to_thread(os.makedirs, output_dir, exist_ok=True)
-
-                if media_type == "image":
-                    image_config = ImageInferenceConfig(
-                        **{k: v for k, v in current_config.items() if k in ImageInferenceConfig.__dataclass_fields__}
-                    )
-                    result = await engine.infer_image(
-                        image_path=media_path,
-                        output_dir=output_dir,
-                        config=image_config,
-                        output_name=output_name,
-                    )
-                else:
-                    # 批量任务的进度回调（同步函数 - 推理在工作线程同步执行）
-                    # 注意：使用默认参数捕获 i，避免闭包延迟绑定问题
-                    def progress_callback(current_frame: int, total_frames: int, progress: float, _i=i, **kwargs):
-                        common.get_task_cache().update(
-                            batch_id,
-                            current_index=_i,
-                            current_progress=round(progress, 1),
-                        )
-                        # 定期把进度写 DB，保证批处理内长视频期间 updated_at 保持新鲜
-                        db_persist(progress)
-
-                    engine.set_progress_callback(progress_callback)
-                    # OOM 降级可能向 current_config 注入 blocks_to_swap；
-                    # 仅在键存在时传入，避免用 0 覆盖引擎默认的 blockswap 配置
-                    infer_kwargs = {
-                        "resolution": current_config["resolution"],
-                        "max_resolution": current_config["max_resolution"],
-                        "cache_model": current_config["cache_model"],
-                        "seed": current_config["seed"],
-                    }
-                    if "blocks_to_swap" in current_config:
-                        infer_kwargs["blocks_to_swap"] = current_config["blocks_to_swap"]
-                    result = await engine.infer_video(
-                        video_path=media_path,
-                        output_dir=output_dir,
-                        output_name=output_name,
-                        **infer_kwargs,
-                    )
-
-                if result.success:
-                    task_item["status"] = "completed"
-                    task_item["output_path"] = result.output_path
-                    task_item["processing_time"] = result.processing_time
-                    task_item["error"] = None
-                    completed += 1
-                    # 推理指标记账 + 输出体积统计（成本治理 P1-1）
-                    output_size = 0
-                    try:
-                        if result.output_path and os.path.exists(result.output_path):
-                            output_size = os.path.getsize(result.output_path)
-                    except OSError:
-                        output_size = 0
-                    task_item["output_size_bytes"] = output_size
-                    task_item["vram_peak_mb"] = float(
-                        (getattr(result, "metadata", None) or {}).get("vram_peak_mb") or 0.0
-                    )
-                    metrics_collector.record_inference(
-                        success=True,
-                        duration=result.processing_time or 0.0,
-                        model_size=use_model_size,
-                        input_type=media_type,
-                    )
-                    common.get_task_cache().update(batch_id, completed=completed)
-
-                    # 断点续跑：保存 checkpoint
-                    completed_files_list.append({**_file_fingerprint(media_path), "output_path": result.output_path})
-                    remaining_files = media_files[i + 1 :]
-                    if checkpoint_mgr.should_checkpoint(completed, checkpoint_every):
-                        checkpoint_mgr.save_checkpoint(
-                            batch_id,
-                            total=len(media_files),
-                            completed_files=completed_files_list,
-                            remaining=remaining_files,
-                            config=current_config,
-                            media_type=media_type,
-                            use_model_size=use_model_size,
-                        )
-                    break
-                else:
-                    last_error = result.error or "未知错误"
-                    if attempt < max_retries:
-                        task_item["status"] = "retrying"
-                        logger.warning(
-                            f"批量处理 {media_type} {i+1}/{len(media_files)} 第{attempt+1}次失败，重试中：{media_path}, {last_error}"
-                        )
-                        # OOM 坏案例降级（P0-2）：重试前分类失败并调整参数
-                        _apply_oom_degradation(current_config, config, last_error, attempt + 1, app_config)
-                        await exponential_backoff_with_jitter(attempt, base=retry_base, max_delay=retry_max)
-                    else:
-                        task_item["status"] = "failed"
-                        task_item["error"] = last_error
-                        failed += 1
-                        metrics_collector.record_inference(
-                            success=False,
-                            duration=float(result.processing_time or 0.0),
-                            model_size=use_model_size,
-                            input_type=media_type,
-                        )
-                        common.get_task_cache().update(batch_id, failed=failed)
-
-            except asyncio.CancelledError:
-                task_item["status"] = "cancelled"
-                task_item["error"] = "用户取消"
-                raise
-            except Exception as e:
-                last_error = str(e)
-                if attempt < max_retries:
-                    task_item["status"] = "retrying"
-                    logger.warning(
-                        f"批量处理 {media_type} {i+1}/{len(media_files)} 第{attempt+1}次异常，重试中：{media_path}, {e}"
-                    )
-                    # OOM 坏案例降级（P0-2）：重试前分类异常并调整参数
-                    _apply_oom_degradation(current_config, config, last_error, attempt + 1, app_config)
-                    await exponential_backoff_with_jitter(attempt, base=retry_base, max_delay=retry_max)
-                else:
-                    task_item["status"] = "failed"
-                    task_item["error"] = last_error
-                    failed += 1
-                    metrics_collector.record_inference(
-                        success=False,
-                        duration=0.0,
-                        model_size=use_model_size,
-                        input_type=media_type,
-                    )
-                    common.get_task_cache().update(batch_id, failed=failed)
-                    logger.error(f"批量处理 {media_type} {i+1}/{len(media_files)} 最终失败：{media_path}, {e}")
-
-        records_to_insert.append(
-            HistoryRecord(
-                task_type=media_type,
-                input_file=media_path,
-                model_size=use_model_size,
-                status=task_item["status"],
-                output_file=task_item.get("output_path") or "",
-                processing_time=float(task_item.get("processing_time") or 0.0),
-                error_message=task_item.get("error") or "",
-                output_size_bytes=int(task_item.get("output_size_bytes") or 0),
-                vram_peak_mb=float(task_item.get("vram_peak_mb") or 0.0),
-            )
-        )
-
-        progress = round(((i + 1) / len(media_files)) * 100, 1)
-        await common.update_task_state(batch_id, history_db, progress=progress)
-
-    try:
-        await history_db.add_records(records_to_insert)
-    except Exception:
-        for record in records_to_insert:
-            with contextlib.suppress(Exception):
-                await history_db.add_record(record)
-
-    final_status = "cancelled" if task_queue.is_cancelled(batch_id) else "completed"
-    final_cached = common.get_task_cache().get(batch_id, {})
-    assert final_cached is not None
-    await common.update_task_state(
-        batch_id,
-        history_db,
-        status=final_status,
-        progress=100.0 if final_status == "completed" else final_cached.get("progress", 0),
-    )
-
-    # 批量任务完成后清理 checkpoint
-    if final_status == "completed":
-        checkpoint_mgr.remove_checkpoint(batch_id)
-        logger.info(f"批量任务 {batch_id} checkpoint 已清理")
-
-    logger.info(f"批量任务 {batch_id} 完成：{completed} 成功，{failed} 失败")
 
 
 @router.get("/batch/{batch_id}/progress")
@@ -765,7 +341,7 @@ async def retry_failed_batch(
     on_cancel = engine.request_cancel if engine else None
     await task_queue.submit(
         batch_id,
-        lambda: _process_batch_background(
+        lambda: process_batch_background(
             batch_id,
             retry_files,
             media_type,

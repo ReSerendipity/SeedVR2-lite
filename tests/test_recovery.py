@@ -126,7 +126,7 @@ class TestRecoverImageTask:
 
         with (
             patch("app.integrated_app.routes.restore.recovery.common.update_task_state", new_callable=AsyncMock),
-            patch("app.integrated_app.routes.restore.recovery._process_image_task", new_callable=AsyncMock),
+            patch("app.integrated_app.routes.restore.recovery.process_image_task", new_callable=AsyncMock),
             patch("app.integrated_app.routes.restore.recovery.model_registry"),
         ):
             count = await recover_tasks(mock_history_db, mock_task_queue, mock_config)
@@ -145,7 +145,7 @@ class TestRecoverImageTask:
             patch(
                 "app.integrated_app.routes.restore.recovery.common.update_task_state", new_callable=AsyncMock
             ) as mock_update,
-            patch("app.integrated_app.routes.restore.recovery._process_image_task", new_callable=AsyncMock),
+            patch("app.integrated_app.routes.restore.recovery.process_image_task", new_callable=AsyncMock),
             patch("app.integrated_app.routes.restore.recovery.model_registry"),
         ):
             await recover_tasks(mock_history_db, mock_task_queue, mock_config)
@@ -164,7 +164,7 @@ class TestRecoverImageTask:
 
         with (
             patch("app.integrated_app.routes.restore.recovery.common.update_task_state", new_callable=AsyncMock),
-            patch("app.integrated_app.routes.restore.recovery._process_image_task", new_callable=AsyncMock),
+            patch("app.integrated_app.routes.restore.recovery.process_image_task", new_callable=AsyncMock),
             patch("app.integrated_app.routes.restore.recovery.model_registry"),
         ):
             await recover_tasks(mock_history_db, mock_task_queue, mock_config)
@@ -193,7 +193,7 @@ class TestRecoverVideoTask:
 
         with (
             patch("app.integrated_app.routes.restore.recovery.common.update_task_state", new_callable=AsyncMock),
-            patch("app.integrated_app.routes.restore.recovery._process_video_task", new_callable=AsyncMock),
+            patch("app.integrated_app.routes.restore.recovery.process_video_task", new_callable=AsyncMock),
             patch("app.integrated_app.routes.restore.recovery.model_registry"),
         ):
             count = await recover_tasks(mock_history_db, mock_task_queue, mock_config)
@@ -210,7 +210,7 @@ class TestRecoverVideoTask:
 
         with (
             patch("app.integrated_app.routes.restore.recovery.common.update_task_state", new_callable=AsyncMock),
-            patch("app.integrated_app.routes.restore.recovery._process_video_task", new_callable=AsyncMock),
+            patch("app.integrated_app.routes.restore.recovery.process_video_task", new_callable=AsyncMock),
             patch("app.integrated_app.routes.restore.recovery.model_registry") as mock_reg,
         ):
             mock_reg.current_model_size = "3b"
@@ -228,7 +228,7 @@ class TestRecoverVideoTask:
 
         with (
             patch("app.integrated_app.routes.restore.recovery.common.update_task_state", new_callable=AsyncMock),
-            patch("app.integrated_app.routes.restore.recovery._process_video_task", new_callable=AsyncMock),
+            patch("app.integrated_app.routes.restore.recovery.process_video_task", new_callable=AsyncMock),
             patch("app.integrated_app.routes.restore.recovery.model_registry") as mock_reg,
         ):
             mock_reg.current_model_size = "7b"
@@ -245,7 +245,7 @@ class TestRecoverVideoTask:
 
         with (
             patch("app.integrated_app.routes.restore.recovery.common.update_task_state", new_callable=AsyncMock),
-            patch("app.integrated_app.routes.restore.recovery._process_video_task", new_callable=AsyncMock),
+            patch("app.integrated_app.routes.restore.recovery.process_video_task", new_callable=AsyncMock),
             patch("app.integrated_app.routes.restore.recovery.model_registry") as mock_reg,
         ):
             mock_reg.current_model_size = None
@@ -318,7 +318,7 @@ class TestRecoverTasksEdgeCases:
 
         with (
             patch("app.integrated_app.routes.restore.recovery.common.update_task_state", new_callable=AsyncMock),
-            patch("app.integrated_app.routes.restore.recovery._process_image_task", new_callable=AsyncMock),
+            patch("app.integrated_app.routes.restore.recovery.process_image_task", new_callable=AsyncMock),
             patch("app.integrated_app.routes.restore.recovery.model_registry"),
         ):
             count = await recover_tasks(mock_history_db, mock_task_queue, mock_config)
@@ -334,7 +334,7 @@ class TestRecoverTasksEdgeCases:
 
         with (
             patch("app.integrated_app.routes.restore.recovery.common.update_task_state", new_callable=AsyncMock),
-            patch("app.integrated_app.routes.restore.recovery._process_image_task", new_callable=AsyncMock),
+            patch("app.integrated_app.routes.restore.recovery.process_image_task", new_callable=AsyncMock),
             patch("app.integrated_app.routes.restore.recovery.model_registry"),
         ):
             count = await recover_tasks(mock_history_db, mock_task_queue, mock_config)
@@ -367,8 +367,8 @@ class TestRecoverMultipleTasks:
 
         with (
             patch("app.integrated_app.routes.restore.recovery.common.update_task_state", new_callable=AsyncMock),
-            patch("app.integrated_app.routes.restore.recovery._process_image_task", new_callable=AsyncMock),
-            patch("app.integrated_app.routes.restore.recovery._process_video_task", new_callable=AsyncMock),
+            patch("app.integrated_app.routes.restore.recovery.process_image_task", new_callable=AsyncMock),
+            patch("app.integrated_app.routes.restore.recovery.process_video_task", new_callable=AsyncMock),
             patch("app.integrated_app.routes.restore.recovery.model_registry"),
         ):
             count = await recover_tasks(mock_history_db, mock_task_queue, mock_config)
@@ -394,7 +394,7 @@ class TestRecoverMultipleTasks:
 
         with (
             patch("app.integrated_app.routes.restore.recovery.common.update_task_state", new_callable=AsyncMock),
-            patch("app.integrated_app.routes.restore.recovery._process_image_task", new_callable=AsyncMock),
+            patch("app.integrated_app.routes.restore.recovery.process_image_task", new_callable=AsyncMock),
             patch("app.integrated_app.routes.restore.recovery.model_registry"),
         ):
             count = await recover_tasks(mock_history_db, mock_task_queue, mock_config)
