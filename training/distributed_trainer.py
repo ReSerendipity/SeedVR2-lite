@@ -29,9 +29,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import math
+import os
+import random
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,8 +46,16 @@ import torch.nn as nn
 
 # 项目内置分布式工具
 from common.distributed import convert_to_ddp, get_device, get_global_rank, get_local_rank, get_world_size, init_torch
+from common.seed import set_seed
 
 logger = logging.getLogger(__name__)
+
+# 裁剪前梯度总范数超过 max_gradient_norm 的该倍数即视为尖峰并告警
+_GRAD_NORM_SPIKE_FACTOR = 10
+
+# 按步保存的检查点文件名模式（滚动清理只针对无后缀的纯按步快照，
+# epoch 结尾快照 `checkpoint_step_N_epoch_M.pt` 不在清理范围）
+_STEP_CHECKPOINT_PATTERN = re.compile(r"^checkpoint_step_(\d+)\.pt$")
 
 
 @dataclass
@@ -59,8 +73,21 @@ class TrainingConfig:
         sharding_strategy: 分片策略（"ddp", "fsdp", "hybrid"）。
         checkpoint_dir: 检查点保存目录。
         checkpoint_interval: 检查点保存间隔（步数）。
+        keep_last_checkpoints: 仅保留最近 N 个按步保存的检查点，防止磁盘被全量权重撑爆
+            （0 表示不清理，保留全部）。
         resume_from_checkpoint: 断点续训的检查点路径。
         log_interval: 日志打印间隔（步数）。
+        seed: 基础随机种子（None 表示不播种）。分布式下各 rank 自动按 rank 偏移，
+            保证数据增强/dropout 各卡不同且跨次运行可复现。
+        enable_experiment_tracking: 是否启用实验追踪（rank 0 落盘 JSONL，
+            wandb 可用时可选上传）。
+        experiment_name: 实验名（缺省按时间戳生成）。
+        experiment_project: wandb 项目名。
+        experiment_use_wandb: 是否尝试上传 wandb（False 时纯本地 JSONL）。
+        heartbeat_interval: 心跳落盘间隔（步数），0 表示禁用。每次心跳把
+            {step, epoch, timestamp} 原子写入 heartbeat_dir，供外部看门狗
+            检测"训练静默死亡"。
+        heartbeat_dir: 心跳文件目录。
         mixed_precision: 混合精度类型（"fp16", "bf16", None）。
         gradient_checkpointing: 是否启用梯度检查点（节省显存）。
     """
@@ -75,11 +102,36 @@ class TrainingConfig:
     sharding_strategy: str = "ddp"
     checkpoint_dir: str = "data/checkpoints"
     checkpoint_interval: int = 500
+    keep_last_checkpoints: int = 3
     resume_from_checkpoint: str | None = None
     log_interval: int = 10
+    seed: int | None = None
+    enable_experiment_tracking: bool = False
+    experiment_name: str | None = None
+    experiment_project: str = "seedvr2-training"
+    experiment_use_wandb: bool = False
+    heartbeat_interval: int = 50
+    heartbeat_dir: str = "data/heartbeats"
     mixed_precision: str | None = None
     gradient_checkpointing: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+def _seed_worker(worker_id: int) -> None:
+    """DataLoader worker 种子初始化。
+
+    PyTorch 会基于 base_seed 为每个 worker 派生独立种子（base_seed 由主进程
+    torch RNG 决定，因而受 ``set_seed`` 控制），但 ``random``/``numpy`` 全局
+    状态不会自动同步，这里补齐，保证多 worker 数据增强可复现。
+
+    Args:
+        worker_id: worker 进程编号。
+    """
+    import numpy as np
+
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 class DistributedTrainer:
@@ -114,6 +166,7 @@ class DistributedTrainer:
         self.device = get_device()
         self._step = 0
         self._epoch = 0
+        self._last_heartbeat_step = -1
 
         # 初始化分布式环境
         if self.world_size > 1:
@@ -126,6 +179,32 @@ class DistributedTrainer:
             )
         else:
             logger.info("单卡模式训练, device=%s", self.device)
+
+        # 全 RNG（python/numpy/torch CPU+CUDA）统一播种；分布式下按 rank 偏移
+        if config.seed is not None:
+            set_seed(config.seed)
+            logger.info(
+                "随机种子已设置: base=%d, rank=%d",
+                config.seed,
+                self.global_rank,
+            )
+
+        # 实验追踪（仅 rank 0 落盘/上传；wandb 缺失或初始化失败时自动降级本地 JSONL）
+        self._tracker: Any | None = None
+        if config.enable_experiment_tracking and self.global_rank == 0:
+            try:
+                from app.utils.experiment_tracker import ExperimentTracker
+
+                self._tracker = ExperimentTracker(
+                    project_name=config.experiment_project,
+                    experiment_name=config.experiment_name,
+                    config=vars(config),
+                    use_wandb=config.experiment_use_wandb,
+                )
+                self._tracker.log_hyperparameters(vars(config))
+            except Exception as e:
+                logger.warning("实验追踪器初始化失败，本次训练不追踪: %s", e)
+                self._tracker = None
 
         # 混合精度设置
         self._scaler: torch.cuda.amp.GradScaler | None = None
@@ -226,6 +305,7 @@ class DistributedTrainer:
             num_workers=4,
             pin_memory=True,
             drop_last=True,
+            worker_init_fn=_seed_worker,
         )
 
         return dataloader
@@ -289,6 +369,7 @@ class DistributedTrainer:
         # 断点续训
         if self.config.resume_from_checkpoint:
             self._load_checkpoint(model, optimizer, self.config.resume_from_checkpoint)
+        self._beat(force=True)
 
         for epoch in range(self._epoch, self.config.epochs):
             self._epoch = epoch
@@ -319,14 +400,28 @@ class DistributedTrainer:
 
                 # 梯度累积
                 if (batch_idx + 1) % self.config.gradient_accumulation_steps == 0:
-                    # 梯度裁剪
+                    # 梯度裁剪（clip_grad_norm_ 返回裁剪前总范数，是梯度尖峰的第一信号源）
+                    pre_clip_grad_norm: float | None = None
                     if self.config.max_gradient_norm is not None:
                         if self._scaler is not None:
                             self._scaler.unscale_(optimizer)
-                        torch.nn.utils.clip_grad_norm_(
-                            model.parameters(),
-                            self.config.max_gradient_norm,
+                        pre_clip_grad_norm = float(
+                            torch.nn.utils.clip_grad_norm_(
+                                model.parameters(),
+                                self.config.max_gradient_norm,
+                            )
                         )
+                        if (
+                            not math.isfinite(pre_clip_grad_norm)
+                            or pre_clip_grad_norm > self.config.max_gradient_norm * _GRAD_NORM_SPIKE_FACTOR
+                        ):
+                            logger.warning(
+                                "梯度范数异常: step=%d, pre_clip_norm=%.4f (阈值=%.4f, 尖峰系数=%d)",
+                                self._step,
+                                pre_clip_grad_norm,
+                                self.config.max_gradient_norm,
+                                _GRAD_NORM_SPIKE_FACTOR,
+                            )
 
                     # 学习率预热
                     lr_scale = self.warmup_lr_schedule(self._step)
@@ -344,17 +439,32 @@ class DistributedTrainer:
                     self._step += 1
                     losses.append(loss.item() * self.config.gradient_accumulation_steps)
                     learning_rates.append(optimizer.param_groups[0]["lr"])
+                    self._beat()
 
                     # 日志
                     if self.global_rank == 0 and self._step % self.config.log_interval == 0:
+                        norm_str = (
+                            f", GradNorm: {pre_clip_grad_norm:.4f}"
+                            if pre_clip_grad_norm is not None
+                            else ""
+                        )
                         logger.info(
-                            "Epoch %d/%d, Step %d, Loss: %.4f, LR: %.2e",
+                            "Epoch %d/%d, Step %d, Loss: %.4f%s, LR: %.2e",
                             epoch + 1,
                             self.config.epochs,
                             self._step,
                             losses[-1],
+                            norm_str,
                             learning_rates[-1],
                         )
+                        if self._tracker is not None:
+                            metrics: dict[str, float] = {
+                                "loss": losses[-1],
+                                "lr": learning_rates[-1],
+                            }
+                            if pre_clip_grad_norm is not None:
+                                metrics["grad_norm"] = pre_clip_grad_norm
+                            self._tracker.log_metrics(metrics, step=self._step)
 
                     # 检查点保存
                     if self._step % self.config.checkpoint_interval == 0:
@@ -363,8 +473,53 @@ class DistributedTrainer:
             # 每个 epoch 结束后保存检查点
             if self.global_rank == 0:
                 self._save_checkpoint(model, optimizer, suffix=f"epoch_{epoch}")
+            self._beat(force=True)
 
         return {"losses": losses, "learning_rates": learning_rates}
+
+    def finish(self) -> None:
+        """结束实验追踪会话与心跳（若已启用）。"""
+        self._beat(force=True)
+        if getattr(self, "_tracker", None) is not None:
+            try:
+                self._tracker.finish()
+            except Exception as e:
+                logger.warning("实验追踪器收尾失败: %s", e)
+            self._tracker = None
+
+    def _beat(self, force: bool = False) -> None:
+        """写入训练心跳（rank 0）。
+
+        每隔 ``heartbeat_interval`` 步把当前进度原子写入心跳文件，
+        供外部看门狗判断"进程活着但在干活"还是"已经静默死亡"。
+        原子写用临时文件 + rename，避免看门狗读到半截 JSON。
+
+        Args:
+            force: True 时无视间隔立即写（用于训练开始/结束）。
+        """
+        if self.global_rank != 0 or self.config.heartbeat_interval <= 0:
+            return
+        if not force and self._step - self._last_heartbeat_step < self.config.heartbeat_interval:
+            return
+
+        heartbeat_dir = Path(self.config.heartbeat_dir)
+        heartbeat_dir.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(
+            {
+                "step": self._step,
+                "epoch": self._epoch,
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "pid": os.getpid(),
+            }
+        )
+        tmp_path = heartbeat_dir / "heartbeat.json.tmp"
+        final_path = heartbeat_dir / "heartbeat.json"
+        try:
+            tmp_path.write_text(payload, encoding="utf-8")
+            tmp_path.replace(final_path)
+            self._last_heartbeat_step = self._step
+        except OSError as e:
+            logger.warning("心跳写入失败: %s", e)
 
     def _save_checkpoint(
         self,
@@ -397,6 +552,10 @@ class DistributedTrainer:
             "epoch": self._epoch,
             "config": self.config.__dict__,
         }
+        # AMP GradScaler 状态必须随 checkpoint 持久化，否则断点续训后 loss scale
+        # 从头摸索，且崩在 scale 爆炸边缘时会复现不稳定
+        if self._scaler is not None:
+            checkpoint["scaler_state_dict"] = self._scaler.state_dict()
 
         filename = f"checkpoint_step_{self._step}"
         if suffix:
@@ -408,6 +567,36 @@ class DistributedTrainer:
             checkpoint, checkpoint_path
         )  # nosemgrep: pickles-in-pytorch - torch.save 为序列化（非反序列化），非 RCE 向量
         logger.info("检查点已保存: %s", checkpoint_path)
+        if getattr(self, "_tracker", None) is not None:
+            self._tracker.log_model(str(checkpoint_path), alias=f"step_{self._step}")
+        self._prune_step_checkpoints(checkpoint_dir)
+
+    def _prune_step_checkpoints(self, checkpoint_dir: Path) -> None:
+        """滚动清理按步保存的旧检查点，仅保留最近 N 个。
+
+        7B 级模型单份全量 checkpoint 可达数十 GB，不清理会在长训练中撑爆磁盘，
+        反过来毁掉正在进行的训练。epoch 结尾快照（``*_epoch_*.pt``）不在此清理范围。
+
+        Args:
+            checkpoint_dir: 检查点目录。
+        """
+        keep = self.config.keep_last_checkpoints
+        if keep <= 0:
+            return
+
+        step_ckpts: list[tuple[int, Path]] = []
+        for p in checkpoint_dir.glob("checkpoint_step_*.pt"):
+            match = _STEP_CHECKPOINT_PATTERN.match(p.name)
+            if match:
+                step_ckpts.append((int(match.group(1)), p))
+
+        step_ckpts.sort(key=lambda item: item[0])
+        for _, stale in step_ckpts[:-keep] if len(step_ckpts) > keep else []:
+            try:
+                stale.unlink()
+                logger.info("已清理过期检查点: %s", stale)
+            except OSError as e:
+                logger.warning("清理检查点失败 %s: %s", stale, e)
 
     def _load_checkpoint(
         self,
@@ -433,6 +622,8 @@ class DistributedTrainer:
 
         model_state.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if self._scaler is not None and "scaler_state_dict" in checkpoint:
+            self._scaler.load_state_dict(checkpoint["scaler_state_dict"])
         self._step = checkpoint.get("step", 0)
         self._epoch = checkpoint.get("epoch", 0)
 
@@ -531,6 +722,11 @@ def main() -> None:
     parser.add_argument("--mixed-precision", type=str, default=None, choices=["fp16", "bf16"])
     parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument("--checkpoint-dir", type=str, default="data/checkpoints")
+    parser.add_argument("--keep-checkpoints", type=int, default=3, help="保留最近 N 个按步检查点（0=全保留）")
+    parser.add_argument("--seed", type=int, default=None, help="基础随机种子（各 rank 自动偏移）")
+    parser.add_argument("--track", action="store_true", help="启用实验追踪（本地 JSONL，wandb 可选）")
+    parser.add_argument("--experiment-name", type=str, default=None)
+    parser.add_argument("--use-wandb", action="store_true", help="实验追踪尝试上传 wandb")
     parser.add_argument("--resume", type=str, default=None, help="断点续训检查点路径")
 
     args = parser.parse_args()
@@ -544,6 +740,11 @@ def main() -> None:
         "mixed_precision": args.mixed_precision,
         "gradient_checkpointing": args.gradient_checkpointing,
         "checkpoint_dir": args.checkpoint_dir,
+        "keep_last_checkpoints": args.keep_checkpoints,
+        "seed": args.seed,
+        "enable_experiment_tracking": args.track,
+        "experiment_name": args.experiment_name,
+        "experiment_use_wandb": args.use_wandb,
         "resume_from_checkpoint": args.resume,
     }
 
@@ -566,6 +767,7 @@ def main() -> None:
     logger.info("请通过 Python API 调用 trainer.train() 方法开始训练")
     logger.info("配置: %s", config)
 
+    trainer.finish()
     trainer.cleanup()
 
 
