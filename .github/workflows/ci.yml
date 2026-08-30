@@ -81,7 +81,8 @@ jobs:
         shell: bash
         run: |
           python scripts/generate_golden_dataset.py --size 128 --output tests/golden --skip-images
-          git diff --exit-code -- tests/golden/manifest.json
+          # 仅比对指标内容；--ignore-cr-at-eol 规避跨平台换行符差异造成的误报
+          git diff --ignore-cr-at-eol --exit-code -- tests/golden/manifest.json
 
       - name: Coverage Gate (>= 50%)
         if: always()
