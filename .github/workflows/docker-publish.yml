@@ -65,7 +65,7 @@ jobs:
             org.opencontainers.image.title=SeedVR2
 
       - name: Build (and push on main/tags)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           # GPU 推理目标平台：CUDA 用户态库与 NVIDIA 驱动仅提供 amd64 变体
