@@ -1,0 +1,31 @@
+{
+  "schema": "seedvr2-golden/1",
+  "size": 128,
+  "degradation_seed": 20260830,
+  "scenes": [
+    {
+      "name": "gradient",
+      "params": "noise_std=0.0980, blur=(7,2.0), downsample=2.0, color_shift=0.08",
+      "degraded_vs_source": {
+        "psnr_db": 17.4978,
+        "ssim": 0.733624
+      }
+    },
+    {
+      "name": "checker",
+      "params": "noise_std=0.0980, blur=(7,2.0), downsample=2.0, color_shift=0.08",
+      "degraded_vs_source": {
+        "psnr_db": 14.0201,
+        "ssim": 0.503421
+      }
+    },
+    {
+      "name": "skin_tone",
+      "params": "noise_std=0.0980, blur=(7,2.0), downsample=2.0, color_shift=0.08",
+      "degraded_vs_source": {
+        "psnr_db": 17.3628,
+        "ssim": 0.804498
+      }
+    }
+  ]
+}

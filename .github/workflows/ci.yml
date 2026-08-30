@@ -70,6 +70,19 @@ jobs:
         # 测试失败（含收集失败）必须让 job 失败：本步骤是真实质量门禁，不得加 || true
         run: python -m pytest -q --ignore=tests/perf --cov=app/integrated_app --cov-report=xml --cov-report=html --cov-report=term
 
+      - name: Quality gate (golden degraded pairs, data governance P1-3)
+        # 数据治理门禁：合成 golden 源图 → 生产退化处理器 → color_fix → PSNR/SSIM 断言。
+        # 纯 CPU 路径，不依赖 GPU/权重；独立成步以便在 CI 日志中一眼定位质量回退。
+        # 测试失败必须让 job 失败：本步骤是真实门禁，不得加 || true
+        run: python -m pytest tests/test_golden_quality.py -q -m integration
+
+      - name: Golden dataset manifest (regenerate + diff check)
+        # 校验退化流水线确定性：重新生成基准对，manifest 指标须与已提交基线一致
+        shell: bash
+        run: |
+          python scripts/generate_golden_dataset.py --size 128 --output tests/golden --skip-images
+          git diff --exit-code -- tests/golden/manifest.json
+
       - name: Coverage Gate (>= 50%)
         if: always()
         shell: bash
