@@ -44,6 +44,7 @@ export default defineConfig({
         items: [
           { text: '技术架构', link: '/guide/architecture' },
           { text: 'API 参考', link: '/guide/api' },
+          { text: '配置参考（自动生成）', link: '/guide/config' },
           { text: '安全与合规', link: '/guide/security' },
         ],
       },
