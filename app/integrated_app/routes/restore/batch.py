@@ -21,6 +21,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException
 
+from app.integrated_app.bad_case_retry import FailureType, adjust_params_for_retry, classify_failure
 from app.integrated_app.checkpoint import TaskCheckpoint, _file_fingerprint
 from app.integrated_app.config_models import (
     ImageRestoreParams,
@@ -36,6 +37,7 @@ from app.integrated_app.dependencies import (
 from app.integrated_app.engines.seedvr2_engine import ImageInferenceConfig
 from app.integrated_app.gpu_backend import gpu_manager
 from app.integrated_app.history_db import HistoryDB, HistoryRecord
+from app.integrated_app.metrics import metrics_collector
 from app.integrated_app.model_manager import ModelManager
 from app.integrated_app.model_registry import model_registry
 from app.integrated_app.routes.restore import common
@@ -103,6 +105,12 @@ async def batch_restore_from_folder(
 
     # 自动加载模型：未加载（或尺寸不符）时先加载再修复
     await common.ensure_model_loaded(model_manager, raw_params.dit_model)
+
+    # 磁盘空间预检（成本治理 P0-1）：空间不足直接 507，避免任务入队后静默失败
+    common.ensure_disk_space(
+        os.path.join(os.getcwd(), "outputs"),
+        float((config.get("retention", {}) or {}).get("disk_min_free_gb", 5.0) or 0),
+    )
 
     folder = Path(folder_path.strip())
     if not await asyncio.to_thread(folder.exists) or not await asyncio.to_thread(folder.is_dir):
@@ -198,6 +206,42 @@ async def batch_restore_from_folder(
     )
 
 
+def _apply_oom_degradation(
+    current_config: dict,
+    batch_config: dict,
+    error: str,
+    attempt: int,
+    app_config: dict,
+) -> bool:
+    """批量重试前的 OOM 分类与参数降级（成本治理 P0-2）。
+
+    按 bad_case_retry 阶梯降级（blocks_to_swap↑ → resolution↓ → 种子轮换），
+    调整结果同时写回当前文件配置与批量级配置——OOM 在批内通常是持续性
+    显存约束，后续文件复用降级参数可避免逐文件重复 OOM 白烧 GPU 时间。
+
+    Args:
+        current_config: 当前文件的推理配置副本（就地更新）。
+        batch_config: 批量级推理配置（就地更新，影响后续文件）。
+        error: 失败错误信息。
+        attempt: 即将进行的重试序号（1-based）。
+        app_config: 应用全局配置（读取 runtime.retry）。
+
+    Returns:
+        是否发生了参数降级。
+    """
+    has_failure, failure_type, _reason = classify_failure(message=error)
+    if not has_failure or failure_type != FailureType.OOM:
+        return False
+    adjusted = adjust_params_for_retry(current_config, failure_type, attempt, common.build_retry_config(app_config))
+    merged = {k: v for k, v in adjusted.items() if k in current_config and v != current_config[k]}
+    if not merged:
+        return False
+    current_config.update(merged)
+    batch_config.update(merged)
+    logger.warning(f"批量任务 OOM，参数已自动降级并应用于后续文件: {merged}")
+    return True
+
+
 async def _process_batch_background(
     batch_id: str,
     media_files: list,
@@ -281,6 +325,17 @@ async def _process_batch_background(
             status="failed",
             error_message="引擎实例不可用",
         )
+        return
+
+    # 磁盘空间预检（成本治理 P0-1）：批量任务输出量大，启动前先确认剩余空间。
+    # 批量任务的历史记录在全部文件处理完后才落库，此处直接标记任务失败并返回
+    try:
+        common.ensure_disk_space(
+            os.path.join(os.getcwd(), "outputs"),
+            float((app_config.get("retention", {}) or {}).get("disk_min_free_gb", 5.0) or 0),
+        )
+    except HTTPException as e:
+        await common.update_task_state(batch_id, history_db, status="failed", error_message=str(e.detail))
         return
 
     records_to_insert: list[HistoryRecord] = []
@@ -430,14 +485,21 @@ async def _process_batch_background(
                         db_persist(progress)
 
                     engine.set_progress_callback(progress_callback)
+                    # OOM 降级可能向 current_config 注入 blocks_to_swap；
+                    # 仅在键存在时传入，避免用 0 覆盖引擎默认的 blockswap 配置
+                    infer_kwargs = {
+                        "resolution": current_config["resolution"],
+                        "max_resolution": current_config["max_resolution"],
+                        "cache_model": current_config["cache_model"],
+                        "seed": current_config["seed"],
+                    }
+                    if "blocks_to_swap" in current_config:
+                        infer_kwargs["blocks_to_swap"] = current_config["blocks_to_swap"]
                     result = await engine.infer_video(
                         video_path=media_path,
                         output_dir=output_dir,
-                        resolution=current_config["resolution"],
-                        max_resolution=current_config["max_resolution"],
-                        cache_model=current_config["cache_model"],
-                        seed=current_config["seed"],
                         output_name=output_name,
+                        **infer_kwargs,
                     )
 
                 if result.success:
@@ -446,6 +508,23 @@ async def _process_batch_background(
                     task_item["processing_time"] = result.processing_time
                     task_item["error"] = None
                     completed += 1
+                    # 推理指标记账 + 输出体积统计（成本治理 P1-1）
+                    output_size = 0
+                    try:
+                        if result.output_path and os.path.exists(result.output_path):
+                            output_size = os.path.getsize(result.output_path)
+                    except OSError:
+                        output_size = 0
+                    task_item["output_size_bytes"] = output_size
+                    task_item["vram_peak_mb"] = float(
+                        (getattr(result, "metadata", None) or {}).get("vram_peak_mb") or 0.0
+                    )
+                    metrics_collector.record_inference(
+                        success=True,
+                        duration=result.processing_time or 0.0,
+                        model_size=use_model_size,
+                        input_type=media_type,
+                    )
                     common.get_task_cache().update(batch_id, completed=completed)
 
                     # 断点续跑：保存 checkpoint
@@ -469,11 +548,19 @@ async def _process_batch_background(
                         logger.warning(
                             f"批量处理 {media_type} {i+1}/{len(media_files)} 第{attempt+1}次失败，重试中：{media_path}, {last_error}"
                         )
+                        # OOM 坏案例降级（P0-2）：重试前分类失败并调整参数
+                        _apply_oom_degradation(current_config, config, last_error, attempt + 1, app_config)
                         await exponential_backoff_with_jitter(attempt, base=retry_base, max_delay=retry_max)
                     else:
                         task_item["status"] = "failed"
                         task_item["error"] = last_error
                         failed += 1
+                        metrics_collector.record_inference(
+                            success=False,
+                            duration=float(result.processing_time or 0.0),
+                            model_size=use_model_size,
+                            input_type=media_type,
+                        )
                         common.get_task_cache().update(batch_id, failed=failed)
 
             except asyncio.CancelledError:
@@ -487,11 +574,19 @@ async def _process_batch_background(
                     logger.warning(
                         f"批量处理 {media_type} {i+1}/{len(media_files)} 第{attempt+1}次异常，重试中：{media_path}, {e}"
                     )
+                    # OOM 坏案例降级（P0-2）：重试前分类异常并调整参数
+                    _apply_oom_degradation(current_config, config, last_error, attempt + 1, app_config)
                     await exponential_backoff_with_jitter(attempt, base=retry_base, max_delay=retry_max)
                 else:
                     task_item["status"] = "failed"
                     task_item["error"] = last_error
                     failed += 1
+                    metrics_collector.record_inference(
+                        success=False,
+                        duration=0.0,
+                        model_size=use_model_size,
+                        input_type=media_type,
+                    )
                     common.get_task_cache().update(batch_id, failed=failed)
                     logger.error(f"批量处理 {media_type} {i+1}/{len(media_files)} 最终失败：{media_path}, {e}")
 
@@ -504,6 +599,8 @@ async def _process_batch_background(
                 output_file=task_item.get("output_path") or "",
                 processing_time=float(task_item.get("processing_time") or 0.0),
                 error_message=task_item.get("error") or "",
+                output_size_bytes=int(task_item.get("output_size_bytes") or 0),
+                vram_peak_mb=float(task_item.get("vram_peak_mb") or 0.0),
             )
         )
 

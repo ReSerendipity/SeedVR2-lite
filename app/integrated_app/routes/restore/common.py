@@ -21,10 +21,12 @@ import asyncio
 import contextlib
 import logging
 import os
+import shutil
 import time
 
 from fastapi import Form, HTTPException
 
+from app.integrated_app.bad_case_retry import RetryConfig
 from app.integrated_app.config_models import UnifiedRestoreParams
 from app.integrated_app.history_db import HistoryDB
 from app.integrated_app.model_registry import model_registry
@@ -42,6 +44,67 @@ MAX_IMAGE_SIZE = 50 * 1024 * 1024
 MAX_VIDEO_SIZE = 500 * 1024 * 1024
 
 MAX_RETRIES = 2
+
+
+def ensure_disk_space(target_dir: str, min_free_gb: float) -> None:
+    """任务启动前磁盘剩余空间预检（成本治理 P0-1）。
+
+    检查输出目录所在磁盘的剩余空间，不足时直接拒绝创建任务，
+    避免推理中途（尤其长视频帧落盘阶段）写满磁盘导致服务不可用。
+
+    Args:
+        target_dir: 输出目录（以其所在磁盘为检查对象，无需事先存在）。
+        min_free_gb: 最低剩余空间（GB），<=0 时跳过预检。
+
+    Raises:
+        HTTPException: 剩余空间低于阈值时抛出 507 Insufficient Storage。
+    """
+    if not min_free_gb or min_free_gb <= 0:
+        return
+    # shutil.disk_usage 要求路径存在：向上回溯到最近存在的祖先目录
+    # （输出目录通常在任务启动后才创建，其所在磁盘与最终落盘磁盘一致）
+    probe = target_dir
+    while not os.path.exists(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            break
+        probe = parent
+    try:
+        usage = shutil.disk_usage(probe)
+    except OSError:
+        # 磁盘信息不可用时放行，不阻塞正常推理
+        return
+    free_gb = usage.free / (1024**3)
+    if free_gb < min_free_gb:
+        raise HTTPException(
+            status_code=507,
+            detail=(
+                f"磁盘剩余空间不足（当前 {free_gb:.1f}GB < 最低要求 {min_free_gb:.1f}GB），"
+                f"请清理 outputs/ 输出目录或释放磁盘空间后重试"
+            ),
+        )
+
+
+def build_retry_config(app_config: dict | None = None) -> RetryConfig:
+    """从应用配置构建推理坏案例自动重试配置（成本治理 P0-2 接线）。
+
+    读取 config.yaml 的 runtime.retry 段；enabled=false 或 max_retries=0
+    时返回不重试的空配置。
+
+    Args:
+        app_config: 应用配置字典（get_app_config() 或依赖注入的 config）。
+
+    Returns:
+        RetryConfig: 传给 retry_with_bad_case_detection 的重试配置。
+    """
+    cfg = (app_config or {}).get("runtime", {}).get("retry", {}) or {}
+    if not cfg.get("enabled", True):
+        return RetryConfig(max_retries=0, enable_degradation=False, enable_seed_rotation=False)
+    return RetryConfig(
+        max_retries=int(cfg.get("max_retries", 2) or 0),
+        base_delay_seconds=float(cfg.get("base_delay_seconds", 1.0) or 0.0),
+        max_delay_seconds=float(cfg.get("max_delay_seconds", 30.0) or 1.0),
+    )
 
 
 def model_size_from_dit_model(dit_model: str) -> str:
@@ -77,6 +140,8 @@ async def ensure_model_loaded(model_manager, dit_model: str = "") -> None:
     Raises:
         HTTPException: 模型自动加载失败时抛出 503。
     """
+    # P1-2: 活动时间戳刷新，避免模型在队列排队期间被空闲卸载
+    model_registry.touch_activity()
     try:
         await model_manager.load_model(model_size=model_size_from_dit_model(dit_model))
     except HTTPException:

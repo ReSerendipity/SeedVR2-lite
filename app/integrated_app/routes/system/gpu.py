@@ -80,7 +80,10 @@ async def gpu_info(gpu_backend: GPUBackendManager = Depends(get_gpu_backend)):
             "device_name": info.name,
             "vram_total_mb": info.total_vram_mb,
             "vram_available_mb": info.available_vram_mb,
+            # utilization_pct 为显存占用比；sm_utilization_pct 为 SM 真实利用率（P2-1）
             "utilization_pct": round(info.utilization_pct, 2),
+            "sm_utilization_pct": round(info.sm_utilization_pct, 2) if info.sm_utilization_pct is not None else None,
+            "temperature_c": round(info.temperature_c, 1) if info.temperature_c is not None else None,
             "cuda_version": cuda_version,
             "driver_version": info.driver_version,
             "memory": memory_info,

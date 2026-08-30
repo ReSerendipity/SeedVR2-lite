@@ -12,6 +12,7 @@ API 端点：
 """
 
 import asyncio
+import dataclasses
 import logging
 import os
 import uuid
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
+from app.integrated_app.bad_case_retry import retry_with_bad_case_detection
 from app.integrated_app.cache import FileCache
 from app.integrated_app.config_models import (
     ImageRestoreParams,
@@ -36,6 +38,7 @@ from app.integrated_app.dependencies import (
 from app.integrated_app.engines.seedvr2_engine import ImageInferenceConfig
 from app.integrated_app.gpu_backend import gpu_manager
 from app.integrated_app.history_db import HistoryDB, HistoryRecord
+from app.integrated_app.metrics import metrics_collector
 from app.integrated_app.model_manager import ModelManager
 from app.integrated_app.model_registry import model_registry
 from app.integrated_app.routes.restore import common
@@ -175,6 +178,13 @@ async def upload_and_restore(
     # 输入非图片或解析失败时 fail-safe 保留原数值，不抛异常打断任务。
     common.enforce_double_resolution_if_enabled(raw_params, detected_type, input_path)
 
+    # ============== 磁盘空间预检（成本治理 P0-1） ==============
+    # 输出目录所在磁盘剩余空间不足时拒绝任务，防止长视频帧落盘阶段写满磁盘
+    common.ensure_disk_space(
+        os.path.join(os.getcwd(), "outputs"),
+        float((config.get("retention", {}) or {}).get("disk_min_free_gb", 5.0) or 0),
+    )
+
     task_type = raw_params.task_type
     if task_type == "auto":
         task_type = detected_type or "image"
@@ -246,6 +256,8 @@ async def _run_task_with_state(
     task_fn: Callable,
     history_db: HistoryDB,
     task_queue: TaskQueue,
+    input_type: str = "image",
+    model_size: str = "unknown",
 ):
     """公共任务执行模板 - 统一状态管理和异常处理（内部函数）。
 
@@ -254,7 +266,7 @@ async def _run_task_with_state(
     2. 检查取消状态
     3. 获取引擎实例
     4. 执行实际推理函数
-    5. 根据结果更新状态为 completed/failed/cancelled
+    5. 根据结果更新状态为 completed/failed/cancelled，并记录推理指标与输出体积
     6. 异常统一处理并记录日志
 
     Args:
@@ -263,8 +275,12 @@ async def _run_task_with_state(
         task_fn: 实际推理函数，接收 engine 参数，返回 RestoreResult。
         history_db: 历史数据库实例。
         task_queue: 任务队列实例。
+        input_type: 输入类型（"image"/"video"），用于推理指标归因（P1-1）。
+        model_size: 模型档位标识，用于推理指标归因（P1-1）。
     """
     try:
+        # P1-2: 任务开始即刷新活动时间戳，空闲卸载不会打断执行中的任务
+        model_registry.touch_activity()
         await common.update_task_state(task_id, history_db, status="processing")
         await history_db.update_record(record_id, status="processing")
 
@@ -281,6 +297,14 @@ async def _run_task_with_state(
             raise asyncio.CancelledError()
 
         if result.success:
+            output_size = 0
+            try:
+                if result.output_path and os.path.exists(result.output_path):
+                    output_size = os.path.getsize(result.output_path)
+            except OSError:
+                output_size = 0
+            # P2-1: VRAM 峰值落库（引擎 metadata.vram_peak_mb）
+            vram_peak_mb = float((getattr(result, "metadata", None) or {}).get("vram_peak_mb") or 0.0)
             await common.update_task_state(
                 task_id,
                 history_db,
@@ -294,12 +318,27 @@ async def _run_task_with_state(
                 status="completed",
                 output_file=result.output_path,
                 processing_time=result.processing_time,
+                output_size_bytes=output_size,
+                vram_peak_mb=vram_peak_mb,
             )
-            logger.info(f"任务完成: {task_id}, 耗时 {result.processing_time:.1f}s")
+            # 推理指标记账（成本治理 P1-1）：/api/system/metrics 的推理计数由此点亮
+            metrics_collector.record_inference(
+                success=True,
+                duration=result.processing_time or 0.0,
+                model_size=model_size,
+                input_type=input_type,
+            )
+            logger.info(f"任务完成: {task_id}, 耗时 {result.processing_time:.1f}s, 输出 {output_size} 字节")
         else:
             error = result.error or "未知错误"
             await common.update_task_state(task_id, history_db, status="failed", error_message=error)
             await history_db.update_record(record_id, status="failed", error_message=error)
+            metrics_collector.record_inference(
+                success=False,
+                duration=result.processing_time or 0.0,
+                model_size=model_size,
+                input_type=input_type,
+            )
             logger.error(f"任务失败: {task_id}, 错误: {result.error}")
 
     except asyncio.CancelledError:
@@ -357,13 +396,52 @@ async def _process_image_task(
         image_config = ImageInferenceConfig(
             **{k: v for k, v in params.model_dump().items() if k in ImageInferenceConfig.__dataclass_fields__}
         )
-        return await engine.infer_image(
-            image_path=input_path,
-            output_dir=output_dir,
-            config=image_config,
-        )
 
-    await _run_task_with_state(task_id, record_id, _do_infer, history_db, task_queue)
+        # OOM 坏案例自动重试（成本治理 P0-2）：降级阶梯 blocks_to_swap↑ → resolution↓ → 种子轮换。
+        # 精度降级（fp16→fp8）在当前引擎架构下不生效（checkpoint 在 load_model 时固定），
+        # 保留在阶梯中，引擎未来支持精度热切换后自动获益
+        force_reload = {"flag": False}
+
+        def _on_retry(attempt: int, max_attempts: int, reason: str) -> None:
+            if attempt > 0:
+                force_reload["flag"] = True
+                logger.warning(f"[{task_id}] 推理失败，自动重试 {attempt}/{max_attempts}: {reason}")
+
+        async def _generate(**kwargs):
+            cfg = kwargs.get("config") or image_config
+            if force_reload["flag"] and not cfg.force_reload_dit:
+                # 已缓存的 DiT 以旧 blocks_to_swap 加载，重试必须强制重载新参数才生效
+                cfg = dataclasses.replace(cfg, force_reload_dit=True)
+            return await engine.infer_image(image_path=input_path, output_dir=output_dir, config=cfg)
+
+        retry_result = await retry_with_bad_case_detection(
+            _generate,
+            {"config": image_config},
+            config=common.build_retry_config(),
+            progress_callback=_on_retry,
+        )
+        if retry_result.result is None:
+            raise RuntimeError(retry_result.failure_reason or "推理重试耗尽")
+        if retry_result.attempts > 1 and getattr(retry_result.result, "success", False):
+            common.get_task_cache().update(
+                task_id,
+                message=(
+                    f"自动重试成功（第 {retry_result.attempts} 次尝试"
+                    + ("，参数已自动降级" if retry_result.degraded else "")
+                    + "）"
+                ),
+            )
+        return retry_result.result
+
+    await _run_task_with_state(
+        task_id,
+        record_id,
+        _do_infer,
+        history_db,
+        task_queue,
+        input_type="image",
+        model_size=common.model_size_from_dit_model(params.dit_model),
+    )
 
 
 async def _process_video_task(
@@ -410,16 +488,66 @@ async def _process_video_task(
         engine.set_progress_callback(progress_callback)
 
         output_dir = os.path.join(os.getcwd(), "outputs", "video")
-        return await engine.infer_video(
-            video_path=input_path,
-            output_dir=output_dir,
-            resolution=params.resolution,
-            max_resolution=params.max_resolution,
-            cache_model=params.cache_model,
-            seed=params.seed,
-            blocks_to_swap=params.blocks_to_swap,
-            batch_size=params.batch_size,
-            force_reload_dit=params.force_reload_dit,
-        )
+        video_params = {
+            "resolution": params.resolution,
+            "max_resolution": params.max_resolution,
+            "cache_model": params.cache_model,
+            "seed": params.seed,
+            "blocks_to_swap": params.blocks_to_swap,
+            "batch_size": params.batch_size,
+            "force_reload_dit": params.force_reload_dit,
+        }
 
-    await _run_task_with_state(task_id, record_id, _do_infer, history_db, task_queue)
+        # OOM 坏案例自动重试（成本治理 P0-2）：降级阶梯 blocks_to_swap↑ → resolution↓ → 种子轮换
+        force_reload = {"flag": False}
+
+        def _on_retry(attempt: int, max_attempts: int, reason: str) -> None:
+            if attempt > 0:
+                force_reload["flag"] = True
+                logger.warning(f"[{task_id}] 视频推理失败，自动重试 {attempt}/{max_attempts}: {reason}")
+
+        async def _generate(**kwargs):
+            merged = {**video_params, **kwargs}
+            if force_reload["flag"]:
+                # 已缓存的 DiT 以旧 blocks_to_swap 加载，重试必须强制重载新参数才生效
+                merged["force_reload_dit"] = True
+            return await engine.infer_video(
+                video_path=input_path,
+                output_dir=output_dir,
+                resolution=merged["resolution"],
+                max_resolution=merged["max_resolution"],
+                cache_model=merged["cache_model"],
+                seed=merged["seed"],
+                blocks_to_swap=merged["blocks_to_swap"],
+                batch_size=merged["batch_size"],
+                force_reload_dit=merged["force_reload_dit"],
+            )
+
+        retry_result = await retry_with_bad_case_detection(
+            _generate,
+            dict(video_params),
+            config=common.build_retry_config(),
+            progress_callback=_on_retry,
+        )
+        if retry_result.result is None:
+            raise RuntimeError(retry_result.failure_reason or "视频推理重试耗尽")
+        if retry_result.attempts > 1 and getattr(retry_result.result, "success", False):
+            common.get_task_cache().update(
+                task_id,
+                message=(
+                    f"自动重试成功（第 {retry_result.attempts} 次尝试"
+                    + ("，参数已自动降级" if retry_result.degraded else "")
+                    + "）"
+                ),
+            )
+        return retry_result.result
+
+    await _run_task_with_state(
+        task_id,
+        record_id,
+        _do_infer,
+        history_db,
+        task_queue,
+        input_type="video",
+        model_size=model_size,
+    )
