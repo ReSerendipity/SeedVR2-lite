@@ -59,44 +59,44 @@ class TestEstimateModelVram:
     def test_3b_fp16_no_resolution(self):
         """3B FP16 无分辨率时返回基础显存"""
         vram = gpu_utils.estimate_model_vram("3b", precision="fp16")
-        assert vram == 8000
+        assert vram == 8192
 
     def test_3b_fp8_no_resolution(self):
         """3B FP8 无分辨率时返回基础显存"""
         vram = gpu_utils.estimate_model_vram("3b", precision="fp8")
-        assert vram == 4000
+        assert vram == 4096
 
     def test_7b_fp16_no_resolution(self):
         """7B FP16 无分辨率时返回基础显存"""
         vram = gpu_utils.estimate_model_vram("7b", precision="fp16")
-        assert vram == 16000
+        assert vram == 16384
 
     def test_7b_fp8_no_resolution(self):
         """7B FP8 无分辨率时返回基础显存"""
         vram = gpu_utils.estimate_model_vram("7b", precision="fp8")
-        assert vram == 8000
+        assert vram == 8192
 
     def test_unknown_model_uses_default(self):
         """未知模型使用默认估值"""
         vram = gpu_utils.estimate_model_vram("unknown", precision="fp16")
-        assert vram == 8000
+        assert vram == 8192
 
     def test_with_resolution_1080p(self):
         """1080p 分辨率时返回基础+推理显存"""
         vram = gpu_utils.estimate_model_vram("3b", resolution=(1080, 1920), precision="fp16")
-        assert vram == 8000 + 4000
+        assert vram == 8192 + 4000
 
     def test_with_resolution_4k(self):
         """4K 分辨率时显存按比例增长"""
         vram = gpu_utils.estimate_model_vram("3b", resolution=(2160, 3840), precision="fp16")
         # 4K = 4x 1080p pixels
-        assert vram == 8000 + int(4000 * 4.0)
+        assert vram == 8192 + int(4000 * 4.0)
 
     def test_with_resolution_smaller_than_1080p(self):
         """小于 1080p 时不缩小推理显存"""
         vram = gpu_utils.estimate_model_vram("3b", resolution=(720, 1280), precision="fp16")
         # pixel_factor < 1.0, so max(1.0, factor) = 1.0
-        assert vram == 8000 + 4000
+        assert vram == 8192 + 4000
 
 
 class TestClearGpuCache:
@@ -410,3 +410,50 @@ class TestRecommendParams:
         assert result_7b["precision"] == result_sharp["precision"]
         assert result_7b["enable_blockswap"] == result_sharp["enable_blockswap"]
         assert result_7b["estimated_vram_gb"] == result_sharp["estimated_vram_gb"]
+
+
+class TestVramConfigSingleSource:
+    """P0-3 显存阈值单一事实来源：config.yaml 驱动 + 回退一致性"""
+
+    def setup_method(self):
+        gpu_utils._vram_config_snapshot.cache_clear()
+
+    def teardown_method(self):
+        gpu_utils._vram_config_snapshot.cache_clear()
+
+    def test_weights_table_from_config(self):
+        """权重基线表来自 config.yaml baseline_vram_*_gb（GB×1024→MB）"""
+        table = gpu_utils._weights_vram_mb()
+        assert table["3b"] == {"fp16": 8192, "fp8": 4096}
+        assert table["7b"] == {"fp16": 16384, "fp8": 8192}
+
+    def test_num_blocks_from_config(self):
+        """块数表来自 config.yaml num_blocks"""
+        nb = gpu_utils._model_num_blocks()
+        assert nb["3b"] == 32
+        assert nb["7b"] == 36
+
+    def test_tile_tiers_from_config(self):
+        """分块档位表来自 config.yaml gpu.vram_tile_tiers（降序）"""
+        tiers = gpu_utils._tile_tiers()
+        assert tiers[0] == {"min_available_gb": 20.0, "tile_size": 1024, "tile_overlap": 512}
+        assert tiers[-1]["tile_size"] == 256
+
+    def test_7b_sharp_has_own_baseline(self):
+        """7b_sharp 获得独立权重基线（旧实现误落 unknown 默认值）"""
+        assert gpu_utils.estimate_model_vram("7b_sharp", precision="fp8") == 8192
+
+    def test_fallback_when_config_unreadable(self, monkeypatch):
+        """config 不可读时回退内置默认值（与 config 数值一致，行为不变）"""
+        import app.integrated_app.config as config_mod
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("config unavailable")
+
+        monkeypatch.setattr(config_mod, "get_app_config", _boom)
+        table = gpu_utils._weights_vram_mb()
+        assert table["3b"] == {"fp16": 8192, "fp8": 4096}
+        tiers = gpu_utils._tile_tiers()
+        assert tiers[0]["tile_size"] == 1024
+        nb = gpu_utils._model_num_blocks()
+        assert nb["7b_sharp"] == 36

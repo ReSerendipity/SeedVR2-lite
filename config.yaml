@@ -3,6 +3,19 @@ cache:
   ttl: 86400
 gpu:
   backend: auto
+  vram_tile_tiers:
+  - min_available_gb: 20
+    tile_overlap: 512
+    tile_size: 1024
+  - min_available_gb: 12
+    tile_overlap: 256
+    tile_size: 768
+  - min_available_gb: 8
+    tile_overlap: 128
+    tile_size: 512
+  - min_available_gb: 0
+    tile_overlap: 64
+    tile_size: 256
 history:
   db_path: data/history.db
   max_records: 10000
@@ -60,6 +73,8 @@ model:
   model_source_mode: portable
   models:
     3b:
+      baseline_vram_fp16_gb: 8.0
+      baseline_vram_fp8_gb: 4.0
       checkpoint_fp16: seedvr2_ema_3b_fp16.safetensors
       checkpoint_fp8: seedvr2_ema_3b_fp8_e4m3fn.safetensors
       config_dir: configs_3b
@@ -76,6 +91,8 @@ model:
       sha256_vae: 20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1
       vae_checkpoint: ema_vae_fp16.safetensors
     7b:
+      baseline_vram_fp16_gb: 16.0
+      baseline_vram_fp8_gb: 8.0
       checkpoint_fp16: seedvr2_ema_7b_fp16.safetensors
       checkpoint_fp8: seedvr2_ema_7b_fp8_e4m3fn.safetensors
       config_dir: configs_7b
@@ -92,6 +109,8 @@ model:
       sha256_vae: 20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1
       vae_checkpoint: ema_vae_fp16.safetensors
     7b_sharp:
+      baseline_vram_fp16_gb: 16.0
+      baseline_vram_fp8_gb: 8.0
       checkpoint_fp16: seedvr2_ema_7b_sharp_fp16.safetensors
       checkpoint_fp8: seedvr2_ema_7b_sharp_fp8_e4m3fn.safetensors
       config_dir: configs_7b

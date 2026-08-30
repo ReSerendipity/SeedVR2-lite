@@ -106,8 +106,11 @@ class ModelEntryConfig(BaseModel):
         vae_checkpoint: VAE 模型检查点路径。
         pos_emb: 正面提示词嵌入路径。
         neg_emb: 负面提示词嵌入路径。
-        min_vram_fp16_gb: 加载 FP16 版本所需最小显存（GB）。
+        min_vram_fp16_gb: 加载 FP16 版本所需最小显存（GB，含推理开销的最低运行门槛）。
         min_vram_fp8_gb: 加载 FP8 版本所需最小显存（GB）。
+        baseline_vram_fp16_gb: FP16 权重显存基线（GB，加载预检用；0 表示未配置，
+            gpu_utils 回退内置默认值）。
+        baseline_vram_fp8_gb: FP8 权重显存基线（GB，0 表示未配置）。
         num_blocks: Transformer 块数量，用于 BlockSwap 策略。
         sha256_fp16: FP16 检查点期望 SHA256（空表示跳过完整性校验）。
         sha256_fp8: FP8 检查点期望 SHA256。
@@ -126,6 +129,8 @@ class ModelEntryConfig(BaseModel):
     neg_emb: str = ""
     min_vram_fp16_gb: int = 16
     min_vram_fp8_gb: int = 8
+    baseline_vram_fp16_gb: float = 0
+    baseline_vram_fp8_gb: float = 0
     num_blocks: int = 36
     sha256_fp16: str = ""
     sha256_fp8: str = ""
@@ -213,15 +218,43 @@ class RestoreConfig(BaseModel):
         return v
 
 
+class GpuVramTileTier(BaseModel):
+    """VAE 分块推荐档位（P0-3：显存阈值配置化）。
+
+    Attributes:
+        min_available_gb: 适用本档位的最低可用显存（GB），档位按此值降序匹配。
+        tile_size: 推荐 VAE 分块大小（像素）。
+        tile_overlap: 推荐 VAE 分块重叠（像素）。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    min_available_gb: float
+    tile_size: int
+    tile_overlap: int
+
+
+def _default_tile_tiers() -> list[GpuVramTileTier]:
+    """默认分块推荐档位（与 gpu_utils 回退值一致，仅作缺省）。"""
+    return [
+        GpuVramTileTier(min_available_gb=20, tile_size=1024, tile_overlap=512),
+        GpuVramTileTier(min_available_gb=12, tile_size=768, tile_overlap=256),
+        GpuVramTileTier(min_available_gb=8, tile_size=512, tile_overlap=128),
+        GpuVramTileTier(min_available_gb=0, tile_size=256, tile_overlap=64),
+    ]
+
+
 class GpuConfig(BaseModel):
     """GPU 后端配置模型。
 
     Attributes:
         backend: GPU 后端类型，"auto" 自动检测，或指定 "cuda"。
+        vram_tile_tiers: VAE 分块推荐档位表（按 min_available_gb 降序），
+            供 gpu_utils.recommend_params 消费；P0-3 起为单一事实来源。
     """
 
     model_config = ConfigDict(extra="ignore")
     backend: str = "auto"
+    vram_tile_tiers: list[GpuVramTileTier] = Field(default_factory=_default_tile_tiers)
 
 
 class HistoryConfig(BaseModel):

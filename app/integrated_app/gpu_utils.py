@@ -16,14 +16,19 @@
     - 完整系统信息聚合（GPU + 内存 + OS）
 
 常量说明:
-    显存估算常量集中管理，避免魔法数字散落在代码中。
-    TODO: 未来应从 config.yaml 注入，保持单一数据源。
+    显存阈值以 config.yaml 为单一事实来源（P0-3）：
+    - 权重显存基线 model.models.<size>.baseline_vram_{fp16,fp8}_gb（加载预检）
+    - 最低运行显存 model.models.<size>.min_vram_{fp16,fp8}_gb（参数推荐）
+    - Transformer 块数 model.models.<size>.num_blocks（BlockSwap 推荐）
+    - VAE 分块档位 gpu.vram_tile_tiers（tile_size/tile_overlap 推荐）
+    本模块内置字典仅为配置不可读时的回退默认值。
 """
 
 import functools
 import gc
 import logging
 from collections.abc import Callable
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -38,33 +43,145 @@ except ImportError:
     _HAS_TORCH_CUDA = False
 
 # ===========================================================================
-# 显存估算常量 — 消除魔法数字，集中管理
+# 显存估算常量 — P0-3 单一事实来源改造
 # ===========================================================================
-# TODO: 这些估值应与 config.yaml 中 models.*.min_vram_fp16_gb / min_vram_fp8_gb 对齐，
-#       当前为独立硬编码，未来应从 config 注入以保持单一数据源 (F1)
-_BASE_VRAM_MB = {
-    "3b": {"fp16": 8000, "fp8": 4000},  # 3B 模型约需 8GB(FP16) / 4GB(FP8) 基础显存
-    "7b": {"fp16": 16000, "fp8": 8000},  # 7B 模型约需 16GB(FP16) / 8GB(FP8) 基础显存
+# 权重基线 / 最低运行显存 / 块数 / VAE 分块档位全部以 config.yaml 为权威来源
+# （models.*.baseline_vram_*_gb、models.*.min_vram_*_gb、models.*.num_blocks、
+# gpu.vram_tile_tiers）。下方字典仅为 config.yaml 不可读时的**回退默认值**，
+# 数值与 config.yaml 逐项一致，保证回退路径行为不变。
+_FALLBACK_WEIGHTS_VRAM_MB = {
+    "3b": {"fp16": 8192, "fp8": 4096},  # 3B 模型 8GB(FP16) / 4GB(FP8) 权重基线
+    "7b": {"fp16": 16384, "fp8": 8192},  # 7B 模型 16GB(FP16) / 8GB(FP8) 权重基线
+    "7b_sharp": {"fp16": 16384, "fp8": 8192},
 }
-_DEFAULT_MODEL_VRAM_MB = {"fp16": 8000, "fp8": 4000}  # 未知模型大小的默认估值
+_DEFAULT_MODEL_VRAM_MB = {"fp16": 8192, "fp8": 4096}  # 未知模型大小的默认估值
 _BASE_RESOLUTION_PIXELS = 1080 * 1920  # 基准分辨率（用于计算像素比例因子）
 _BASE_INFERENCE_VRAM_MB = 4000  # 推理额外显存基线（4GB 起，随分辨率线性增长）
 
 # ===========================================================================
-# VRAM 预检常量 — 借鉴 Image_MultiModel，用于 estimate_vram_requirements / recommend_params
+# VRAM 预检常量 — 用于 estimate_vram_requirements / recommend_params（回退默认值，
+# 与 config.yaml 中 models.*.min_vram_*_gb 对齐）
 # ===========================================================================
-# 模型 VRAM 基线值（GB），与 config.yaml 中 models.*.min_vram_*_gb 对齐
-_MODEL_VRAM_BASE_GB: dict[str, dict[str, float]] = {
+_FALLBACK_MODEL_VRAM_BASE_GB: dict[str, dict[str, float]] = {
     "3b": {"fp16": 16.0, "fp8": 8.0},
     "7b": {"fp16": 24.0, "fp8": 12.0},
     "7b_sharp": {"fp16": 24.0, "fp8": 12.0},
 }
-# 模型 Transformer 块数（用于 BlockSwap 策略推荐）
-_MODEL_NUM_BLOCKS: dict[str, int] = {
+# 模型 Transformer 块数回退值（与 config models.*.num_blocks 权威值一致）
+_FALLBACK_MODEL_NUM_BLOCKS: dict[str, int] = {
     "3b": 32,
     "7b": 36,
     "7b_sharp": 36,
 }
+# VAE 分块推荐档位回退值（config gpu.vram_tile_tiers）
+_FALLBACK_TILE_TIERS: list[dict[str, float]] = [
+    {"min_available_gb": 20.0, "tile_size": 1024, "tile_overlap": 512},
+    {"min_available_gb": 12.0, "tile_size": 768, "tile_overlap": 256},
+    {"min_available_gb": 8.0, "tile_size": 512, "tile_overlap": 128},
+    {"min_available_gb": 0.0, "tile_size": 256, "tile_overlap": 64},
+]
+
+
+@lru_cache(maxsize=1)
+def _vram_config_snapshot() -> dict:
+    """读取 config.yaml 中显存相关配置的快照（P0-3 单一事实来源）。
+
+    config.yaml 是权威来源；读取失败（文件缺失/损坏/依赖不可用）时返回空字典，
+    调用方回退到上方内置默认值，保证任何环境下行为可预期。
+    测试需要刷新快照时可调用 ``_vram_config_snapshot.cache_clear()``。
+
+    Returns:
+        dict: 含 model.models（各模型显存配置）与 gpu.vram_tile_tiers 的字典。
+    """
+    try:
+        from app.integrated_app.config import get_app_config
+
+        cfg = get_app_config()
+        if cfg is None:
+            return {}
+        if hasattr(cfg, "model_dump"):
+            cfg = cfg.model_dump()
+        models = (cfg.get("model", {}) or {}).get("models", {}) or {}
+        tiers = (cfg.get("gpu", {}) or {}).get("vram_tile_tiers", []) or []
+        return {"models": models, "tiers": tiers}
+    except Exception as e:  # pragma: no cover — 仅在配置系统不可用时触发
+        logger.debug(f"读取显存配置失败，回退内置默认值: {e}")
+        return {}
+
+
+def _weights_vram_mb() -> dict[str, dict[str, int]]:
+    """模型权重显存基线表（MB，加载预检用）。
+
+    来源：config.yaml ``model.models.<size>.baseline_vram_fp16_gb / baseline_vram_fp8_gb``。
+    未配置（0）或 config 不可读的条目回退内置默认值。
+    """
+    models = _vram_config_snapshot().get("models", {})
+    table: dict[str, dict[str, int]] = {k: dict(v) for k, v in _FALLBACK_WEIGHTS_VRAM_MB.items()}
+    for size, m in models.items():
+        w16 = float(m.get("baseline_vram_fp16_gb", 0) or 0)
+        w8 = float(m.get("baseline_vram_fp8_gb", 0) or 0)
+        entry = dict(table.get(size) or _DEFAULT_MODEL_VRAM_MB)
+        if w16 > 0:
+            entry["fp16"] = int(w16 * 1024)
+        if w8 > 0:
+            entry["fp8"] = int(w8 * 1024)
+        table[size] = entry
+    return table
+
+
+def _model_vram_base_gb() -> dict[str, dict[str, float]]:
+    """模型最低运行显存表（GB，recommend_params 用）。
+
+    来源：config.yaml ``model.models.<size>.min_vram_fp16_gb / min_vram_fp8_gb``。
+    """
+    models = _vram_config_snapshot().get("models", {})
+    table: dict[str, dict[str, float]] = {k: dict(v) for k, v in _FALLBACK_MODEL_VRAM_BASE_GB.items()}
+    for size, m in models.items():
+        fp16 = float(m.get("min_vram_fp16_gb", 0) or 0)
+        fp8 = float(m.get("min_vram_fp8_gb", 0) or 0)
+        entry = dict(table.get(size) or {"fp16": 16.0, "fp8": 8.0})
+        if fp16 > 0:
+            entry["fp16"] = fp16
+        if fp8 > 0:
+            entry["fp8"] = fp8
+        table[size] = entry
+    return table
+
+
+def _model_num_blocks() -> dict[str, int]:
+    """模型 Transformer 块数表。来源：config.yaml ``model.models.<size>.num_blocks``。"""
+    models = _vram_config_snapshot().get("models", {})
+    table = dict(_FALLBACK_MODEL_NUM_BLOCKS)
+    for size, m in models.items():
+        nb = int(m.get("num_blocks", 0) or 0)
+        if nb > 0:
+            table[size] = nb
+    return table
+
+
+def _tile_tiers() -> list[dict[str, float]]:
+    """VAE 分块推荐档位表。来源：config.yaml ``gpu.vram_tile_tiers``（按 min_available_gb 降序）。"""
+    tiers = _vram_config_snapshot().get("tiers", [])
+    if not tiers:
+        return [dict(t) for t in _FALLBACK_TILE_TIERS]
+    normalized: list[dict[str, float]] = []
+    for t in tiers:
+        if hasattr(t, "model_dump"):
+            t = t.model_dump()
+        try:
+            normalized.append(
+                {
+                    "min_available_gb": float(t.get("min_available_gb", 0)),
+                    "tile_size": int(t.get("tile_size", 512)),
+                    "tile_overlap": int(t.get("tile_overlap", 128)),
+                }
+            )
+        except (TypeError, ValueError):
+            continue
+    normalized.sort(key=lambda x: x["min_available_gb"], reverse=True)
+    return normalized or [dict(t) for t in _FALLBACK_TILE_TIERS]
+
+
 # BlockSwap 开启时模型权重显存削减比例（默认 swap 32/36 块，约 50% 削减）
 _BLOCKSWAP_REDUCTION = 0.5
 # 安全阈值：推荐参数时使用可用显存的 90% 作为安全线
@@ -154,8 +271,8 @@ def estimate_model_vram(model_size: str, resolution: tuple | None = None, precis
     Returns:
         int: 估算的总显存需求（MB）
     """
-    # 查表获取模型基础显存需求
-    model_vram = _BASE_VRAM_MB.get(model_size, _DEFAULT_MODEL_VRAM_MB)
+    # 查表获取模型权重显存基线（config.yaml 单一事实来源，P0-3）
+    model_vram = _weights_vram_mb().get(model_size, _DEFAULT_MODEL_VRAM_MB)
     base_vram = model_vram.get(precision, model_vram["fp16"])
 
     if resolution:
@@ -287,7 +404,8 @@ def estimate_vram_requirements(
         float: 估算所需 VRAM（GB），保留两位小数。
     """
     model_key = _normalize_model_name(model_name)
-    base_vram = _MODEL_VRAM_BASE_GB.get(model_key, _MODEL_VRAM_BASE_GB["3b"])
+    base_table = _model_vram_base_gb()
+    base_vram = base_table.get(model_key, base_table["3b"])
     base = base_vram.get(precision, base_vram["fp16"])
 
     # 分辨率额外开销（平方根缩放，1080p 为基准）
@@ -346,8 +464,9 @@ def recommend_params(
         available_vram_gb = info["available_mb"] / 1024.0
 
     model_key = _normalize_model_name(model_name)
-    base_vram = _MODEL_VRAM_BASE_GB.get(model_key, _MODEL_VRAM_BASE_GB["3b"])
-    num_blocks = _MODEL_NUM_BLOCKS.get(model_key, 36)
+    base_table = _model_vram_base_gb()
+    base_vram = base_table.get(model_key, base_table["3b"])
+    num_blocks = _model_num_blocks().get(model_key, 36)
 
     # 估算各方案所需显存
     fp16_needed = estimate_vram_requirements(model_name, "fp16", input_width, input_height, num_frames)
@@ -393,19 +512,14 @@ def recommend_params(
     # BlockSwap 推荐换出块数（保留 4 块在 GPU，其余换出）
     blocks_to_swap = num_blocks - 4 if enable_blockswap else 0
 
-    # VAE tile 分块推荐（根据可用显存分级）
-    if available_vram_gb >= 20:
-        tile_size = 1024
-        vram_tile_overlap = 512
-    elif available_vram_gb >= 12:
-        tile_size = 768
-        vram_tile_overlap = 256
-    elif available_vram_gb >= 8:
-        tile_size = 512
-        vram_tile_overlap = 128
-    else:
-        tile_size = 256
-        vram_tile_overlap = 64
+    # VAE tile 分块推荐：按可用显存匹配 config.yaml gpu.vram_tile_tiers 档位（降序）
+    tile_size = 256
+    vram_tile_overlap = 64
+    for tier in _tile_tiers():
+        if available_vram_gb >= tier["min_available_gb"]:
+            tile_size = int(tier["tile_size"])
+            vram_tile_overlap = int(tier["tile_overlap"])
+            break
 
     return {
         "precision": precision,
