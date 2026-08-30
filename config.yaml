@@ -163,6 +163,8 @@ runtime:
     - model/
     integrity_enforce: false
     integrity_recheck_interval_seconds: 1800
+    max_upload_image_mb: 50
+    max_upload_video_mb: 500
     rate_limit_per_minute: 30
   sse:
     heartbeat_interval_seconds: 30
