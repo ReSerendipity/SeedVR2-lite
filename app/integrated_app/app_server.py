@@ -23,6 +23,7 @@ SeedVR2 - 应用服务器入口模块
 """
 
 import asyncio
+import json
 import logging
 import logging.handlers
 import os
@@ -35,8 +36,35 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
 
-# 统一日志格式：时间戳 + 级别 + 进程/线程 + 模块位置 + 请求ID + 消息
-LOG_FORMAT = "[%(asctime)s] [%(levelname)s] [PID:%(process)d TID:%(thread)d] [%(name)s:%(filename)s:%(lineno)d] [req=%(request_id)s] %(message)s"  # noqa: E501
+# 统一日志格式：时间戳 + 级别 + 进程/线程 + 模块位置 + 请求ID + 追踪ID + 消息
+LOG_FORMAT = "[%(asctime)s] [%(levelname)s] [PID:%(process)d TID:%(thread)d] [%(name)s:%(filename)s:%(lineno)d] [req=%(request_id)s] [trace=%(trace_id)s] %(message)s"  # noqa: E501
+
+
+class JSONLogFormatter(logging.Formatter):
+    """结构化 JSON 日志格式器（LOG_FORMAT=json 时启用）。
+
+    输出单行 JSON 事件流（ts/level/logger/request_id/trace_id/msg...），
+    供 ELK / Loki / CloudWatch 等采集器直接解析，无需 grok 正则（12-Factor XI）。
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, object] = {
+            "ts": self.formatTime(record, datefmt="%Y-%m-%dT%H:%M:%S%z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "module": f"{record.module}:{record.lineno}",
+            "pid": record.process,
+            "request_id": getattr(record, "request_id", "-"),
+            "trace_id": getattr(record, "trace_id", "-"),
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        try:
+            return json.dumps(payload, ensure_ascii=False)
+        except (TypeError, ValueError):  # 消息含不可序列化对象时降级为字符串
+            payload["msg"] = str(payload.get("msg", ""))
+            return json.dumps(payload, ensure_ascii=False, default=str)
 
 
 def setup_logging(config: dict | None = None) -> None:
@@ -78,11 +106,18 @@ def setup_logging(config: dict | None = None) -> None:
                 handlers[0].setLevel(logging.WARNING)
             logging.getLogger("seedvr2").warning(f"文件日志初始化失败，降级为仅控制台输出: {exc}")
 
-    formatter = logging.Formatter(LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
+    formatter: logging.Formatter
+    # P3-8 结构化日志开关：LOG_FORMAT=json 输出 JSON 事件流（容器/聚合采集场景），
+    # 默认 text 保持人类可读格式
+    if str(os.environ.get("LOG_FORMAT", "text")).lower() == "json":
+        formatter = JSONLogFormatter()
+    else:
+        formatter = logging.Formatter(LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
     for handler in handlers:
         if handler is not None:
             handler.setFormatter(formatter)
             handler.addFilter(RequestIDLogFilter())
+            handler.addFilter(TraceLogFilter())
 
     logging.basicConfig(
         level=log_level,
@@ -103,6 +138,7 @@ from app.integrated_app.history_db import HistoryDB  # noqa: E402
 from app.integrated_app.i18n import I18n  # noqa: E402
 from app.integrated_app.middleware.csrf import CSRFMiddleware  # noqa: E402
 from app.integrated_app.middleware.request_id import RequestIDLogFilter, RequestIDMiddleware  # noqa: E402
+from app.integrated_app.middleware.tracing import TraceLogFilter, TracingMiddleware  # noqa: E402
 from app.integrated_app.model_manager import ModelManager  # noqa: E402
 from app.integrated_app.model_registry import model_registry  # noqa: E402
 from app.integrated_app.routes.system.sse import event_bus  # noqa: E402
@@ -579,6 +615,11 @@ def create_app(config: dict | None = None) -> FastAPI:
     allowed_origins = config.get("server", {}).get(
         "allowed_origins", ["http://127.0.0.1:7870", "http://localhost:7870"]
     )
+    # P3-8：容器/编排部署经环境变量注入 CORS 白名单（优先级高于 config.yaml），
+    # 逗号分隔；替代硬编码 localhost，避免经 Ingress/Service 域名访问被 CORS 拦截
+    env_origins = os.environ.get("SEEDVR2_ALLOWED_ORIGINS", "").strip()
+    if env_origins:
+        allowed_origins = [origin.strip() for origin in env_origins.split(",") if origin.strip()]
     allow_credentials = "*" not in allowed_origins
     app.add_middleware(
         CORSMiddleware,
@@ -808,6 +849,11 @@ def create_app(config: dict | None = None) -> FastAPI:
     root_logger = logging.getLogger()
     if not any(isinstance(f, RequestIDLogFilter) for f in root_logger.filters):
         root_logger.addFilter(RequestIDLogFilter())
+    if not any(isinstance(f, TraceLogFilter) for f in root_logger.filters):
+        root_logger.addFilter(TraceLogFilter())
+
+    # W3C traceparent 传播（P3-8，LIFO 最先执行：完整覆盖全部中间件与 handler 的日志上下文）
+    app.add_middleware(TracingMiddleware)
 
     return app
 
