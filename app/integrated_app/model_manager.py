@@ -244,7 +244,7 @@ class ModelManager:
         async with self._load_lock:
             return await self._load_model_locked(model_size=model_size, device=device, precision=precision)
 
-    async def _load_model_locked(self, model_size: str, device: str | None, precision: str | None) -> dict:
+    async def _load_model_locked(self, model_size: str, device: str, precision: str) -> dict:
         """执行实际加载（必须持有 self._load_lock 调用）。"""
         # 锁内二次幂等检查：并发场景下第一个等待者进入时模型可能已被前者加载
         if (

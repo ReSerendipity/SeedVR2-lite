@@ -2,6 +2,23 @@
 
 ## [未发布] - 2026-08-30
 
+### 后端服务设计体系评估全量落地（P0-P2 十二项，docs/reports/后端服务设计体系深度完整性评估_20260830.md）
+
+* **refactor(P0):** 统一错误响应契约——错误响应此前四种格式并存（HTTPException 走 FastAPI 默认 `{detail}`、全局 handler `{error:{...}}` 缺 success、`respond_error` 零调用、engine 内联路由自造格式）：新增 `StarletteHTTPException` 与 `RequestValidationError` 全局处理器（状态码→业务错误码映射、Retry-After 透传、校验错误不回显输入），全部错误体统一为 `{success:false, error:{code,message,detail}}`，`respond_error` 转正为唯一错误工厂；CSRF/限流中间件与旧 404 handler 并入信封，404 不再回显请求路径（信息泄露修复）
+* **refactor(P0):** 任务编排抽离服务层——新增 `services/restore_service.py`（零 FastAPI 依赖），`run_task_with_state` / `process_image_task` / `process_video_task` / `process_batch_background` / `apply_oom_degradation` 等从 upload.py/batch.py 路由层整体迁出（upload 553→约 250 行、batch 788→约 330 行）；`ensure_disk_space` 改抛领域异常 `DiskSpaceError`（507）；`recovery.py` 改从服务层导入，消除路由→路由跨层私有引用
+* **refactor(P0):** 显存阈值单一事实来源——消除 gpu_utils 两套互相矛盾的硬编码表（`_BASE_VRAM_MB` 3b/fp16=8000MB vs `_MODEL_VRAM_BASE_GB`/config 16GB）：config.yaml 新增 `models.*.baseline_vram_{fp16,fp8}_gb` 与 `gpu.vram_tile_tiers`，gpu_utils 全部查表逻辑改配置驱动（lru_cache 快照 + 配置不可读回退）；GB→MB 统一 1024 基准；7b_sharp 获得独立权重基线（原误落 unknown 默认值）
+* **feat(P1):** 任务提交幂等键——POST `/api/restore/` 与 `/api/restore/batch` 接受 `Idempotency-Key` 头（优先）或 `idempotency_key` 表单：同键重复提交返回既有任务（duplicate=true），不再重复创建推理任务（反模式#3 根治）
+* **feat(P1):** 模型加载互斥——`ModelManager.load_model` 持 `asyncio.Lock`（锁内二次幂等检查），并发上传不再竞态重复加载；`model_registry.load_in_progress` 经既有观察者桥随 model_status SSE 广播
+* **feat(P1):** 恢复链路与阈值——`recover_tasks` 重新入队注入 `on_cancel`（原实现恢复任务无法协作取消，GPU 跑完整个任务）；卡死阈值 30min 从硬编码迁入 `runtime.task.stale_threshold_minutes`
+* **fix(P1):** 批量账目完整性——批量任务历史记录逐文件即时落库（原实现攒到批末一次插入，崩溃丢整批账）；`add_records` 改 `MAX(id)` 基线推算整批 id（原 `last_insert_rowid` 反推语义脆弱）
+* **feat(P1):** 进度停滞看门狗——lifespan 新增 `_progress_stall_watchdog`：任务签名（progress/message/current_frame/current_index/current_file）停滞超 `runtime.task.progress_stall_timeout_minutes`（默认 30 分钟，0 禁用）自动 `request_cancel`，防唯一 worker 被挂死任务无限占用
+* **feat(P2):** API 版本化入口——`V1AliasMiddleware`（纯 ASGI 最外层）`/api/v1/*` → `/api/*` 路径重写，零路由重复注册，现有路径永久兼容
+* **chore(P2):** 死代码清理——移除 `cache.py` LRUCache/AdaptiveLRUCache（约 270 行零引用）、`app/perf/optimizer.py`（游离零引用）；`app/models/*` 保留（`perf/benchmark/test_suite.py` 实际引用，评估报告已更正）；engine 内联路由响应统一
+* **feat(P2):** SSE 进度推送化——`task_state_store` 进度通知钩子 → `task_event_bus`（1s/任务节流，终态 publish_final）；`/progress` 端点从 0.5s 纯轮询转事件驱动混合模式（事件唤醒即时输出，轮询兜底，Last-Event-ID 重连即续传），载荷不变前端零改动
+* **feat(P2):** OOM 连续失败熔断——新增 `services/oom_breaker.py`（closed→open→half_open 状态机）；`runtime.retry.oom_breaker`（enabled/threshold=3/cooldown=600s）；熔断打开时上传/批量提交返回 503 + Retry-After，成功复位、非 OOM 失败重置计数
+* **test:** 新增 `tests/test_task_submission_robustness.py`（16 项）、`tests/test_p2_resilience.py`（11 项）、`TestVramConfigSingleSource`（5 项）、统一错误信封集成用例（5 项）、并发加载用例（2 项）、/api/v1 别名用例（3 项）
+* **docs:** AGENTS.md 自进化 v1.38（§13 API 响应规范按实际实现重写、§9.2 上传限制事实同步、新增陷阱 #35 多写者并行操作）；`generate_integrity_manifest.py` 重新生成清单（SOP-4）
+
 ### 成本资源治理（评估报告 P0-P2 十项全量落地，docs/reports/成本资源治理体系评估_20260830.md）
 
 * **cost(P0):** 存储生命周期专项——视频帧临时目录在合成失败/取消路径统一回收（`_video_pipeline.py` 5 处退出点，原实现仅成功路径清理，长视频残留可达数十 GB）；多步放大 `mkdtemp` 临时目录修复（`post_processing.py`，原实现漏删最后一个中间文件且从不删目录）；新增 `services/output_retention.py` outputs/ 保留策略（`retention.outputs_max_age_days=14` + `outputs_max_files`，lifespan 启动首扫 + 周期清理，推理任务运行中自动跳过）；`history.max_records` 落实（`HistoryDB.prune_old_records()` 写入路径自动裁剪最旧记录并同步 FTS 索引，两步确定式删除规避 SQLite 同表子查询陷阱）；任务提交前磁盘预检（`retention.disk_min_free_gb=5.0`，不足返回 507）
