@@ -39,6 +39,7 @@ import os
 import platform
 import socket
 import uuid
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -294,7 +295,7 @@ def _load_license_key() -> str:
     )
 
 
-def resolve_weight_for_loading(weight_path: str | os.PathLike) -> tuple[str, "callable"]:
+def resolve_weight_for_loading(weight_path: str | os.PathLike) -> tuple[str, Callable[[], None]]:
     """解析权重文件为可加载路径，支持 AES-GCM 加密存储（.encrypted 优先）。
 
     解析顺序:

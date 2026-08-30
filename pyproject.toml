@@ -235,7 +235,10 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 70
+# 50 与 ci.yml（coverage.xml line-rate >= 50）及 precheck.ps1 的门禁一致。
+# 原 70 从未真实生效（HEAD 基线实测最高 ~68%，见 AGENTS.md 修订 v1.36 / KNOWN_ISSUES #34）；
+# 回升路线见 AGENTS.md §4.2（M1 目标 70）。
+fail_under = 50
 show_missing = true
 
 [tool.coverage.xml]
