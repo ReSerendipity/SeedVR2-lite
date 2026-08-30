@@ -69,11 +69,11 @@ model:
       neg_emb: neg_emb.pt
       num_blocks: 32
       pos_emb: pos_emb.pt
-      sha256_fp16: "2fd0e03a3dad24e07086750360727ca437de4ecd456f769856e960ae93e2b304"
-      sha256_fp8: "3bf1e43ebedd570e7e7a0b1b60d6a02e105978f505c8128a241cde99a8240cff"
-      sha256_vae: "20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1"
-      sha256_pos_emb: "fa07a14844314772266b66c3b95deb0027696d8fe7065721263db5176f45d799"
-      sha256_neg_emb: "6a43e5800ef2354f1c156d27535834da055cbec8248298b8923492bba2076581"
+      sha256_fp16: 2fd0e03a3dad24e07086750360727ca437de4ecd456f769856e960ae93e2b304
+      sha256_fp8: 3bf1e43ebedd570e7e7a0b1b60d6a02e105978f505c8128a241cde99a8240cff
+      sha256_neg_emb: 6a43e5800ef2354f1c156d27535834da055cbec8248298b8923492bba2076581
+      sha256_pos_emb: fa07a14844314772266b66c3b95deb0027696d8fe7065721263db5176f45d799
+      sha256_vae: 20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1
       vae_checkpoint: ema_vae_fp16.safetensors
     7b:
       checkpoint_fp16: seedvr2_ema_7b_fp16.safetensors
@@ -85,11 +85,11 @@ model:
       neg_emb: neg_emb.pt
       num_blocks: 36
       pos_emb: pos_emb.pt
-      sha256_fp16: "7b8241aa957606ab6cfb66edabc96d43234f9819c5392b44d2492d9f0b0bbe4a"
-      sha256_fp8: "1fdbf3877b7d1eb266038d3a165a977f17dbb4daa4a0f0d334d5461476963037"
-      sha256_vae: "20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1"
-      sha256_pos_emb: "fa07a14844314772266b66c3b95deb0027696d8fe7065721263db5176f45d799"
-      sha256_neg_emb: "6a43e5800ef2354f1c156d27535834da055cbec8248298b8923492bba2076581"
+      sha256_fp16: 7b8241aa957606ab6cfb66edabc96d43234f9819c5392b44d2492d9f0b0bbe4a
+      sha256_fp8: 1fdbf3877b7d1eb266038d3a165a977f17dbb4daa4a0f0d334d5461476963037
+      sha256_neg_emb: 6a43e5800ef2354f1c156d27535834da055cbec8248298b8923492bba2076581
+      sha256_pos_emb: fa07a14844314772266b66c3b95deb0027696d8fe7065721263db5176f45d799
+      sha256_vae: 20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1
       vae_checkpoint: ema_vae_fp16.safetensors
     7b_sharp:
       checkpoint_fp16: seedvr2_ema_7b_sharp_fp16.safetensors
@@ -101,11 +101,11 @@ model:
       neg_emb: neg_emb.pt
       num_blocks: 36
       pos_emb: pos_emb.pt
-      sha256_fp16: "20a93e01ff24beaeebc5de4e4e5be924359606c356c9c51509fba245bd2d77dd"
-      sha256_fp8: "4261d18fd9c331f4c8f14b475c9148bd8c3f1512240ace55fe31a179e0a960b0"
-      sha256_vae: "20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1"
-      sha256_pos_emb: "fa07a14844314772266b66c3b95deb0027696d8fe7065721263db5176f45d799"
-      sha256_neg_emb: "6a43e5800ef2354f1c156d27535834da055cbec8248298b8923492bba2076581"
+      sha256_fp16: 20a93e01ff24beaeebc5de4e4e5be924359606c356c9c51509fba245bd2d77dd
+      sha256_fp8: 4261d18fd9c331f4c8f14b475c9148bd8c3f1512240ace55fe31a179e0a960b0
+      sha256_neg_emb: 6a43e5800ef2354f1c156d27535834da055cbec8248298b8923492bba2076581
+      sha256_pos_emb: fa07a14844314772266b66c3b95deb0027696d8fe7065721263db5176f45d799
+      sha256_vae: 20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1
       vae_checkpoint: ema_vae_fp16.safetensors
   pretrained_dir: model
   shared_models_root: ''
@@ -124,11 +124,12 @@ runtime:
     retry_max_delay_seconds: 30.0
   security:
     allowed_base_dirs:
-    - C:/
-    - D:/
-    - E:/
-    - F:/
-    - G:/
+    - outputs/
+    - data/uploads/
+    - data/checkpoints/
+    - model/
+    integrity_enforce: false
+    integrity_recheck_interval_seconds: 1800
     rate_limit_per_minute: 30
   sse:
     heartbeat_interval_seconds: 30
@@ -170,43 +171,10 @@ user_preferences:
   default_steps: 20
   default_vae: ema_vae_fp16
   output_format: png
-  output_path_template: '{project_root}/outputs/{task_type}/restored/{input_name}{ext}'
+  output_path_template: '{input_dir}/restored/{input_name}{ext}'
   output_quality: 95
   recent_model_path: ''
-  restore_form_values:
-    attention_mode: sdpa
-    batch_size: '5'
-    blocks_to_swap: '8'
-    color_correction: lab
-    decode_tile_overlap: '512'
-    decode_tile_size: '1024'
-    decode_tiled: 'true'
-    dit_cache_model: 'true'
-    dit_device: cuda:0
-    dit_model: 3b_fp16
-    dit_offload_device: cpu
-    double_res: 'true'
-    enable_debug: 'true'
-    encode_tile_overlap: '512'
-    encode_tile_size: '512'
-    encode_tiled: 'true'
-    force_reload_dit: 'true'
-    input_noise_scale: '0.0'
-    latent_noise_scale: '0.0'
-    max_resolution: '0'
-    offload_device: cpu
-    output_format: webp
-    prepend_frames: '0'
-    resolution: '2048'
-    seed: '1373201197'
-    swap_io_components: 'true'
-    temporal_overlap: '0'
-    tile_debug: 'true'
-    uniform_batch_size: 'true'
-    vae_cache_model: 'true'
-    vae_device: cuda:0
-    vae_model: ema_vae_fp16
-    vae_offload_device: cpu
+  restore_form_values: {}
   restore_unlock_state: {}
   slider_comparison_enabled: true
   step_execution_enabled: false

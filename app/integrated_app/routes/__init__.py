@@ -19,6 +19,7 @@ API 路由前缀：
 import importlib
 import logging
 import pkgutil
+import secrets
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -139,6 +140,9 @@ def render_page(request: Request, template_name: str, active_page: str = "", **c
         "current_locale": i18n.current_locale,
         "locale_name": i18n.get_locale_name(i18n.current_locale),
         "locales": locales,
+        # CSP nonce: 每次页面渲染生成一次，注入 <script nonce> 与 CSP meta，
+        # 使现代浏览器按 nonce 白名单执行内联脚本（unsafe-inline 仅作旧浏览器回退）
+        "csp_nonce": secrets.token_urlsafe(16),
     }
     page_ctx.update(ctx)
 

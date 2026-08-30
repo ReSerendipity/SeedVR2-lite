@@ -75,7 +75,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce | default('') }}">
 document.addEventListener('DOMContentLoaded', async () => {
     const I = window.__I18N__ || {};
     const heroStatusText = document.getElementById('heroStatusText');

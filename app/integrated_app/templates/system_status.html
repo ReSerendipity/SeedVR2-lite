@@ -239,7 +239,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce | default('') }}">
 document.addEventListener('DOMContentLoaded', () => {
     const I = window.__I18N__;
 

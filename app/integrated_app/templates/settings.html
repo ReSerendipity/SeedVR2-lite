@@ -381,7 +381,7 @@
 }
 </style>
 
-<script>
+<script nonce="{{ csp_nonce | default('') }}">
 document.addEventListener('DOMContentLoaded', function () {
     // 界面语言（复用右上角语言切换逻辑，切换后自动刷新）
     var localeSel = document.getElementById('settingsLocale');

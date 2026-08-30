@@ -462,11 +462,15 @@ class RuntimeSecurityConfig(BaseModel):
     Attributes:
         allowed_base_dirs: 允许文件系统访问的基础目录白名单，path_guard 使用此列表防止目录遍历。
         rate_limit_per_minute: 每分钟请求速率限制，1-10000 范围，防止 API 滥用。
+        integrity_enforce: 启动完整性自检失败是否阻断启动（fail-fast）。
+        integrity_recheck_interval_seconds: 运行时周期完整性重检间隔（秒），0 表示禁用。
     """
 
     model_config = ConfigDict(extra="ignore")
     allowed_base_dirs: list[str] = Field(default_factory=lambda: ["outputs/", "data/uploads/"])
     rate_limit_per_minute: int = Field(30, ge=1, le=10000)
+    integrity_enforce: bool = False
+    integrity_recheck_interval_seconds: int = Field(1800, ge=0, le=86400)
 
 
 class RuntimeConfig(BaseModel):
