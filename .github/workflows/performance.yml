@@ -39,11 +39,15 @@ jobs:
             http://127.0.0.1:7870/api/system/health
 
       - name: Run Locust performance tests
+        # 阈值断言（P95 < 500ms、错误率 < 1%）内置于 locustfile.py 的 quitting
+        # 监听器，违规时置 process_exit_code=1 → 本步骤直接红。
+        # --csv：落盘统计，供下方 artifact 上传（此前 upload 步骤引用的 *.csv
+        # 从未生成，属死配置——DX 评估 P0-4 修正）。
         run: |
           locust -f tests/perf/locustfile.py --headless \
             -u 20 -r 2 -t 2m \
             --host http://127.0.0.1:7870 \
-            --only-summary
+            --csv=performance_stats --only-summary
 
       - name: Upload performance results
         if: always()

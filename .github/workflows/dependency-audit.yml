@@ -18,8 +18,8 @@ permissions:
 jobs:
   audit:
     # 必须与锁的平台一致：requirements-lock.txt 的 --hash 是 Windows 轮实测值，
-    # ubuntu 解析 manylinux 轮必报 hash mismatch（pip-audit -r 模式必定真实安装，
-    # --no-deps 只跳过解析跳不过哈希校验，2026-08-30 两轮实测）
+    # ubuntu 解析 manylinux 轮必报 hash mismatch（pip-audit -r 模式必定走 pip
+    # 下载校验，--no-deps 只跳过传递依赖解析，2026-08-30 两轮实测）
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -32,6 +32,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          # pip-audit -r 模式会以 pip --dry-run 下载各钉版轮子校验哈希（torch cu132
+          # Windows 轮 ~2.5GB），按锁文件内容缓存下载产物，冷跑一次后免重复下载
+          cache: 'pip'
+          cache-dependency-path: 'requirements-lock.txt'
 
       - name: Install pip-audit
         run: pip install pip-audit
@@ -44,9 +48,9 @@ jobs:
           PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cu132
         run: |
           if [ -f requirements-lock.txt ]; then
-            # --no-deps：requirements-lock.txt 是全量钉版（含传递依赖），无需真实安装；
-            # 哈希是 Windows 轮子的，ubuntu 上安装必报 hash mismatch（2026-08-30 实测），
-            # 跳过解析/安装后可跨平台审计且免去 ~3GB 的 torch 轮子下载
+            # --no-deps：锁文件已全量钉版（含传递依赖），跳过依赖解析；
+            # 注意它并不能跳过哈希校验——pip 仍会逐包下载校验 --hash，
+            # 因此本 job 必须跑在与锁一致的 windows 平台（2026-08-30 ubuntu 实测必红）
             pip-audit -r requirements-lock.txt --no-deps || exit 1
           elif [ -f requirements.txt ]; then
             pip-audit -r requirements.txt || exit 1

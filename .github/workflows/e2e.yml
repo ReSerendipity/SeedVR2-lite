@@ -82,13 +82,15 @@ jobs:
           curl --retry 30 --retry-delay 2 --retry-connrefused \
             http://127.0.0.1:7870/api/system/health
 
-      # Visual regression: baselines are cross-platform tolerant via
-      # maxDiffPixelRatio: 0.01 in spec code.
-      # --update-snapshots ensures missing baselines are created without failing
-      # the test run. Once baselines are committed to the repo, subsequent runs
-      # compare against them and fail on regressions.
+      # Visual regression: baselines are committed win32 PNGs, compared with
+      # spec-level maxDiffPixelRatio: 0.01 tolerance for cross-OS rendering
+      # differences. NEVER pass --update-snapshots here: Playwright would
+      # rewrite every differing snapshot instead of failing, silently
+      # disabling the visual gate (this regression slipped back in and was
+      # removed again on 2026-08-30). To regenerate baselines, run the
+      # update-baselines.yml workflow manually.
       - name: Run Playwright tests
-        run: cd tests && npx playwright test --project=${{ matrix.project }} --reporter=github,list --update-snapshots
+        run: cd tests && npx playwright test --project=${{ matrix.project }} --reporter=github,list
 
       - name: Upload HTML report
         if: always()
