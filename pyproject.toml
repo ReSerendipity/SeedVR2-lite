@@ -33,7 +33,9 @@ classifiers = [
 ]
 # Runtime is the bundled WinPython 3.12 (see docs/CONSTRAINTS.md). Keep ruff /
 # black / mypy target versions aligned with this value to avoid tool drift.
-requires-python = ">=3.12"
+# 上界 <3.15：uv 需对区间内所有 Python 版本做通用解析，未发布的 3.15 无
+# torchaudio 轮子会导致解析不可满足（2026-08-30 Dependabot 重锁时发现）。
+requires-python = ">=3.12,<3.15"
 
 dependencies = [
     # Core
@@ -91,17 +93,19 @@ dev = [
 
 # ── uv 配置 ────────────────────────────────────────────────────────────────
 # `uv sync` 即可安装全部运行依赖（默认含 dev 组）。
-# torch 系列默认从 cu128 源安装（与 install.bat 自动探测结果一致）；
-# 如需 cu121/cu132，改下面 index url 与 sources 中的 index 名即可。
+# torch 系列从 cu132 源安装（与 install.bat 自动探测结果、requirements-lock.txt、
+# 本机运行环境 torch 2.13.0+cu132 三处一致；cu128 源最高只有 torch 2.11.0，
+# 已被 Dependabot 标记漏洞告警 ≤2.12.1，2026-08-30 对齐）。
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu128" }
-torchvision = { index = "pytorch-cu128" }
-torchaudio = { index = "pytorch-cu128" }
+torch = { index = "pytorch-cu132" }
+torchvision = { index = "pytorch-cu132" }
+# torchaudio 不指到 CUDA 源：实际运行环境用 PyPI 的 2.11.0（CPU 轮，与 torch 2.13.0+cu132
+# 搭配正常，requirements-lock.txt 同源）；cu132 源没有对应轮子
 
 [tool.ruff]
 target-version = "py312"
