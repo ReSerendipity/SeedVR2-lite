@@ -683,7 +683,14 @@ class SeedVR2Engine(
         _check_memory()
         _log_memory("DiT权重加载前")
         logger.info(f"加载 safetensors 权重: {checkpoint_path}")
-        state_dict = load_file(checkpoint_path, device="cpu")
+        # 加密权重支持: .encrypted 优先（AES-GCM 解密到临时文件），明文回退告警
+        from app.integrated_app.security.weight_encryption import resolve_weight_for_loading
+
+        load_path, cleanup_enc = resolve_weight_for_loading(checkpoint_path)
+        try:
+            state_dict = load_file(load_path, device="cpu")
+        finally:
+            cleanup_enc()
         _log_memory("DiT权重加载后(raw)")
         _check_memory()
 
@@ -1031,7 +1038,14 @@ class SeedVR2Engine(
         _log_memory("VAE meta构建后")
         _check_memory()
         logger.info(f"加载 VAE safetensors 权重: {checkpoint_path}")
-        state_dict = load_file(checkpoint_path, device="cpu")
+        # 加密权重支持: .encrypted 优先（AES-GCM 解密到临时文件），明文回退告警
+        from app.integrated_app.security.weight_encryption import resolve_weight_for_loading
+
+        load_path, cleanup_enc = resolve_weight_for_loading(checkpoint_path)
+        try:
+            state_dict = load_file(load_path, device="cpu")
+        finally:
+            cleanup_enc()
         _log_memory("VAE权重加载后(raw)")
         _check_memory()
 
