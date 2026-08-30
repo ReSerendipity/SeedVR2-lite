@@ -2,6 +2,7 @@
 
 import os
 import re
+from pathlib import Path
 
 import pytest
 
@@ -128,3 +129,87 @@ def test_encrypt_missing_input(tmp_path):
     """输入文件不存在时抛异常。"""
     with pytest.raises(OSError):
         encrypt_file(tmp_path / "missing.bin", tmp_path / "out.enc", KEY)
+
+
+class TestResolveWeightForLoading:
+    """resolve_weight_for_loading 主加载路径集成行为"""
+
+    def test_plaintext_passthrough(self, tmp_path):
+        """明文权重应原路径返回且清理回调为空操作"""
+        from app.integrated_app.security.weight_encryption import resolve_weight_for_loading
+
+        plain = tmp_path / "w.safetensors"
+        plain.write_bytes(b"PLAIN")
+        path, cleanup = resolve_weight_for_loading(plain)
+        assert path == str(plain)
+        cleanup()
+        assert plain.exists()
+
+    def test_encrypted_preferred_and_cleaned(self, tmp_path, monkeypatch):
+        """.encrypted 存在时应解密到临时文件并在 cleanup 后删除"""
+        import os as _os
+
+        from app.integrated_app.security.weight_encryption import (
+            _LICENSE_ENV,
+            derive_encryption_key,
+            encrypt_file,
+            generate_license,
+            resolve_weight_for_loading,
+        )
+
+        info = generate_license("pytest")
+        key = derive_encryption_key(info.license_key)
+        plain = tmp_path / "w.safetensors"
+        plain.write_bytes(b"WEIGHTS")
+        encrypt_file(plain, tmp_path / "w.safetensors.encrypted", key)
+        monkeypatch.setenv(_LICENSE_ENV, info.license_key)
+
+        path, cleanup = resolve_weight_for_loading(plain)
+        assert path != str(plain)
+        assert Path(path).read_bytes() == b"WEIGHTS"
+        cleanup()
+        assert not Path(path).exists()
+        assert _os is not None
+
+    def test_encrypted_without_license_raises(self, tmp_path, monkeypatch):
+        """存在加密权重但无许可证时应抛 RuntimeError"""
+        from app.integrated_app.security.weight_encryption import (
+            _LICENSE_ENV,
+            derive_encryption_key,
+            encrypt_file,
+            generate_license,
+            resolve_weight_for_loading,
+        )
+
+        key = derive_encryption_key(generate_license("pytest").license_key)
+        plain = tmp_path / "v.safetensors"
+        plain.write_bytes(b"V")
+        encrypt_file(plain, tmp_path / "v.safetensors.encrypted", key)
+        monkeypatch.delenv(_LICENSE_ENV, raising=False)
+        monkeypatch.setattr(
+            "app.integrated_app.security.weight_encryption._LICENSE_FILE",
+            str(tmp_path / "no_such_license.json"),
+        )
+        with pytest.raises(RuntimeError):
+            resolve_weight_for_loading(plain)
+
+    def test_magic_detection_on_path_without_suffix(self, tmp_path, monkeypatch):
+        """传入路径本身是加密格式（SVR2ENC 魔数）时也应可解密"""
+        from app.integrated_app.security.weight_encryption import (
+            _LICENSE_ENV,
+            derive_encryption_key,
+            encrypt_file,
+            generate_license,
+            resolve_weight_for_loading,
+        )
+
+        info = generate_license("pytest")
+        key = derive_encryption_key(info.license_key)
+        enc = tmp_path / "w.safetensors.encrypted"
+        (tmp_path / "seed.safetensors").write_bytes(b"S")
+        encrypt_file(tmp_path / "seed.safetensors", enc, key)
+        monkeypatch.setenv(_LICENSE_ENV, info.license_key)
+
+        path, cleanup = resolve_weight_for_loading(enc)
+        assert Path(path).read_bytes() == b"S"
+        cleanup()

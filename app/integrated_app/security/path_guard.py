@@ -46,10 +46,36 @@ SECURITY CRITICAL: 这是应用文件系统访问安全的核心防线，任何�
     - 输入: outputs/../../.. (Windows 反斜杠) → resolve 规范化 → 拒绝
 """
 
+import logging
 from collections.abc import Sequence
 from pathlib import Path
 
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
+
+
+def warn_overbroad_whitelist(allowed_base_dirs: Sequence[str | Path]) -> None:
+    """对明显过宽的白名单条目记录安全告警。
+
+    白名单条目解析为文件系统根或盘符根（如 C:/ 或 /）时，
+    default-deny 白名单将失去意义，等同于放开全盘访问。
+    仅告警不阻断，避免单个误配导致服务不可用。
+
+    Args:
+        allowed_base_dirs: 待检查的原始白名单条目
+    """
+    for d in allowed_base_dirs:
+        try:
+            resolved = Path(d).resolve()
+        except (OSError, ValueError):
+            continue
+        if resolved.parent == resolved:  # 文件系统根或盘符根
+            logger.error(
+                f"[SECURITY] ⚠️ allowed_base_dirs 包含根级目录: {resolved}！"
+                "路径白名单将失去防护意义（等同全盘放行）。"
+                "请收敛到 outputs/、data/uploads/ 等最小目录集合。"
+            )
 
 
 class PathGuard:
@@ -138,6 +164,9 @@ class PathGuard:
             HTTPException: 403 状态码，当路径不在白名单内时抛出
         """
         if not self.is_safe_path(path):
+            from app.integrated_app.security.audit import audit_event
+
+            audit_event("PATH_DENIED", path_kind=message)
             raise HTTPException(status_code=403, detail=message)
 
     def assert_safe_scan(self, path: str | Path) -> None:
@@ -183,6 +212,7 @@ def build_default_path_guard(project_root: str | Path, extra_dirs: list[str] | N
         PathGuard: 配置好的路径守卫实例
     """
     root = Path(project_root)
+    warn_overbroad_whitelist(extra_dirs or [])
     allowed = [
         root / "outputs",
         root / "data" / "uploads",

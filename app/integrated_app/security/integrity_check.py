@@ -123,6 +123,15 @@ def verify_checkpoint(
             f"    实际: {actual_hash}\n"
             f"    该文件可能已被篡改或投毒 (CWE-353)。拒绝加载此文件。"
         )
+        from app.integrated_app.security.audit import audit_event
+
+        audit_event(
+            "INTEGRITY_FAILURE",
+            purpose=purpose,
+            file=str(path),
+            expected_sha256=expected_hash,
+            actual_sha256=actual_hash,
+        )
         return False
 
 

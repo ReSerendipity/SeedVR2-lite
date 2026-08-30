@@ -27,6 +27,7 @@
     若清单文件不存在，自检跳过并提示生成命令。
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -81,7 +82,7 @@ def _compute_file_sha256(filepath: Path) -> str:
     return sha256.hexdigest()
 
 
-def run_startup_selfcheck() -> dict:
+def run_startup_selfcheck(enforce: bool = False) -> dict:
     """执行启动时核心模块完整性自检。
 
     流程:
@@ -91,8 +92,15 @@ def run_startup_selfcheck() -> dict:
         4. 与清单中的预期哈希比对
         5. 不一致的文件记录为失败
 
+    Args:
+        enforce: True 时校验失败抛出 RuntimeError 阻断启动（fail-fast）；
+            清单缺失仍跳过不阻断（避免误伤首次部署）。
+
     Returns:
         dict: 包含 total/passed/failed/skipped/failed_files 字段。
+
+    Raises:
+        RuntimeError: enforce=True 且存在校验失败的文件。
     """
     manifest_path = _get_manifest_path()
     app_dir = Path(__file__).parent.parent  # app/integrated_app/
@@ -177,8 +185,14 @@ def run_startup_selfcheck() -> dict:
             "    请检查上述文件是否被篡改，或运行 "
             "`python scripts/generate_integrity_manifest.py` 更新清单。\n" + "=" * 60
         )
+        from app.integrated_app.security.audit import audit_event
+
+        audit_event("INTEGRITY_FAILURE", kind="selfcheck", failed_files=list(failed_files))
     elif passed > 0:
         logger.info(f"[SELF-CHECK] 核心模块完整性自检通过: {passed}/{total} ✓")
+
+    if enforce and failed > 0:
+        raise RuntimeError(f"核心模块完整性校验失败（enforce 模式，拒绝启动）: {', '.join(failed_files)}")
 
     return {
         "total": total,
@@ -187,3 +201,29 @@ def run_startup_selfcheck() -> dict:
         "skipped": skipped,
         "failed_files": failed_files,
     }
+
+
+async def periodic_selfcheck_loop(interval_seconds: int) -> None:
+    """运行时周期性重检核心模块完整性（协程，需作为 asyncio 后台任务运行）。
+
+    每 interval_seconds 秒重跑一次 run_startup_selfcheck（enforce 语义：
+    仅记录 error 日志并触发审计日志，不中断运行中的推理任务）。
+
+    Args:
+        interval_seconds: 重检间隔；<=0 时立即返回（调用方无需创建任务）。
+    """
+    if interval_seconds <= 0:
+        return
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            result = await asyncio.to_thread(run_startup_selfcheck)
+            if result["failed"] > 0:
+                logger.error(
+                    f"[SECURITY] 运行时周期完整性重检失败 {result['failed']} 项: "
+                    f"{', '.join(result['failed_files'])}"
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:  # 单次重检异常不终止循环
+            logger.warning(f"[SELF-CHECK] 周期完整性重检异常: {e}")

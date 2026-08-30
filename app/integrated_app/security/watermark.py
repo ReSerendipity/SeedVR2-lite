@@ -111,7 +111,11 @@ def _generate_watermark_payload() -> str:
 
 
 def _load_secret_key() -> bytes | None:
-    """加载水印签名密钥（环境变量优先，其次项目根 .watermark_key 文件）。"""
+    """加载水印签名密钥（环境变量优先，其次项目根 .watermark_key 文件）。
+
+    两者均未配置时首次运行自动生成密钥文件（等价 scripts/init_watermark_key.py），
+    保证新部署开箱即有可证伪归属；生成失败（只读文件系统等）才降级为未签名水印。
+    """
     env_key = os.environ.get(_WATERMARK_KEY_ENV, "").strip()
     if env_key:
         return env_key.encode("utf-8")
@@ -120,8 +124,14 @@ def _load_secret_key() -> bytes | None:
             key = _WATERMARK_KEY_FILE.read_text(encoding="utf-8").strip()
             if key:
                 return key.encode("utf-8")
+        # 首次运行自动生成（密钥文件已被 .gitignore 忽略，不会入库）
+        import secrets as _secrets
+
+        _WATERMARK_KEY_FILE.write_text(_secrets.token_hex(32) + "\n", encoding="utf-8")
+        logger.info(f"已自动生成水印签名密钥: {_WATERMARK_KEY_FILE}（请离线备份）")
+        return _WATERMARK_KEY_FILE.read_text(encoding="utf-8").strip().encode("utf-8")
     except Exception as e:
-        logger.debug(f"读取水印密钥文件失败: {e}")
+        logger.debug(f"水印密钥文件读写失败: {e}")
     return None
 
 

@@ -248,3 +248,101 @@ def decrypt_to_temp_file(encrypted_path: str | os.PathLike, key: bytes) -> str:
 
     logger.debug(f"已解密到临时文件: {temp_path}")
     return temp_path
+
+
+# 许可证环境变量（优先级最高）
+_LICENSE_ENV = "SEEDVR2_LICENSE_KEY"
+
+# 许可证文件默认路径（相对于项目根）
+_LICENSE_FILE = "data/license.json"
+
+# 明文权重告警只提示一次（避免每次加载刷屏）
+_plaintext_warned = False
+
+
+def _load_license_key() -> str:
+    """获取权重解密许可证密钥。
+
+    优先级: 环境变量 SEEDVR2_LICENSE_KEY > data/license.json 的 license_key 字段。
+
+    Returns:
+        str: 许可证密钥字符串。
+
+    Raises:
+        RuntimeError: 环境变量与许可证文件均未配置时抛出。
+    """
+    env_key = os.environ.get(_LICENSE_ENV, "").strip()
+    if env_key:
+        return env_key
+
+    license_file = Path(__file__).resolve().parents[3] / _LICENSE_FILE
+    if license_file.exists():
+        import json
+
+        try:
+            data = json.loads(license_file.read_text(encoding="utf-8"))
+            key = str(data.get("license_key", "")).strip()
+            if key:
+                return key
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"许可证文件读取失败: {license_file} ({e})")
+
+    raise RuntimeError(
+        "检测到加密权重 (.encrypted)，但未配置解密许可证。"
+        f"请设置环境变量 {_LICENSE_ENV} 或提供 {_LICENSE_FILE} "
+        "(由 scripts/encrypt_weights.py / generate_license 生成)。"
+    )
+
+
+def resolve_weight_for_loading(weight_path: str | os.PathLike) -> tuple[str, "callable"]:
+    """解析权重文件为可加载路径，支持 AES-GCM 加密存储（.encrypted 优先）。
+
+    解析顺序:
+        1. <weight_path>.encrypted 存在 → 解密到临时文件（调用方加载后清理）
+        2. weight_path 本身为加密格式（SVR2ENC 魔数）→ 同上
+        3. 明文 safetensors → 原路径直接加载，仅首次打一条告警日志
+
+    加密路径下密钥经 _load_license_key() 获取，解密仅发生在内存/临时文件，
+    临时文件由返回的 cleanup 回调删除。
+
+    Args:
+        weight_path: 期望的明文权重路径。
+
+    Returns:
+        tuple[str, callable]: (实际可加载路径, 清理回调)。明文时清理回调为空操作。
+
+    Raises:
+        RuntimeError: 存在加密权重但许可证未配置。
+        ValueError: 加密文件格式错误或解密失败。
+    """
+    global _plaintext_warned
+
+    weight_path = Path(weight_path)
+
+    encrypted_path = weight_path.with_name(weight_path.name + ".encrypted")
+    if not encrypted_path.exists() and weight_path.exists():
+        try:
+            with open(weight_path, "rb") as f:
+                if f.read(len(_MAGIC)) == _MAGIC:
+                    encrypted_path = weight_path
+        except OSError:
+            pass
+
+    if encrypted_path.exists():
+        key = derive_encryption_key(_load_license_key())
+        temp_path = decrypt_to_temp_file(encrypted_path, key)
+
+        def cleanup() -> None:
+            with suppress(OSError):
+                os.remove(temp_path)
+            logger.debug(f"已删除解密临时文件: {temp_path}")
+
+        return temp_path, cleanup
+
+    if not _plaintext_warned:
+        _plaintext_warned = True
+        logger.info(
+            "[SECURITY] 权重为明文 safetensors（未启用加密存储）。"
+            "如需加密保护请运行 scripts/encrypt_weights.py 生成 .encrypted 文件。"
+        )
+    return str(weight_path), lambda: None
