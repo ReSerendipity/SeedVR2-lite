@@ -273,7 +273,8 @@ class ModelManager:
             raise ValueError(f"未知的模型大小: {model_size}")
 
         if not self.check_model_exists(model_size, precision):
-            fallback_precision = "fp16" if precision == "fp8" else "fp8"
+            # 回退方向：fp16↔fp8 互备（numz 源）；Comfy-Org 量化精度缺失时回退 fp16
+            fallback_precision = "fp8" if precision == "fp16" else "fp16"
             if self.check_model_exists(model_size, fallback_precision):
                 logger.warning(f"{precision} 模型文件不存在，回退到 {fallback_precision}")
                 precision = fallback_precision

@@ -103,17 +103,26 @@ class ModelEntryConfig(BaseModel):
         config_dir: 模型配置文件目录路径。
         checkpoint_fp16: FP16 精度检查点文件路径。
         checkpoint_fp8: FP8 精度检查点文件路径（显存需求更低）。
+        checkpoint_int8_convrot: INT8 ConvRot 量化检查点（Comfy-Org 源，加载期反量化）。
+        checkpoint_mxfp8: MXFP8 量化检查点（Comfy-Org 源，加载期反量化）。
+        checkpoint_nvfp4: NVFP4 量化检查点（Comfy-Org 源，加载期反量化）。
         vae_checkpoint: VAE 模型检查点路径。
         pos_emb: 正面提示词嵌入路径。
         neg_emb: 负面提示词嵌入路径。
         min_vram_fp16_gb: 加载 FP16 版本所需最小显存（GB，含推理开销的最低运行门槛）。
         min_vram_fp8_gb: 加载 FP8 版本所需最小显存（GB）。
+        min_vram_int8_convrot_gb: 加载 INT8 ConvRot 版本所需最小显存（GB）。
+        min_vram_mxfp8_gb: 加载 MXFP8 版本所需最小显存（GB）。
+        min_vram_nvfp4_gb: 加载 NVFP4 版本所需最小显存（GB）。
         baseline_vram_fp16_gb: FP16 权重显存基线（GB，加载预检用；0 表示未配置，
             gpu_utils 回退内置默认值）。
         baseline_vram_fp8_gb: FP8 权重显存基线（GB，0 表示未配置）。
         num_blocks: Transformer 块数量，用于 BlockSwap 策略。
         sha256_fp16: FP16 检查点期望 SHA256（空表示跳过完整性校验）。
         sha256_fp8: FP8 检查点期望 SHA256。
+        sha256_int8_convrot: INT8 ConvRot 检查点期望 SHA256。
+        sha256_mxfp8: MXFP8 检查点期望 SHA256。
+        sha256_nvfp4: NVFP4 检查点期望 SHA256。
         sha256_vae: VAE 检查点期望 SHA256。
         sha256_pos_emb: 正面嵌入期望 SHA256。
         sha256_neg_emb: 负面嵌入期望 SHA256。
@@ -124,16 +133,26 @@ class ModelEntryConfig(BaseModel):
     config_dir: str = ""
     checkpoint_fp16: str = ""
     checkpoint_fp8: str = ""
+    checkpoint_int8_convrot: str = ""
+    checkpoint_mxfp8: str = ""
+    checkpoint_nvfp4: str = ""
     vae_checkpoint: str = ""
     pos_emb: str = ""
     neg_emb: str = ""
     min_vram_fp16_gb: int = 16
     min_vram_fp8_gb: int = 8
+    # 量化精度为加载期反量化，权重驻留≈fp16，门槛与同档 fp16 一致（默认取 3b 档值）
+    min_vram_int8_convrot_gb: int = 16
+    min_vram_mxfp8_gb: int = 16
+    min_vram_nvfp4_gb: int = 16
     baseline_vram_fp16_gb: float = 0
     baseline_vram_fp8_gb: float = 0
     num_blocks: int = 36
     sha256_fp16: str = ""
     sha256_fp8: str = ""
+    sha256_int8_convrot: str = ""
+    sha256_mxfp8: str = ""
+    sha256_nvfp4: str = ""
     sha256_vae: str = ""
     sha256_pos_emb: str = ""
     sha256_neg_emb: str = ""

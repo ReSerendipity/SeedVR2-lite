@@ -603,10 +603,12 @@ class SeedVR2Engine(
             分辨率低于 1080p 时使用基础显存需求（不缩小）。
         """
         model_cfg = self.config.get("model", {}).get("models", {}).get(model_size, {})
+        # 各精度最低显存门槛（int8_convrot/mxfp8/nvfp4 为加载期反量化，驻留≈fp16，
+        # 配置里按同档 fp16 值登记；缺配置字段时兜底取 fp16）
         if precision == "fp8":
             base_vram = model_cfg.get("min_vram_fp8_gb", 8) * 1024
         else:
-            base_vram = model_cfg.get("min_vram_fp16_gb", 16) * 1024
+            base_vram = model_cfg.get(f"min_vram_{precision}_gb", model_cfg.get("min_vram_fp16_gb", 16)) * 1024
         h, w = resolution
         pixel_factor = (h * w) / (1080 * 1920)
         return int(base_vram * max(1.0, pixel_factor))
@@ -706,6 +708,22 @@ class SeedVR2Engine(
                 if isinstance(v, torch.Tensor) and v.dtype == torch.float8_e4m3fn:
                     state_dict[k] = v.to(torch.float16)
                     del v
+            gc.collect()
+            _check_memory()
+
+        # Comfy-Org 量化包（int8_convrot / mxfp8 / nvfp4）：按 comfy_quant 元数据
+        # 加载期整图反量化为 float32，随后统一走下面的 dtype 转换。
+        # 必须在 dtype 转换循环之前执行：int8/uint8 权重若先被 .to(bf16) 会得到错误数值。
+        if precision in ("int8_convrot", "mxfp8", "nvfp4"):
+            from app.integrated_app.engines.quant_dequant import dequantize_state_dict
+
+            logger.info(f"{precision} 权重加载期反量化...")
+            count = dequantize_state_dict(state_dict)
+            if count == 0:
+                raise ValueError(
+                    f"精度 {precision} 要求 Comfy-Org 量化包（state_dict 应含 *.comfy_quant 元数据），"
+                    f"但权重文件中未找到——该文件可能不是 Comfy-Org 格式。"
+                )
             gc.collect()
             _check_memory()
 

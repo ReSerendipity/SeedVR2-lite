@@ -2,6 +2,16 @@
 
 ## [未发布] - 2026-08-30
 
+### Comfy-Org 五精度量化兼容（fp16/fp8 留 numz，新增 int8_convrot/mxfp8/nvfp4）
+
+* **feat:** 加载期反量化引擎——新增 `app/integrated_app/engines/quant_dequant.py`，纯 torch 实现 int8_convrot（分组 Hadamard 逆旋转）/ mxfp8（E8M0 块缩放）/ nvfp4（E2M1 nibble 打包 × e4m3 块缩放 × 全局标量）三种 ComfyUI 量化格式的反量化，数值语义逐条对齐上游 comfy_kitchen（Apache-2.0）；`seedvr2_engine.py` 在 fp8 分支旁挂 `dequantize_state_dict` dispatch（按 `*.comfy_quant` 元数据识别格式）
+* **feat:** 配置五轨——`config.yaml` 三模型条目 + `ModelEntryConfig` 各新增 `checkpoint_/sha256_/min_vram_ × {int8_convrot, mxfp8, nvfp4}`；fp16/fp8 仍走 numz 源，量化精度走 Comfy-Org（ModelScope）源，双源哈希严格配对不可互用（KNOWN_ISSUES #40）
+* **fix:** 精度透传缺陷——`ensure_model_loaded` 此前只按 dit_model 传模型尺寸、不传精度，前端下拉选择的精度实际不生效；新增 `spec.precision_from_dit_model`（多下划线精度按后缀枚举解析）并接入加载链，同时修正 `model_manager` 量化精度文件缺失时的回退方向
+* **feat:** 下载脚本——`download_model.py` 加 `--precisions` 与按文件名前缀的双源路由（`seedvr2_ema_*`→HuggingFace、`seedvr2_*_{int8_convrot,mxfp8,nvfp4}`→ModelScope 直连流式下载含断点续传）；SHA256 校验哈希映射覆盖全部五精度
+* **feat:** 前端——`restore.html` 模型下拉由 5 项扩至 14 项（3 尺寸 × 精度），VRAM 预检的精度解析改为后缀枚举匹配
+* **test:** 新增 `tests/test_quant_dequant.py`（38 项：三格式合成往返误差 + Hadamard/swizzle 基础 + comfy_quant dispatch + 下载路由 + 精度解析）
+* **docs:** 许可证台账 `docs/LICENSE_COMPLIANCE.md §3.2` 登记 Comfy-Org 17 文件权威哈希、NOTICE 第 5 条署名；AGENTS.md v1.43 + 陷阱 #38/#39/#40；下载与真机验证步骤固化于 `docs/plans/五精度量化_下载与真机验证交接.md`（本会话网络按流量计费，未执行真实权重下载，量化约定的真机正确性待验证）
+
 ### 后端服务设计体系评估全量落地（P0-P2 十二项，docs/reports/后端服务设计体系深度完整性评估_20260830.md）
 
 * **refactor(P0):** 统一错误响应契约——错误响应此前四种格式并存（HTTPException 走 FastAPI 默认 `{detail}`、全局 handler `{error:{...}}` 缺 success、`respond_error` 零调用、engine 内联路由自造格式）：新增 `StarletteHTTPException` 与 `RequestValidationError` 全局处理器（状态码→业务错误码映射、Retry-After 透传、校验错误不回显输入），全部错误体统一为 `{success:false, error:{code,message,detail}}`，`respond_error` 转正为唯一错误工厂；CSRF/限流中间件与旧 404 handler 并入信封，404 不再回显请求路径（信息泄露修复）

@@ -30,3 +30,12 @@ Third-party attributions (required by upstream licenses):
    分发策略: ffmpeg/ffprobe 仅作为本地开发运行依赖，未随 GitHub 仓库或便携包分发；
    最终用户自行安装 FFmpeg（置于 PATH 即可，FFmpegWrapper 自动查找）。
    如需未来随包分发 FFmpeg，须改用 LGPL 构建或履行 GPL 源码提供义务。
+
+5. SeedVR2 ComfyUI repackaged weights (Comfy-Org/SeedVR2)
+   来源: https://modelscope.cn/models/Comfy-Org/SeedVR2 （HF 镜像: https://huggingface.co/Comfy-Org/SeedVR2）
+   Copyright (c) 2025 ByteDance Ltd. and/or its affiliates（原始权重作者，上游仓库
+   ByteDance-Seed/SeedVR2-3B / SeedVR2-7B）；repackage/量化转换 (c) Comfy Org
+   Licensed under Apache License 2.0
+   说明: Comfy Org 以 seedvr2_convert.py（Comfy-Org/comfy-model-tools）对 ByteDance 原始
+   权重的单文件转包，含 3B/7B/7B-Sharp × fp16 / fp8_e4m3fn / int8_convrot / mxfp8 / nvfp4
+   共 15 个 diffusion 权重与 VAE。本登记为许可预备案，逐文件哈希见 docs/LICENSE_COMPLIANCE.md §3.2。

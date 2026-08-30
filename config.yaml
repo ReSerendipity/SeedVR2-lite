@@ -77,16 +77,25 @@ model:
       baseline_vram_fp8_gb: 4.0
       checkpoint_fp16: seedvr2_ema_3b_fp16.safetensors
       checkpoint_fp8: seedvr2_ema_3b_fp8_e4m3fn.safetensors
+      checkpoint_int8_convrot: seedvr2_3b_int8_convrot.safetensors
+      checkpoint_mxfp8: seedvr2_3b_mxfp8.safetensors
+      checkpoint_nvfp4: seedvr2_3b_nvfp4.safetensors
       config_dir: configs_3b
       min_vram_fp16_gb: 16
       min_vram_fp8_gb: 8
+      min_vram_int8_convrot_gb: 16
+      min_vram_mxfp8_gb: 16
+      min_vram_nvfp4_gb: 16
       name: SeedVR2-3B
       neg_emb: neg_emb.pt
       num_blocks: 32
       pos_emb: pos_emb.pt
       sha256_fp16: 2fd0e03a3dad24e07086750360727ca437de4ecd456f769856e960ae93e2b304
       sha256_fp8: 3bf1e43ebedd570e7e7a0b1b60d6a02e105978f505c8128a241cde99a8240cff
+      sha256_int8_convrot: c3dec8bcc5916843a8a858572970597462e1f2dc598d6dfd818f6cd40f53a157
+      sha256_mxfp8: 768623e3bfb1752b4d0668782751b5fead58b1bcb153f0b5e03a423095630297
       sha256_neg_emb: 6a43e5800ef2354f1c156d27535834da055cbec8248298b8923492bba2076581
+      sha256_nvfp4: c8dea38b04d43295621726e2cd371c0d2d001006169c113aea17950f2cb2e295
       sha256_pos_emb: fa07a14844314772266b66c3b95deb0027696d8fe7065721263db5176f45d799
       sha256_vae: 20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1
       vae_checkpoint: ema_vae_fp16.safetensors
@@ -95,16 +104,25 @@ model:
       baseline_vram_fp8_gb: 8.0
       checkpoint_fp16: seedvr2_ema_7b_fp16.safetensors
       checkpoint_fp8: seedvr2_ema_7b_fp8_e4m3fn.safetensors
+      checkpoint_int8_convrot: seedvr2_7b_int8_convrot.safetensors
+      checkpoint_mxfp8: seedvr2_7b_mxfp8.safetensors
+      checkpoint_nvfp4: seedvr2_7b_nvfp4.safetensors
       config_dir: configs_7b
       min_vram_fp16_gb: 24
       min_vram_fp8_gb: 12
+      min_vram_int8_convrot_gb: 24
+      min_vram_mxfp8_gb: 24
+      min_vram_nvfp4_gb: 24
       name: SeedVR2-7B
       neg_emb: neg_emb.pt
       num_blocks: 36
       pos_emb: pos_emb.pt
       sha256_fp16: 7b8241aa957606ab6cfb66edabc96d43234f9819c5392b44d2492d9f0b0bbe4a
       sha256_fp8: 1fdbf3877b7d1eb266038d3a165a977f17dbb4daa4a0f0d334d5461476963037
+      sha256_int8_convrot: 5aa0d25fc9d35e449b659d0c9a5dcb22e2a4fa04032101b95a39da42b32c1be6
+      sha256_mxfp8: b40804f47910d96c5089c728cc7ec8b57b956750eabb6397dc4e6e697477263d
       sha256_neg_emb: 6a43e5800ef2354f1c156d27535834da055cbec8248298b8923492bba2076581
+      sha256_nvfp4: cc4af1a7bd5377066496f393555478323e806fa21163bdbe3409451aface9b93
       sha256_pos_emb: fa07a14844314772266b66c3b95deb0027696d8fe7065721263db5176f45d799
       sha256_vae: 20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1
       vae_checkpoint: ema_vae_fp16.safetensors
@@ -113,16 +131,25 @@ model:
       baseline_vram_fp8_gb: 8.0
       checkpoint_fp16: seedvr2_ema_7b_sharp_fp16.safetensors
       checkpoint_fp8: seedvr2_ema_7b_sharp_fp8_e4m3fn.safetensors
+      checkpoint_int8_convrot: seedvr2_7b_sharp_int8_convrot.safetensors
+      checkpoint_mxfp8: seedvr2_7b_sharp_mxfp8.safetensors
+      checkpoint_nvfp4: seedvr2_7b_sharp_nvfp4.safetensors
       config_dir: configs_7b
       min_vram_fp16_gb: 24
       min_vram_fp8_gb: 12
+      min_vram_int8_convrot_gb: 24
+      min_vram_mxfp8_gb: 24
+      min_vram_nvfp4_gb: 24
       name: SeedVR2-7B-Sharp
       neg_emb: neg_emb.pt
       num_blocks: 36
       pos_emb: pos_emb.pt
       sha256_fp16: 20a93e01ff24beaeebc5de4e4e5be924359606c356c9c51509fba245bd2d77dd
       sha256_fp8: 4261d18fd9c331f4c8f14b475c9148bd8c3f1512240ace55fe31a179e0a960b0
+      sha256_int8_convrot: db48be2f1cc7e36b01a2aa529810f5d9c6a971edd29be225cf1b0eb18d51c366
+      sha256_mxfp8: 0d621ec1561a11ca9b5f432ec6d4e09b263b61f4b83b0280552c8b4add030ec3
       sha256_neg_emb: 6a43e5800ef2354f1c156d27535834da055cbec8248298b8923492bba2076581
+      sha256_nvfp4: 80d57af7722f5a5bd4c01d2ab2688f2bf05e552e59d3d3287257de709db10397
       sha256_pos_emb: fa07a14844314772266b66c3b95deb0027696d8fe7065721263db5176f45d799
       sha256_vae: 20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1
       vae_checkpoint: ema_vae_fp16.safetensors
@@ -175,6 +202,7 @@ runtime:
     checkpoint_dir: data/checkpoints
     checkpoint_every: 1
     id_length: 16
+    keep_last_epoch_checkpoints: 2
     max_timeout_seconds: 86400
     progress_stall_timeout_minutes: 30
     queue_maxsize: 100

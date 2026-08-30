@@ -404,6 +404,42 @@ def model_size_from_dit_model(dit_model: str) -> str:
     return parts[0]
 
 
+# 引擎支持的精度标识（fp16/fp8 走 numz 源；三种量化走 Comfy-Org 源，加载期反量化）
+KNOWN_PRECISIONS: tuple[str, ...] = ("fp16", "fp8", "int8_convrot", "mxfp8", "nvfp4")
+
+
+def precision_from_dit_model(dit_model: str) -> str | None:
+    """从 dit_model 字符串提取精度标识。
+
+    dit_model 形如 "{size}_{precision}"，其中 size 可为 "3b"/"7b"/"7b_sharp"，
+    precision 为 KNOWN_PRECISIONS 之一。尺寸含下划线（7b_sharp）且部分精度含
+    下划线（int8_convrot），故按"剥离已识别尺寸前缀 → 校验剩余精度段"解析。
+
+    Args:
+        dit_model: 如 "3b_fp16"、"7b_sharp_int8_convrot"。
+
+    Returns:
+        精度标识（如 "fp16"、"int8_convrot"）；空串或无法识别精度时返回 None
+        （交回上层用配置默认精度）。
+
+    Examples:
+        >>> precision_from_dit_model("3b_fp16")
+        'fp16'
+        >>> precision_from_dit_model("7b_sharp_int8_convrot")
+        'int8_convrot'
+        >>> precision_from_dit_model("3b") is None
+        True
+    """
+    if not dit_model:
+        return None
+    size = model_size_from_dit_model(dit_model)
+    prefix = f"{size}_"
+    if not dit_model.startswith(prefix):
+        return None
+    tail = dit_model[len(prefix) :]
+    return tail if tail in KNOWN_PRECISIONS else None
+
+
 __all__ = [
     # Constants
     "VAE_SPATIAL_FACTOR",
@@ -435,4 +471,6 @@ __all__ = [
     "resolution_clamp",
     "frame_count_from_duration",
     "model_size_from_dit_model",
+    "precision_from_dit_model",
+    "KNOWN_PRECISIONS",
 ]

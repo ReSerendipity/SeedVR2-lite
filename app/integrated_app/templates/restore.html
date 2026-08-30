@@ -242,9 +242,18 @@
             <select class="sv-param-select" id="ditModel" name="dit_model">
                 <option value="3b_fp16" selected>3B FP16</option>
                 <option value="3b_fp8">3B FP8</option>
+                <option value="3b_int8_convrot">3B INT8-ConvRot</option>
+                <option value="3b_mxfp8">3B MXFP8</option>
+                <option value="3b_nvfp4">3B NVFP4</option>
                 <option value="7b_fp16">7B FP16</option>
                 <option value="7b_fp8">7B FP8</option>
+                <option value="7b_int8_convrot">7B INT8-ConvRot</option>
+                <option value="7b_mxfp8">7B MXFP8</option>
+                <option value="7b_nvfp4">7B NVFP4</option>
                 <option value="7b_sharp_fp16">7B-Sharp FP16</option>
+                <option value="7b_sharp_int8_convrot">7B-Sharp INT8-ConvRot</option>
+                <option value="7b_sharp_mxfp8">7B-Sharp MXFP8</option>
+                <option value="7b_sharp_nvfp4">7B-Sharp NVFP4</option>
             </select>
         </div>
         <div class="sv-param-group">
@@ -1798,11 +1807,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn = document.getElementById('btnVramRecommend');
         const resultDiv = document.getElementById('vramRecommendResult');
 
-        // 从 dit_model 解析模型名和精度 (如 "3b_fp16" → model="3b", precision="fp16")
-        const parts = ditModel.split('_');
-        let modelName = parts[0] || '3b';
-        if (ditModel.includes('sharp')) modelName = '7b-sharp';
-        const precision = parts.includes('fp8') ? 'fp8' : 'fp16';
+        // 从 dit_model 解析模型名和精度 (如 "3b_fp16" → model="3b", precision="fp16"；
+        // 多下划线精度如 "7b_int8_convrot" 按后缀枚举匹配，不能依赖 split)
+        const KNOWN_PRECISIONS = ['int8_convrot', 'mxfp8', 'nvfp4', 'fp8', 'fp16'];
+        const precision = KNOWN_PRECISIONS.find((p) => ditModel.endsWith('_' + p)) || 'fp16';
+        let modelName = ditModel.startsWith('7b_sharp_') ? '7b-sharp' : (ditModel.split('_')[0] || '3b');
 
         // 估算输入分辨率（resolution 是短边，假设 16:9）
         const isLandscape = true;

@@ -35,6 +35,7 @@ from app.integrated_app.services.restore_service import (  # noqa: F401 — 再�
     model_size_from_dit_model,
 )
 from app.integrated_app.services.task_state import task_state_store
+from app.integrated_app.spec import precision_from_dit_model
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff", ".tif"}
 
@@ -58,11 +59,12 @@ async def ensure_model_loaded(model_manager, dit_model: str = "") -> None:
     """模型未就绪时自动加载（幂等），加载完成后再执行修复。
 
     `model_manager.load_model` 内部会短路：当前已加载同尺寸/精度模型时直接跳过，
-    否则加载所请求尺寸的模型，因此每次上传前调用是安全的。
+    否则加载所请求尺寸与精度的模型，因此每次上传前调用是安全的。
 
     Args:
         model_manager: ModelManager 实例。
-        dit_model: DiT 模型名（如 "3b_fp16"），用于确定要加载的模型尺寸。
+        dit_model: DiT 模型名（如 "3b_fp16"、"7b_sharp_int8_convrot"），
+            同时决定要加载的模型尺寸与精度；无法解析精度时回退配置默认值。
 
     Raises:
         HTTPException: 模型自动加载失败时抛出 503。
@@ -70,7 +72,10 @@ async def ensure_model_loaded(model_manager, dit_model: str = "") -> None:
     # P1-2: 活动时间戳刷新，避免模型在队列排队期间被空闲卸载
     model_registry.touch_activity()
     try:
-        await model_manager.load_model(model_size=model_size_from_dit_model(dit_model))
+        await model_manager.load_model(
+            model_size=model_size_from_dit_model(dit_model),
+            precision=precision_from_dit_model(dit_model),
+        )
     except HTTPException:
         raise
     except Exception as e:
