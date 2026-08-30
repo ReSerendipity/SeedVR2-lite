@@ -153,6 +153,7 @@ class ModelConfig(BaseModel):
         shared_models_root: shared 模式下的外部共享模型目录绝对路径，为空时回退到 portable 模式。
         auto_load: 应用启动时是否自动加载默认模型。
         device: 模型加载设备，"auto" 自动选择，或指定 "cuda:0"。
+        idle_unload_minutes: 模型空闲自动卸载阈值（分钟），0-1440；0 表示禁用（P1-2）。
         models: 模型名称到 ModelEntryConfig 的映射字典。
     """
 
@@ -164,6 +165,7 @@ class ModelConfig(BaseModel):
     shared_models_root: str = ""
     auto_load: bool = True
     device: str = "auto"
+    idle_unload_minutes: int = Field(15, ge=0, le=1440)
     models: dict[str, ModelEntryConfig] = Field(default_factory=dict)
 
 
@@ -312,6 +314,10 @@ class InferenceConfig(BaseModel):
 
     Attributes:
         blocks_to_swap: BlockSwap 换出到 CPU 的 Transformer 块数量，0 表示不启用。
+        blockswap_prefetch: 是否启用下一块预取流水（P2-2），传输与计算重叠；
+            仅 blocks_to_swap > 0 时生效。修改后需重载模型。默认 False：
+            2026-08-30 实测 A/B（3B@512/2048 稳态 on≈off，且多驻留一个块显存），
+            收益场景为 7B 等大换出负载，验证后可开启。
         swap_io_components: 是否将输入/输出组件卸载到 CPU。
         offload_device: 卸载目标设备，"cpu" 或其他设备。
         attention_mode: 注意力计算模式，"sdpa"（PyTorch 内置缩放点积注意力）。
@@ -332,14 +338,13 @@ class InferenceConfig(BaseModel):
         enable_debug: 是否启用调试输出。
         fp8_enabled: 是否启用 FP8 推理（兼容字段，引擎通过原始字典读取）。
         distilled_mode: 是否使用蒸馏模式（兼容字段）。
-        vae_tile_size: VAE 分块编码/解码的瓦片大小。
-        vae_overlap: VAE 瓦片重叠像素数，消除拼接边界。
         memory_threshold: 内存使用率阈值 (0.5-0.99)，超过此值终止推理。
         memory_min_available_gb: 绝对可用内存下限 (GB)，低于此值同样终止推理。
     """
 
     model_config = ConfigDict(extra="ignore")
     blocks_to_swap: int = 0
+    blockswap_prefetch: bool = False
     swap_io_components: bool = False
     offload_device: str = "cpu"
     attention_mode: str = "sdpa"
@@ -360,8 +365,6 @@ class InferenceConfig(BaseModel):
     enable_debug: bool = False
     fp8_enabled: bool = False
     distilled_mode: bool = False
-    vae_tile_size: int = 1024
-    vae_overlap: int = 512
     cache_model: bool = False
     force_reload_dit: bool = False
     torch_compile: dict[str, Any] = Field(default_factory=dict)
@@ -473,6 +476,46 @@ class RuntimeSecurityConfig(BaseModel):
     integrity_recheck_interval_seconds: int = Field(1800, ge=0, le=86400)
 
 
+class RetentionConfig(BaseModel):
+    """输出产物保留策略配置模型。
+
+    定义 outputs/ 推理输出的自动清理策略与任务启动前的磁盘空间预检阈值，
+    防止输出文件只增不删写满磁盘（成本治理 P0-1）。
+
+    Attributes:
+        outputs_max_age_days: 输出文件最大保留天数，超过自动删除；0 表示禁用年龄规则。
+        outputs_max_files: 输出文件数量上限（保留最新 N 个）；0 表示不限制。
+        outputs_cleanup_interval_seconds: outputs 周期清理间隔（秒），60-604800 范围。
+        disk_min_free_gb: 任务启动前输出磁盘最低剩余空间（GB），低于此值拒绝新任务；0 表示禁用预检。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    outputs_max_age_days: int = Field(14, ge=0, le=3650)
+    outputs_max_files: int = Field(0, ge=0)
+    outputs_cleanup_interval_seconds: int = Field(3600, ge=60, le=604800)
+    disk_min_free_gb: float = Field(5.0, ge=0.0, le=1024.0)
+
+
+class RuntimeRetryConfig(BaseModel):
+    """推理坏案例自动重试配置模型。
+
+    定义 OOM 等推理失败后的自动重试与参数降级策略
+    （blocks_to_swap 增加 → 分辨率下降 → 种子轮换）。
+
+    Attributes:
+        enabled: 是否启用坏案例自动重试。
+        max_retries: 最大重试次数（不含首次），0-10 范围，0 表示禁用。
+        base_delay_seconds: 重试基础退避延迟（秒）。
+        max_delay_seconds: 重试退避上限（秒）。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = True
+    max_retries: int = Field(2, ge=0, le=10)
+    base_delay_seconds: float = Field(1.0, ge=0.0, le=60.0)
+    max_delay_seconds: float = Field(30.0, ge=1.0, le=600.0)
+
+
 class RuntimeConfig(BaseModel):
     """运行时配置根模型。
 
@@ -482,6 +525,7 @@ class RuntimeConfig(BaseModel):
     Attributes:
         sse: SSE 进度推送配置。
         batch: 批量任务重试配置。
+        retry: 推理坏案例自动重试配置。
         task: 任务队列配置。
         upload: 文件上传配置。
         security: 安全策略配置。
@@ -490,6 +534,7 @@ class RuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     sse: RuntimeSseConfig = Field(default_factory=RuntimeSseConfig)
     batch: RuntimeBatchConfig = Field(default_factory=RuntimeBatchConfig)
+    retry: RuntimeRetryConfig = Field(default_factory=RuntimeRetryConfig)
     task: RuntimeTaskConfig = Field(default_factory=RuntimeTaskConfig)
     upload: RuntimeUploadConfig = Field(default_factory=RuntimeUploadConfig)
     security: RuntimeSecurityConfig = Field(default_factory=RuntimeSecurityConfig)
@@ -638,6 +683,7 @@ class AppConfig(BaseModel):
         logging: 日志配置。
         cache: 文件缓存配置。
         inference: 推理优化配置。
+        retention: 输出产物保留策略配置。
         runtime: 运行时参数（替代硬编码常量）。
         user_preferences: 用户偏好字典，前端 WebUI 通过 SettingsPersistence 独立管理，
                          此处仅保留字段防止 model_dump() 序列化时丢失。
@@ -653,6 +699,7 @@ class AppConfig(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     user_preferences: dict[str, Any] = Field(default_factory=dict)
 
