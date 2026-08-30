@@ -285,6 +285,10 @@ def register_page_routes(app: FastAPI):
         对于 API 路由（/api/ 开头）返回 JSON 格式的 404 响应；
         对于页面路由重定向到首页。
 
+        注意：路由内部主动 raise 的 HTTPException(404, detail=...) 也会进入本
+        handler，必须把业务 detail 原样透传，不能被"API endpoint not found"
+        掩蔽（如 scan-folder 的"文件夹不存在"）。
+
         Args:
             request: FastAPI 请求对象。
             exc: 异常对象。
@@ -292,6 +296,17 @@ def register_page_routes(app: FastAPI):
         Returns:
             API 请求返回 JSON 错误响应；页面请求返回重定向响应。
         """
+        from fastapi import HTTPException as FastAPIHTTPException
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+
+        detail = getattr(exc, "detail", None)
+        if isinstance(exc, (FastAPIHTTPException, StarletteHTTPException)) and detail not in (None, "Not Found"):
+            # 路由主动抛出的 404：透传业务 detail 与 headers
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": detail},
+                headers=getattr(exc, "headers", None),
+            )
         if request.url.path.startswith("/api/"):
             return JSONResponse(status_code=404, content={"error": "API endpoint not found", "path": request.url.path})
         from fastapi.responses import RedirectResponse

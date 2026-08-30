@@ -70,6 +70,12 @@ def test_app(tmp_path, monkeypatch):
     config.setdefault("history", {})["db_path"] = str(tmp_path / "history.db")
     config.setdefault("model", {})["auto_load"] = False
     config.setdefault("server", {})["auto_open_browser"] = False
+    # 白名单固定为最小默认集，避免本机 config.yaml 的宽松白名单（如整盘符）
+    # 泄漏进测试环境，保证安全用例（403/404 语义）在任意机器上封闭可复现
+    config.setdefault("runtime", {}).setdefault("security", {})["allowed_base_dirs"] = [
+        "outputs/",
+        "data/uploads/",
+    ]
 
     test_config_path = str(tmp_path / "config.yaml")
     monkeypatch.setattr(

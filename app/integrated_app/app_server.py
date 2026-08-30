@@ -443,9 +443,13 @@ def create_app(config: dict | None = None) -> FastAPI:
 
     from app.integrated_app.routes import auto_discover_routes, register_page_routes
 
-    auto_discover_routes(app)
-
+    # 顺序敏感：必须先注册页面路由、后自动发现 API 路由。
+    # FastAPI 0.141 的懒加载 include（_IncludedRouter）下，若 API 路由先于
+    # 普通路由注册，页面路由注册后 restore/system 等懒加载路由会整体失配，
+    # 请求直接落入 404 handler（实测 scan-folder/health 等全部 404）。
     register_page_routes(app)
+
+    auto_discover_routes(app)
 
     try:
         from app.integrated_app.optimization.engine.engine_scheduler import EngineScheduler
