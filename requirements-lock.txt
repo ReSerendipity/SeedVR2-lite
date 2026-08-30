@@ -730,9 +730,9 @@ executing==2.2.1 \
 fastapi==0.141.1 \
     --hash=sha256:bfb91aa2d334c61cb35ba9a116fc123b3d3df31640b801cf57a7a78ec3f603b3 \
     --hash=sha256:e8822fc40db1e1858054d7a949a888695bc9bdce70139178e33bd2871a453ca1
-filelock==3.32.3 \
-    --hash=sha256:7f0ca4bcc0e181c60dbbd8aa9ab5b120ebb99e4e064e83636340056f833a1f09 \
-    --hash=sha256:0ffa185a3540854c95caa7fa76b76cb219d907415e2c5dc9af25fd970563487f
+filelock==3.32.4 \
+    --hash=sha256:22e58ca3b1ae3b98993b762d7338367ae64fe50252bf78d59da3bfebcdf1cedd \
+    --hash=sha256:2bde2e4cf732e0153406d8a7bc80620ecf5e621fe0d25e41143c4e3b4733ff30
 fonttools==4.63.0 \
     --hash=sha256:e3297a6a4059b4acc3a1e9a8b04741f240a80044eef08ebd32e8b5bcdddce75b \
     --hash=sha256:b1cd75a03ad8cb5bc40c90bfde68c0c47de423aa19e5c0f362b43520645eea94 \
