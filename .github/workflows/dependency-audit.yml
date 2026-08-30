@@ -38,7 +38,10 @@ jobs:
           PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cu132
         run: |
           if [ -f requirements-lock.txt ]; then
-            pip-audit -r requirements-lock.txt || exit 1
+            # --no-deps：requirements-lock.txt 是全量钉版（含传递依赖），无需真实安装；
+            # 哈希是 Windows 轮子的，ubuntu 上安装必报 hash mismatch（2026-08-30 实测），
+            # 跳过解析/安装后可跨平台审计且免去 ~3GB 的 torch 轮子下载
+            pip-audit -r requirements-lock.txt --no-deps || exit 1
           elif [ -f requirements.txt ]; then
             pip-audit -r requirements.txt || exit 1
           else
