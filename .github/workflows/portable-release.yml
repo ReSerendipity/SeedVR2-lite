@@ -53,10 +53,18 @@ jobs:
   build-bundles:
     runs-on: windows-latest
     timeout-minutes: 120
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
     env:
       BUNDLE_DIR: ${{ github.workspace }}\dist\bundles
       PYTHONIOENCODING: utf-8
       PYTHONUNBUFFERED: "1"
+      # Optional Authenticode signing (P3): set WINDOWS_PFX_BASE64 / WINDOWS_PFX_PASSWORD
+      # repo secrets to Authenticode-sign the shipped .ps1 helpers; absent secrets => the
+      # build produces unsigned scripts exactly as before.
+      SIGN_PFX_B64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+      SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v4
@@ -132,12 +140,22 @@ jobs:
           if (-not $comp) { $comp = "core,torch,model-shared,model-fp8" }
           $list = @($comp.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
           Write-Host "building components: $($list -join ', ')"
+          $signArgs = @()
+          if ($env:SIGN_PFX_B64) {
+            # Authenticode sign INSIDE the build script (before SHA256SUMS.txt is written)
+            # so the manifest hashes match the signed bytes.
+            $pfx = Join-Path $env:RUNNER_TEMP 'release-sign.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_PFX_B64))
+            $signArgs = @('-SigningPfxPath', $pfx, '-SigningPfxPassword', $env:SIGN_PFX_PASSWORD)
+            Write-Host "Authenticode signing enabled (WINDOWS_PFX_BASE64 present)"
+          }
           # -Format zip so end users can extract with built-in tar.exe / Explorer (no 7-Zip needed).
           & .\scripts\build_portable_bundle.ps1 `
             -Version "${{ steps.ver.outputs.version }}" `
             -Component $list `
             -OutDir $env:BUNDLE_DIR `
-            -Format zip
+            -Format zip `
+            @signArgs
           if ($LASTEXITCODE -ne 0) { throw "bundle build failed" }
           Get-ChildItem $env:BUNDLE_DIR -File |
             Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}} | Format-Table -AutoSize
@@ -180,6 +198,12 @@ jobs:
           $log = Join-Path $appDir 'logs\smoke_portable.log'
           if (Test-Path $log) { Get-Content $log -Tail 20 -Encoding UTF8 | ForEach-Object { Write-Host "  | $_" } }
 
+      - name: Generate build provenance attestation (SLSA)
+        if: github.event_name == 'push' || inputs.upload_to_release
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/bundles/**
+
       - name: 保留为 workflow artifact（未发布 Release 时）
         if: github.event_name == 'workflow_dispatch' && !inputs.upload_to_release
         uses: actions/upload-artifact@v4
@@ -218,9 +242,55 @@ jobs:
           $skip = @('upload-list.txt')
           $files = @(Get-ChildItem $env:BUNDLE_DIR -File | Where-Object { $skip -notcontains $_.Name })
           if ($files.Count -eq 0) { throw "no artifacts to upload" }
+          # Immutability policy: published release assets are NEVER overwritten (--clobber
+          # removed). Re-running after a partial upload resumes by skipping assets that are
+          # already present. To replace an asset, delete it in the Release UI first.
+          $existing = @()
+          $view = gh release view $tag --json assets -q '.assets[].name' 2>$null
+          if ($LASTEXITCODE -eq 0 -and $view) { $existing = @($view) }
           foreach ($f in $files) {
+            if ($existing -contains $f.Name) {
+              Write-Host "skip (immutable, already present): $($f.Name)"
+              continue
+            }
             Write-Host "uploading $($f.Name) ($([math]::Round($f.Length/1MB,1)) MB)"
-            gh release upload $tag $f.FullName --clobber
+            gh release upload $tag $f.FullName
             if ($LASTEXITCODE -ne 0) { throw "upload failed: $($f.Name)" }
           }
           gh release view $tag --json assets -q '.assets[].name'
+
+  sign-release:
+    name: GPG-sign SHA256SUMS
+    needs: build-bundles
+    if: github.event_name == 'push' || inputs.upload_to_release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+    steps:
+      - name: Skip when GPG secrets are not configured
+        if: env.GPG_PRIVATE_KEY == ''
+        run: >
+          echo "::notice::GPG secrets are not configured - SHA256SUMS.txt stays unsigned;"
+          "configure GPG_PRIVATE_KEY / GPG_PASSPHRASE / GPG_KEY_ID or run gpg-signed-release.yml manually."
+      - name: Import key, sign and upload SHA256SUMS.gpg
+        if: env.GPG_PRIVATE_KEY != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.build-bundles.outputs.tag }}"
+          rm -rf sign-work && mkdir sign-work && cd sign-work
+          gh release download "$TAG" --pattern 'SHA256SUMS.txt'
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          KEYID_ARGS=()
+          if [ -n "$GPG_KEY_ID" ]; then KEYID_ARGS=(--local-user "$GPG_KEY_ID"); fi
+          gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 "${KEYID_ARGS[@]}" \
+            --output SHA256SUMS.gpg --detach-sign SHA256SUMS.txt <<< "$GPG_PASSPHRASE"
+          gpg --verify SHA256SUMS.gpg SHA256SUMS.txt
+          # .gpg is a derived artifact of the immutable SHA256SUMS.txt: same input always
+          # produces the same signature bytes, so clobbering on re-run is safe.
+          gh release upload "$TAG" SHA256SUMS.gpg --clobber
+          echo "SHA256SUMS.gpg uploaded for $TAG"
