@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from app.integrated_app.dependencies import get_gpu_backend, get_model_manager
 from app.integrated_app.gpu_backend import GPUBackendManager
 from app.integrated_app.model_manager import ModelManager
+from app.integrated_app.version import get_app_version
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/system", tags=["系统状态"])
@@ -58,7 +59,7 @@ async def api_health_check(
     """
     return {
         "status": "ok",
-        "version": "1.0.0",
+        "version": get_app_version(),
         "gpu_available": gpu_backend.is_gpu_available,
     }
 
