@@ -368,12 +368,13 @@ test.describe('Performance - Progress Bar Animation', () => {
     await videoPage.uploadVideo(VIDEO_FILES.small);
     await videoPage.btnStartRestore.click();
 
-    // The progress card should reach 100% within a generous timeout even on
-    // slow CI runners.
-    // progressCard is shown once the task starts (SSE connects); the inner
-    // #progressBar uses scaleX(0) at 0% so it has a zero-width box until the
-    // first update — assert on the card container instead.
-    await expect(page.locator('#progressCard')).toBeVisible({ timeout: 15000 });
+    // The burst must be fully consumed: #progressBar reaches 100% within a
+    // generous timeout even on slow CI runners.
+    // ⚠️ 不要断言 progressCard「持续可见」：route.fulfill 一次性送达全部
+    // 事件，completed 事件处理后进度卡会按设计隐藏（结果区接管）。断言
+    // 卡片可见是在赌轮询落在可见窗口内——CI 慢渲染下轮询落在隐藏之后
+    // 必红（2026-08-30 实测）。toHaveAttribute 只要求元素 attached，
+    // 卡片隐藏后依然成立。
     await expect(page.locator('#progressBar')).toHaveAttribute('aria-valuenow', '100', { timeout: 15000 });
 
     // No JS errors during the update burst

@@ -165,15 +165,19 @@ test.describe('Video Restore Flow', () => {
     // 页面初始化会异步拉取后端偏好快照并回填表单：CI 全新数据目录下
     // restore-preferences 为空 → 回退 legacy /api/ui/preferences → 拿到
     // config 默认 resolution=2048 回写输入框，与用例 fill 竞态拼成 "20488192"。
-    // 本组用例只验证输入校验，把两个偏好接口隔离为空快照，保证表单不被异步改写。
+    // 本组用例只验证输入校验，把两个偏好接口隔离为空快照。
+    // ⚠️ 必须重新导航：外层 beforeEach 的 goto 发生在本 mock 注册之前，
+    // 首个文档的初始化 fetch 已带着真实后端偏好落地（2 workers 并发下
+    // 还有跨用例自动保存互相污染），重新 goto 才能让初始化落在 mock 之下。
+    const emptyPrefs = {
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ code: 0, success: true, data: {} }),
+    };
     test.beforeEach(async ({ page }) => {
-      const emptyPrefs = {
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ code: 0, success: true, data: {} }),
-      };
       await page.route('**/api/ui/restore-preferences*', (route) => route.fulfill(emptyPrefs));
       await page.route('**/api/ui/preferences*', (route) => route.fulfill(emptyPrefs));
+      await videoPage.goto();
     });
 
     test('setting resolution to minimum (360) is accepted', async ({ page }) => {
