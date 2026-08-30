@@ -9128,3 +9128,14 @@ html[data-theme] .sv2-sidebar {
     box-sizing: border-box !important;
     line-height: 20px !important;
 }
+
+/* 固定导航条下的滚动定位避让（2026-08-30 DX 批次）：scrollIntoView / 点击前自动滚动
+   会把贴顶元素滚到固定 navbar 底下（WebKit 实测 system-status 刷新按钮被 navbar
+   的 themeIcon 拦截点击）。scroll-margin 只影响滚动落点，不改变布局与渲染。 */
+button,
+input,
+select,
+a,
+[role="button"] {
+    scroll-margin-top: calc(var(--sv-navbar-height, 56px) + 12px);
+}

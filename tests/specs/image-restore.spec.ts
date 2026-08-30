@@ -201,6 +201,20 @@ test.describe('Image Restore Flow', () => {
   // ============================================================
 
   test.describe('Parameter configuration', () => {
+    // 与 video-restore 同款防护：页面初始化异步拉取偏好快照（/api/ui/restore-preferences，
+    // 空则回退 /api/ui/preferences）回填表单，与用例的 fill/selectOption 竞态
+    // （firefox 实测 color correction 回填后 toHaveValue 偶发失败）。本组只验证
+    // 输入联动，把偏好接口隔离为空快照。
+    test.beforeEach(async ({ page }) => {
+      const emptyPrefs = {
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, success: true, data: {} }),
+      };
+      await page.route('**/api/ui/restore-preferences*', (route) => route.fulfill(emptyPrefs));
+      await page.route('**/api/ui/preferences*', (route) => route.fulfill(emptyPrefs));
+    });
+
     test('changing DiT model updates the select value', async ({ page }) => {
       await imagePage.ditModel.selectOption('3b_fp8');
       await expect(imagePage.ditModel).toHaveValue('3b_fp8');

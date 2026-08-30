@@ -294,6 +294,29 @@ test.describe('System Status', () => {
   // ============================================================
 
   test.describe('Refresh button', () => {
+    // SSE 掉线自动重连成功时会弹出「已重新连接」toast；CI 慢环境下重连循环使
+    // toast 反复出现，且悬浮层正好覆盖刷新按钮拦截点击（30s 超时的根因）。
+    // 本组用例只验证刷新功能。⚠️ 注入必须容忍 document 尚未解析的时机：
+    // WebKit 的 init script 运行时 document.head/documentElement 均为 null
+    // （Chromium 已可用），直接 appendChild 会静默 TypeError → 样式从未生效，
+    // 表现为 webkit 独有的点击被 toast 拦截。DOMContentLoaded 兜底三引擎通吃。
+    const HIDE_TOASTS_CSS = '#toastContainer{display:none!important}';
+    test.beforeEach(async ({ page }) => {
+      await page.addInitScript((cssText) => {
+        const inject = () => {
+          const style = document.createElement('style');
+          style.textContent = cssText;
+          (document.head || document.documentElement).appendChild(style);
+        };
+        if (document.head) {
+          inject();
+          return;
+        }
+        document.addEventListener('DOMContentLoaded', inject);
+      }, HIDE_TOASTS_CSS);
+      await page.addStyleTag({ content: HIDE_TOASTS_CSS });
+    });
+
     test('clicking refresh button reloads the status data', async ({ page }) => {
       // Track API calls to verify data reload
       let gpuCallCount = 0;

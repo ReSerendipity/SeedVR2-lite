@@ -162,6 +162,20 @@ test.describe('Video Restore Flow', () => {
   // ============================================================
 
   test.describe('Parameter configuration', () => {
+    // 页面初始化会异步拉取后端偏好快照并回填表单：CI 全新数据目录下
+    // restore-preferences 为空 → 回退 legacy /api/ui/preferences → 拿到
+    // config 默认 resolution=2048 回写输入框，与用例 fill 竞态拼成 "20488192"。
+    // 本组用例只验证输入校验，把两个偏好接口隔离为空快照，保证表单不被异步改写。
+    test.beforeEach(async ({ page }) => {
+      const emptyPrefs = {
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, success: true, data: {} }),
+      };
+      await page.route('**/api/ui/restore-preferences*', (route) => route.fulfill(emptyPrefs));
+      await page.route('**/api/ui/preferences*', (route) => route.fulfill(emptyPrefs));
+    });
+
     test('setting resolution to minimum (360) is accepted', async ({ page }) => {
       // 两倍模式默认勾选会禁用分辨率输入，先关闭
       await page.evaluate(() => {

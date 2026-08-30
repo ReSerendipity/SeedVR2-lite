@@ -47,17 +47,19 @@ test.describe('History Records', () => {
       // The table should be visible
       await expect(historyPage.table).toBeVisible();
 
-      // The history body should contain rows from the mock data
-      const rowCount = await historyPage.getRowCount();
-      expect(rowCount).toBeGreaterThan(0);
+      // The history body should contain rows from the mock data.
+      // 行渲染来自异步 mock fetch；一次性 count 快照在全量并发下可能读到 0
+      // （firefox 实测 631ms 即断言失败），改用自动重试的 locator 断言。
+      const rows = historyPage.historyBody.locator('tr:not(.sv-skeleton-row):not(.empty-row)');
+      await expect(rows.first()).toBeVisible();
     });
 
     test('history rows contain expected columns', async ({ page }) => {
-      const rows = await historyPage.getHistoryRows();
-      expect(rows.length).toBeGreaterThan(0);
+      const rows = historyPage.historyBody.locator('tr:not(.sv-skeleton-row):not(.empty-row)');
+      await expect(rows.first()).toBeVisible();
 
       // Each row should contain text content (filename, status, etc.)
-      const firstRowText = await rows[0].textContent();
+      const firstRowText = await rows.first().textContent();
       expect(firstRowText).toBeTruthy();
       expect(firstRowText!.length).toBeGreaterThan(0);
     });

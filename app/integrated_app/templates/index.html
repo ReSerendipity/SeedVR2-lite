@@ -136,7 +136,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             list.insertAdjacentHTML('afterbegin', rows);
         }
     } catch (err) {
-        console.error('Failed to load recent tasks:', err);
+        // 用 warn 而非 error：页面跳转打断 in-flight fetch（TypeError: Failed to fetch）
+        // 属正常瞬态，不应污染 console（E2E 的 console-error 断言会因此误报）
+        console.warn('Failed to load recent tasks:', err);
         const empty = document.getElementById('recentEmpty');
         if (empty) empty.style.display = '';
     }
