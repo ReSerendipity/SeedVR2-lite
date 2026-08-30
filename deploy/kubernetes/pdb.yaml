@@ -1,0 +1,12 @@
+# PodDisruptionBudget：节点维护（drain）时保证至少 1 个推理实例存活。
+# 注意：当前 replicas=1，minAvailable=1 会阻止自愿驱逐（维护前需人工扩容或接受中断），
+# 这是 GPU 推理单例语义下的有意保守选择；扩容到 N 副本后建议改为 minAvailable: 1。
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: seedvr2
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: seedvr2

@@ -1,0 +1,123 @@
+# SeedVR2 GPU 推理 Deployment（对应云原生评估报告 P2-7）
+#
+# 编排单元约束：1 Pod = 1 GPU = 1 模型档位（3B 或 7B）。
+# 模型引擎为进程内单例（gunicorn -w 1），横向扩容只能通过增加副本 × GPU 卡，
+# 由外部队列/网关做负载分担，禁止把 replicas 当 CPU 服务随意拉高。
+#
+# 上线前必改项（搜索 "TODO"）：
+#   1. image: 替换为实际推送的 ghcr.io 镜像 + 版本化 tag（禁 latest）
+#   2. model-weights volume: 选择 PVC 或 hostPath（权重约数 GB，勿打入镜像）
+#   3. resources: 按 3B / 7B 档位与 FP8 / FP16 精度调整显存与内存
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seedvr2
+  labels:
+    app: seedvr2
+spec:
+  # GPU 独占 + 模型加载耗时长：节点维护/升级时先终止旧 Pod（释放 GPU）再启新 Pod
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seedvr2
+  template:
+    metadata:
+      labels:
+        app: seedvr2
+    spec:
+      terminationGracePeriodSeconds: 120 # ≥ 容器内 gunicorn --graceful-timeout 90（队列排空 + 模型卸载）
+      securityContext:
+        runAsNonRoot: true # 与镜像内 appuser 对应（CWE-250）
+        seccompProfile:
+          type: RuntimeDefault
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        # NVIDIA device plugin 会为 GPU 节点打上 NoSchedule 污点，必须容忍才能调度
+        - key: nvidia.com/gpu
+          operator: Equal
+          value: "present"
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          # GPU 节点亲和：优先走 device plugin 的容量标签；
+          # 若集群部署了 NFD，可按 nvidia.com/gpu.product 进一步锁定卡型
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.present
+                    operator: In
+                    values: ["true"]
+      containers:
+        - name: seedvr2
+          # TODO: 替换为实际镜像 tag（由 docker-publish.yml 产出，禁 latest）
+          image: ghcr.io/reserendipity/seedvr2-lite:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 7870
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            # P3-8：CORS 经环境变量注入，替代硬编码 localhost（按 Ingress 域名修改）
+            - name: SEEDVR2_ALLOWED_ORIGINS
+              value: "https://seedvr2.example.com"
+            - name: LOG_LEVEL
+              value: "INFO"
+          resources:
+            requests:
+              nvidia.com/gpu: 1 # 整卡独占（MIG 场景可改为 1.nvidia.com/gpu 分片）
+              cpu: "4"
+              memory: 16Gi
+            limits:
+              nvidia.com/gpu: 1
+              cpu: "8"
+              memory: 32Gi # TODO: 7B/FP16 档位建议上调；limits 缺失会导致节点显存耗尽（反模式 #2）
+          # 探针三件套（报告 2.3）：
+          startupProbe:
+            # 慢初始化窗口：模型加载 + 权重 SHA256 校验 + 预热，最长容忍 300s
+            httpGet:
+              path: /api/system/ready
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            # 模型预热中 /api/system/ready 返回 503，不接流量
+            httpGet:
+              path: /api/system/ready
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            # 轻量存活探针：仅判断进程活着，不做重资源检查
+            httpGet:
+              path: /api/system/ping
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: model-weights
+              mountPath: /app/model
+              readOnly: true
+            - name: app-data
+              mountPath: /app/data
+            - name: app-logs
+              mountPath: /app/logs
+      volumes:
+        # TODO: 生产环境建议 PVC（Read OnceMany）；hostPath 仅限单节点实验
+        - name: model-weights
+          hostPath:
+            path: /srv/seedvr2/model
+            type: Directory
+        - name: app-data
+          emptyDir: {}
+        - name: app-logs
+          emptyDir: {}
