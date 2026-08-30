@@ -53,9 +53,12 @@ logger = logging.getLogger(__name__)
 # 裁剪前梯度总范数超过 max_gradient_norm 的该倍数即视为尖峰并告警
 _GRAD_NORM_SPIKE_FACTOR = 10
 
-# 按步保存的检查点文件名模式（滚动清理只针对无后缀的纯按步快照，
-# epoch 结尾快照 `checkpoint_step_N_epoch_M.pt` 不在清理范围）
+# 按步保存的检查点文件名模式（纯按步快照 `checkpoint_step_N.pt`）
 _STEP_CHECKPOINT_PATTERN = re.compile(r"^checkpoint_step_(\d+)\.pt$")
+# epoch 结尾快照 `checkpoint_step_N_epoch_M.pt`（N=步数, M=epoch 序号）
+# 数据治理 P2-3：此前 epoch 快照永久豁免清理，长训练下可达 TB 级；
+# 现在纳入统一保留策略（keep_last_epoch_checkpoints）
+_EPOCH_CHECKPOINT_PATTERN = re.compile(r"^checkpoint_step_(\d+)_epoch_(\d+)\.pt$")
 
 
 @dataclass
@@ -75,6 +78,9 @@ class TrainingConfig:
         checkpoint_interval: 检查点保存间隔（步数）。
         keep_last_checkpoints: 仅保留最近 N 个按步保存的检查点，防止磁盘被全量权重撑爆
             （0 表示不清理，保留全部）。
+        keep_last_epoch_checkpoints: 仅保留最近 N 个 epoch 结尾快照（数据治理 P2-3）。
+            默认为 0（保持历史行为：epoch 快照全部保留），设置为正数后按 epoch
+            序号滚动清理最旧的 epoch 快照——长训练下 epoch 快照同样可达 TB 级。
         resume_from_checkpoint: 断点续训的检查点路径。
         log_interval: 日志打印间隔（步数）。
         seed: 基础随机种子（None 表示不播种）。分布式下各 rank 自动按 rank 偏移，
@@ -90,6 +96,10 @@ class TrainingConfig:
         heartbeat_dir: 心跳文件目录。
         mixed_precision: 混合精度类型（"fp16", "bf16", None）。
         gradient_checkpointing: 是否启用梯度检查点（节省显存）。
+        dataset_root: 训练数据根目录（可选）。设置后训练开始时（rank 0）
+            生成内容寻址清单并记录到实验追踪，建立"数据 → 权重"血缘（P2-1）。
+        dataset_manifest_path: 数据集清单落盘路径（可选）。未设置时只随
+            实验追踪记录，不单独落盘。
     """
 
     batch_size: int = 32
@@ -103,6 +113,7 @@ class TrainingConfig:
     checkpoint_dir: str = "data/checkpoints"
     checkpoint_interval: int = 500
     keep_last_checkpoints: int = 3
+    keep_last_epoch_checkpoints: int = 0
     resume_from_checkpoint: str | None = None
     log_interval: int = 10
     seed: int | None = None
@@ -114,6 +125,8 @@ class TrainingConfig:
     heartbeat_dir: str = "data/heartbeats"
     mixed_precision: str | None = None
     gradient_checkpointing: bool = False
+    dataset_root: str | None = None
+    dataset_manifest_path: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -206,6 +219,11 @@ class DistributedTrainer:
                 logger.warning("实验追踪器初始化失败，本次训练不追踪: %s", e)
                 self._tracker = None
 
+        # 训练数据集清单（数据治理 P2-1）：仅 rank 0 生成，避免多卡重复哈希
+        self._dataset_manifest: dict | None = None
+        if config.dataset_root and self.global_rank == 0:
+            self._dataset_manifest = self._build_dataset_manifest(config)
+
         # 混合精度设置
         self._scaler: torch.cuda.amp.GradScaler | None = None
         if config.mixed_precision == "fp16":
@@ -215,6 +233,37 @@ class DistributedTrainer:
             "bf16": torch.bfloat16,
             None: None,
         }.get(config.mixed_precision)
+
+    def _build_dataset_manifest(self, config: TrainingConfig) -> dict | None:
+        """生成并记录训练数据集清单（P2-1）。
+
+        Args:
+            config: 训练配置（读 dataset_root / dataset_manifest_path）。
+
+        Returns:
+            生成的清单 dict；失败或无追踪器时仍返回清单（便于调用方复用），
+            记录失败返回 None。
+        """
+        from training.dataset_manifest import build_manifest, digest_of, write_manifest
+
+        try:
+            manifest = build_manifest(config.dataset_root)
+            if config.dataset_manifest_path:
+                write_manifest(manifest, config.dataset_manifest_path)
+            if self._tracker is not None:
+                self._tracker.log_dataset_manifest(manifest)
+            else:
+                # 无追踪器时至少留下日志，保证"用了哪批数据"可事后追查
+                logger.info(
+                    "训练数据集清单: root=%s files=%d digest=%s（未启用实验追踪，未落盘）",
+                    manifest.get("root"),
+                    manifest.get("total_files"),
+                    digest_of(manifest)[:12],
+                )
+            return manifest
+        except Exception as e:
+            logger.warning("数据集清单生成失败（不影响训练）: %s", e)
+            return None
 
     def setup_model(self, model: nn.Module) -> nn.Module:
         """设置分布式模型。
@@ -563,9 +612,51 @@ class DistributedTrainer:
             checkpoint, checkpoint_path
         )  # nosemgrep: pickles-in-pytorch - torch.save 为序列化（非反序列化），非 RCE 向量
         logger.info("检查点已保存: %s", checkpoint_path)
+
+        # 数据治理 P2-2：checkpoint 旁写 sidecar（数据集摘要 + 超参 + 父权重引用），
+        # 建立"训练数据 → 权重"的物证链；失败不影响训练主流程
+        self._write_checkpoint_sidecar(checkpoint_path)
+
         if getattr(self, "_tracker", None) is not None:
             self._tracker.log_model(str(checkpoint_path), alias=f"step_{self._step}")
         self._prune_step_checkpoints(checkpoint_dir)
+        # P2-3：epoch 快照纳入保留策略（默认 keep=0 时保持原有"全部保留"行为）
+        self._prune_epoch_checkpoints(checkpoint_dir)
+
+    def _write_checkpoint_sidecar(self, checkpoint_path: Path) -> None:
+        """为刚保存的 checkpoint 写 sidecar 元数据（P2-2）。
+
+        Args:
+            checkpoint_path: 当前保存的 checkpoint 路径。
+        """
+        from training.dataset_manifest import digest_of
+        from training.weight_sidecar import build_sidecar, describe_provenance, write_sidecar
+
+        try:
+            manifest = getattr(self, "_dataset_manifest", None) or {}
+            training_info = {
+                "step": self._step,
+                "epoch": self._epoch,
+                "world_size": self.world_size,
+                "dataset_sha256": digest_of(manifest),
+                "dataset_root": manifest.get("root", ""),
+                "dataset_total_files": manifest.get("total_files", 0),
+                "seed": self.config.seed,
+                "learning_rate": self.config.learning_rate,
+                "batch_size": self.config.batch_size,
+                "mixed_precision": self.config.mixed_precision,
+            }
+            parent: dict = {}
+            if self.config.resume_from_checkpoint:
+                parent = {
+                    "weight_file": os.path.basename(self.config.resume_from_checkpoint),
+                    "path": self.config.resume_from_checkpoint,
+                }
+            metadata = build_sidecar(str(checkpoint_path), training=training_info, parent=parent)
+            write_sidecar(metadata, str(checkpoint_path))
+            logger.info("检查点溯源: %s", describe_provenance(metadata))
+        except Exception as e:
+            logger.warning("检查点 sidecar 写入失败（不影响训练）: %s", e)
 
     def _prune_step_checkpoints(self, checkpoint_dir: Path) -> None:
         """滚动清理按步保存的旧检查点，仅保留最近 N 个。
@@ -588,11 +679,60 @@ class DistributedTrainer:
 
         step_ckpts.sort(key=lambda item: item[0])
         for _, stale in step_ckpts[:-keep] if len(step_ckpts) > keep else []:
-            try:
-                stale.unlink()
-                logger.info("已清理过期检查点: %s", stale)
-            except OSError as e:
-                logger.warning("清理检查点失败 %s: %s", stale, e)
+            self._delete_checkpoint_with_sidecar(stale, "按步")
+
+    def _prune_epoch_checkpoints(self, checkpoint_dir: Path) -> None:
+        """滚动清理 epoch 结尾快照，仅保留最近 N 个（数据治理 P2-3）。
+
+        epoch 快照此前被永久豁免，长训练（上百 epoch × 数十 GB）会累积到
+        TB 级。本方法按 epoch 序号排序保留最近 ``keep_last_epoch_checkpoints`` 个；
+        配置为 0 时保持历史行为（不清理）。
+
+        Args:
+            checkpoint_dir: 检查点目录。
+        """
+        keep = self.config.keep_last_epoch_checkpoints
+        if keep <= 0:
+            return
+
+        epoch_ckpts: list[tuple[int, int, Path]] = []
+        for p in checkpoint_dir.glob("checkpoint_step_*_epoch_*.pt"):
+            match = _EPOCH_CHECKPOINT_PATTERN.match(p.name)
+            if match:
+                epoch_ckpts.append((int(match.group(1)), int(match.group(2)), p))
+
+        if len(epoch_ckpts) <= keep:
+            return
+
+        # 按 (步数, epoch) 排序：步数单调递增，等价于按时间顺序
+        epoch_ckpts.sort(key=lambda item: (item[0], item[1]))
+        for _step, _epoch, stale in epoch_ckpts[:-keep]:
+            self._delete_checkpoint_with_sidecar(stale, "epoch")
+
+    def _delete_checkpoint_with_sidecar(self, checkpoint_path: Path, kind: str) -> None:
+        """删除 checkpoint 并同步回收其 sidecar（避免留下孤儿元数据）。
+
+        Args:
+            checkpoint_path: 待删除的 checkpoint 路径。
+            kind: 日志用的类型标签（"按步"/"epoch"）。
+        """
+        try:
+            checkpoint_path.unlink()
+            logger.info("已清理过期%s检查点: %s", kind, checkpoint_path)
+        except OSError as e:
+            logger.warning("清理检查点失败 %s: %s", checkpoint_path, e)
+            return
+
+        # 同步删除 sidecar（P2-2 产物），避免元数据孤儿
+        try:
+            from training.weight_sidecar import sidecar_path_for
+
+            sidecar = Path(sidecar_path_for(str(checkpoint_path)))
+            if sidecar.exists():
+                sidecar.unlink()
+                logger.info("已清理对应 sidecar: %s", sidecar)
+        except Exception as e:  # noqa: BLE001 — 清理失败不影响训练
+            logger.warning("清理 sidecar 失败 %s: %s", checkpoint_path, e)
 
     def _load_checkpoint(
         self,

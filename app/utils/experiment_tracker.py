@@ -72,6 +72,38 @@ class ExperimentTracker:
             wandb.config.update(config)
         self.log_metrics({"hyperparameters": config}, step=0)
 
+    def log_dataset_manifest(self, manifest: dict[str, Any]):
+        """记录训练数据集清单（数据治理 P2-1：训练数据 → 权重可追溯）。
+
+        完整清单写入本地 JSONL（可能很大，故不做裁剪），wandb 侧只上报
+        摘要字段（dataset_sha256 / total_files / total_bytes / root），
+        避免把成千上万条文件记录推到远端配置里。
+
+        Args:
+            manifest: training/dataset_manifest.build_manifest 的返回值。
+        """
+        if not isinstance(manifest, dict):
+            logger.warning("数据集清单格式非法（应为 dict），已跳过记录")
+            return
+
+        digest = manifest.get("dataset_sha256") or ""
+        summary = {
+            "dataset_sha256": digest,
+            "dataset_root": manifest.get("root", ""),
+            "dataset_total_files": manifest.get("total_files", 0),
+            "dataset_total_bytes": manifest.get("total_bytes", 0),
+            "dataset_truncated": manifest.get("truncated", False),
+            "dataset_manifest_schema": manifest.get("schema", ""),
+        }
+        if self.use_wandb:
+            try:
+                wandb.config.update(summary)
+            except Exception as e:
+                logger.error(f"WandB dataset manifest update failed: {e}")
+        # 完整清单落本地（step=0，便于与超参记录对齐检索）
+        self.log_metrics({"dataset_manifest": manifest, **summary}, step=0)
+        logger.info(f"数据集清单已记录: {summary['dataset_total_files']} 文件, digest={digest[:12]}...")
+
     def log_model(self, model_path: str, alias: str = "latest"):
         """记录模型文件"""
         if self.use_wandb:
