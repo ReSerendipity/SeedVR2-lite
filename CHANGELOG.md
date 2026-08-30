@@ -34,6 +34,20 @@
 * **test(e2e):** 修复 4 处既有 E2E 缺陷——security.spec 补 onboarding 遮罩预置与 `waitForResponse` 先注册后点击（Playwright 事件竞态）；uiux-compatibility 两处 v1.8 重构前的过时选择器 `.sv-restore-workspace` 更新为 `.sv2-body`；a11y 键盘导航按 Firefox `activeElement` 环绕语义修正采样终止条件，axe 注入上下文加 `bypassCSP`（CSP3 nonce 下 addScriptTag 内联注入被拦）
 * **docs:** `generate_integrity_manifest.py` 重新生成清单（SOP-4，覆盖本批 9 个核心模块改动）
 
+### 发布管理体系修复（评估报告 P0-P3 全量落地，docs/reports/发布管理体系完整性评估_20260830.md）
+
+* **ci(P0):** 测试门禁真实化——移除 `ci.yml` pytest 步骤的 `|| true`（原为「避免 CI 变红」的门禁虚设），测试/收集失败直接判定 job 失败；覆盖率门禁在 coverage.xml 缺失时判失败（原 [WARN] 跳过）；CI Windows 侧接入 `pip install --require-hashes -r requirements-lock.txt`（Linux 侧因 torch 2.13.0 索引页无轮子哈希锚点暂保持 requirements 安装，与 dependency-audit 的锁平台口径一致）
+* **fix(P0):** 运行时版本漂移根治——新增 `app/integrated_app/version.py` 单一事实来源（pyproject 直读 → importlib.metadata 回退 → unknown 兜底），`/api/system/ping` 与 FastAPI 实例版本不再硬编码 `"1.0.0"`（此前落后 pyproject 1.5.0 五个 minor）；新增 `tests/test_version.py`
+* **build(P1):** 构建复现性——`generate_lock.py` 补 PyTorch 索引锚点提取（torchvision 获 13 个全平台哈希）并重生成锁文件（120 包 / 2285 哈希 / 0 缺失，`--require-hashes --dry-run` 通过）；`launcher/requirements-small.txt` 全量 `==` 钉版（与锁对齐）；构建脚本钉死 torch 三件套 cu128 版本（2.11.0 / 0.26.0 / 2.11.0）与 WinPython 安装器 SHA256 校验（官方 release digest）；`pyproject.toml` 纳入便携包 core 载荷（版本动态读取依赖）
+* **release(P1):** 发布页清理——删除 v1.5.0 同名 Draft 残留（首跑遗产，资产与正式版重复）、删除杂散 `latest` tag 及其 Pre-release（零资产、无引用）
+* **release(P1):** GPG 签名落地——`portable-release.yml` 新增 `sign-release` job：构建上传后自动对 `SHA256SUMS.txt` 分离签名并上传 `SHA256SUMS.gpg`（secrets 缺省时显式 notice 跳过，配置后签名失败即红灯），替代「从不触发的手动 dispatch」
+* **release(P1):** Release 资产不可变性——上传移除 `--clobber`（已发布产物永不被静默覆盖），重跑改为断点续传语义（已存在资产跳过；替换须先在 Release 页删除）
+* **ci(P1):** 移除 release-please 自动化（workflow + config + manifest 三件套）——manifest 长期失步于 1.4.1 且双层 `continue-on-error` 吞错、与 portable-release 的 `gh release create` 职责冲突；CHANGELOG 改为手工账本并**补录缺失的 v1.4.0–v1.4.10 全系列**（10 个版本零记录 → 逐版补齐，v1.4.2 跳号已注明）
+* **ci(P2):** 新增 `gpu-smoke.yml`——self-hosted GPU runner（标签 `gpu`）每周一 + 手动触发，下载最新 Release → 用户等价解包 → `--require-inference` 真实推理冒烟，补上「托管 runner 无 GPU、发布门禁只验打包不验推理」的硬件盲区；无在线 GPU runner 时自动跳过
+* **docs(P2):** `PORTABLE_BUNDLES.md` 补「升级与回滚」章节；website 新增用户侧升级/回滚指南页
+* **release(P3):** Authenticode 可选签名——构建脚本支持 `-SigningPfxPath/-SigningPfxPassword`（在 SHA256SUMS.txt 生成前签名随包 .ps1，workflow 以 `WINDOWS_PFX_BASE64` secrets 条件启用）；新增 SLSA 构建出处证明（`actions/attest-build-provenance@v2`，发布路径强制生成）
+* **test:** 便携包链路常驻自测 `test_portable_bundle.ps1` 全部断言通过；锁文件干跑校验通过
+
 ## [1.5.0] - 2026-08-28
 
 ### Bug Fixes
@@ -52,6 +66,76 @@
 ### Miscellaneous Chores
 
 * **ci:** 删除旧 Inno Setup exe 路径（`desktop-release.yml`、`launcher/` 引导器与 3 个 `.iss`、`scripts/build_dual_installers.ps1`、7 个 `tests/test_launcher_*`），分卷便携包成为唯一发行产物；保留 `launcher/release-notes-portable.md` 与 `launcher/requirements-small.txt`（便携包链路继续使用）
+
+## [1.4.10] - 2026-08-26
+
+### Bug Fixes
+
+* **release:** 修正 Torch 包 Source 路径为 torch_wheels/*，确保文件正确嵌入安装包
+
+## [1.4.9] - 2026-08-26
+
+### Bug Fixes
+
+* **release:** 修复 Torch 分卷包未包含实际文件的 bug，改用正确路径嵌入 torch wheels
+
+### Documentation
+
+* **docs:** 补充 Inno Setup 和 CI 编译经验教训（v1.4.8 分卷打包踩坑记录）
+
+## [1.4.8] - 2026-08-25
+
+### Bug Fixes
+
+* **release:** Exec 的 ResultCode 参数不能传 Nil，改用变量修复 Torch 包编译
+
+## [1.4.7] - 2026-08-25
+
+### Bug Fixes
+
+* **release:** 移除 Inno Setup 非法指令 DiskName，修复 Torch 分卷包编译
+
+## [1.4.6] - 2026-08-25
+
+### Features
+
+* **release:** Torch 分包打包——用 IdentifySpanning 多卷拆分 torch 为多个 <2GB 分卷安装包
+
+## [1.4.5] - 2026-08-25
+
+### Bug Fixes
+
+* **release:** 修复 Inno Setup 非法指令 InfoBeforeMsg 及 CI 上传逻辑，恢复单包构建
+
+## [1.4.4] - 2026-08-23
+
+### Features
+
+* **release:** 双安装包架构——Full(350MB)+Torch(2GB) 分离，解决 GitHub 单文件限制
+
+## [1.4.3] - 2026-08-23
+
+### Features
+
+* **setup:** 添加所有步骤跳过按钮 + 自动下载提示，优化用户体验
+
+### Bug Fixes
+
+* **setup:** 修复 safetensors 检测 bug 与步骤竞态问题
+
+## [1.4.1] - 2026-08-23
+
+### Bug Fixes
+
+* **launcher:** 跳过 torch 步骤后直接进入模型下载步骤
+
+## [1.4.0] - 2026-08-22
+
+### Features
+
+* **launcher:** Python 环境选择器（venv / system / winpython）+ 零门禁跳过
+
+> 注：v1.4.2 从未打 tag（版本号跳过）；本系列全部围绕当时尚存的安装器/引导器路线迭代，该路线已于 v1.5.0 整体删除，由分卷便携包取代。
 
 ## [1.3.0](https://github.com/ReSerendipity/SeedVR2-lite/compare/v1.2.0...v1.3.0) (2026-08-22)
 
