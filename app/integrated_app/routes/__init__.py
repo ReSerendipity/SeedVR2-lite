@@ -23,7 +23,7 @@ import secrets
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 
 logger = logging.getLogger(__name__)
 
@@ -292,27 +292,35 @@ def register_page_routes(app: FastAPI):
         注意：路由内部主动 raise 的 HTTPException(404, detail=...) 也会进入本
         handler，必须把业务 detail 原样透传，不能被"API endpoint not found"
         掩蔽（如 scan-folder 的"文件夹不存在"）。
+        P0-1 统一错误信封：API 404 一律输出 {success:false, error:{code,message,detail}}，
+        不再回显请求路径（避免路径信息泄露）。
 
         Args:
             request: FastAPI 请求对象。
             exc: 异常对象。
 
         Returns:
-            API 请求返回 JSON 错误响应；页面请求返回重定向响应。
+            API 请求返回统一信封 JSON 错误响应；页面请求返回重定向响应。
         """
         from fastapi import HTTPException as FastAPIHTTPException
+        from fastapi.responses import RedirectResponse
         from starlette.exceptions import HTTPException as StarletteHTTPException
+
+        from app.integrated_app.utils.response import respond_error
 
         detail = getattr(exc, "detail", None)
         if isinstance(exc, (FastAPIHTTPException, StarletteHTTPException)) and detail not in (None, "Not Found"):
-            # 路由主动抛出的 404：透传业务 detail 与 headers
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": detail},
-                headers=getattr(exc, "headers", None),
+            # 路由主动抛出的 404：业务 detail 进统一信封，headers（如 Retry-After）透传
+            response = respond_error(
+                code="NOT_FOUND",
+                message=detail if isinstance(detail, str) else "请求的资源不存在",
+                status=404,
+                detail=detail if isinstance(detail, dict) else {},
             )
+            headers = getattr(exc, "headers", None)
+            if headers:
+                response.headers.update(headers)
+            return response
         if request.url.path.startswith("/api/"):
-            return JSONResponse(status_code=404, content={"error": "API endpoint not found", "path": request.url.path})
-        from fastapi.responses import RedirectResponse
-
+            return respond_error(code="NOT_FOUND", message="API endpoint not found", status=404)
         return RedirectResponse(url="/", status_code=302)

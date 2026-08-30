@@ -331,3 +331,23 @@ class TestRestoreTaskFlow:
         """GET /api/restore/batch/{batch_id}/progress 对不存在的批次应返回 404"""
         response = test_app.get("/api/restore/batch/nonexistent_batch_001/progress")
         assert response.status_code == 404
+
+
+class TestApiV1Alias:
+    """P2-9：/api/v1 路径别名（重写到规范 /api 路径，零路由重复注册）。"""
+
+    def test_v1_ping_returns_same_payload(self, test_app):
+        response = test_app.get("/api/v1/system/ping")
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+
+    def test_v1_unknown_route_returns_envelope_404(self, test_app):
+        response = test_app.get("/api/v1/system/definitely-not-a-route")
+        assert response.status_code == 404
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "NOT_FOUND"
+
+    def test_plain_api_paths_unaffected(self, test_app):
+        response = test_app.get("/api/system/ping")
+        assert response.status_code == 200

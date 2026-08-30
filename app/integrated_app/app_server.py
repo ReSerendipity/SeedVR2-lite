@@ -107,6 +107,8 @@ from app.integrated_app.model_manager import ModelManager  # noqa: E402
 from app.integrated_app.model_registry import model_registry  # noqa: E402
 from app.integrated_app.routes.system.sse import event_bus  # noqa: E402
 from app.integrated_app.task_queue import TaskQueue  # noqa: E402
+from app.integrated_app.utils.response import respond_error, respond_success  # noqa: E402
+from app.integrated_app.version import get_app_version  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +125,27 @@ def _bridge_model_status_to_sse(event_name: str, payload: dict) -> None:
         payload: 事件数据字典，包含模型状态详情。
     """
     event_bus.publish(event_name, payload)
+
+
+class V1AliasMiddleware:
+    """``/api/v1/*`` → ``/api/*`` 路径别名重写（P2-9 API 版本化入口）。
+
+    为未来破坏性变更预留 ``/api/v1`` 版本前缀：新客户端可从 /api/v1/... 访问，
+    现有 /api/... 路径永久保持兼容。以纯 ASGI 中间件在最外层重写 scope["path"]，
+    零路由重复注册；CSRF/Auth 等下游中间件与路由看到的是重写后的规范路径。
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") in ("http", "websocket"):
+            path = scope.get("path") or ""
+            if path == "/api/v1":
+                scope["path"] = "/api"
+            elif path.startswith("/api/v1/"):
+                scope["path"] = "/api/" + path[len("/api/v1/") :]
+        await self.app(scope, receive, send)
 
 
 class VersionedStaticFiles(StaticFiles):
@@ -501,7 +524,7 @@ def create_app(config: dict | None = None) -> FastAPI:
     app = FastAPI(
         title="SeedVR2",
         description="SeedVR2 - AI-powered video & image super-resolution toolkit",
-        version="1.0.0",
+        version=get_app_version(),
         lifespan=lifespan,
     )
 
@@ -631,13 +654,12 @@ def create_app(config: dict | None = None) -> FastAPI:
 
             all_engines = EngineRegistry.get_all_registered()
             available_engines = EngineRegistry.get_available_engines()
-            return {
-                "success": True,
-                "data": {
+            return respond_success(
+                {
                     "engines": list(all_engines.keys()),
                     "available": available_engines,
-                },
-            }
+                }
+            )
 
         @engine_router.get("/detect")
         async def detect_engines():
@@ -651,9 +673,14 @@ def create_app(config: dict | None = None) -> FastAPI:
             """
             try:
                 status = _engine_scheduler.detect_available_engines()
-                return {"success": True, "data": {k: v.value for k, v in status.items()}}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
+                return respond_success({k: v.value for k, v in status.items()})
+            except Exception:
+                logger.exception("引擎可用性检测失败")
+                return respond_error(
+                    code="ENGINE_DETECT_FAILED",
+                    message="引擎可用性检测失败，请查看服务端日志",
+                    status=500,
+                )
 
         @engine_router.post("/submit")
         async def submit_task(
@@ -680,9 +707,14 @@ def create_app(config: dict | None = None) -> FastAPI:
                     input_path=input_path,
                     output_path=output_path,
                 )
-                return {"success": True, "data": {"task_id": task_id}}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
+                return respond_success({"task_id": task_id})
+            except Exception:
+                logger.exception("引擎任务提交失败")
+                return respond_error(
+                    code="ENGINE_SUBMIT_FAILED",
+                    message="引擎任务提交失败，请检查引擎可用性",
+                    status=500,
+                )
 
         @engine_router.get("/task/{task_id}")
         async def get_task_status(task_id: str):
@@ -696,14 +728,13 @@ def create_app(config: dict | None = None) -> FastAPI:
             """
             status = _engine_scheduler.get_task_status(task_id)
             result = _engine_scheduler.get_result(task_id)
-            return {
-                "success": True,
-                "data": {
+            return respond_success(
+                {
                     "task_id": task_id,
                     "status": status,
                     "result": result.__dict__ if result else None,
-                },
-            }
+                }
+            )
 
         app.include_router(engine_router)
         logger.info("Engine Scheduler API routes registered")
@@ -722,6 +753,9 @@ def create_app(config: dict | None = None) -> FastAPI:
     # 注册 request_id 中间件（add_middleware 为 LIFO，最后添加最先生效，
     # 确保 request_id 在 CSRF/Auth/路由 handler 之前注入日志上下文）
     app.add_middleware(RequestIDMiddleware)
+    # /api/v1 别名必须最外层重写（LIFO 下最后添加 = 最先执行），
+    # 让 CSRF/Auth/路由全部看到重写后的规范路径
+    app.add_middleware(V1AliasMiddleware)
     # 为根 logger 补充 RequestIDLogFilter，使全链路日志自动携带 request_id
     root_logger = logging.getLogger()
     if not any(isinstance(f, RequestIDLogFilter) for f in root_logger.filters):
