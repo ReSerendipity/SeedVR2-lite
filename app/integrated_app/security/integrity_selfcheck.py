@@ -70,6 +70,23 @@ def _get_manifest_path() -> Path:
     return Path(__file__).parent / _MANIFEST_FILENAME
 
 
+def verify_manifest_signature(manifest_path: Path | str) -> bool:
+    """校验完整性清单的 HMAC-SHA256 签名（数据治理 P3-3）。
+
+    Args:
+        manifest_path: 清单文件路径。
+
+    Returns:
+        签名存在且匹配返回 True；无密钥/无签名/不匹配返回 False。
+    """
+    try:
+        from app.integrated_app.security.secret_key import verify_file_signature
+    except Exception as e:  # noqa: BLE001 — 模块不可用时按"未签名"处理
+        logger.debug("[SELF-CHECK] 签名校验模块不可用: %s", e)
+        return False
+    return verify_file_signature(manifest_path)
+
+
 def _compute_file_sha256(filepath: Path) -> str:
     """计算文件 SHA256。"""
     sha256 = hashlib.sha256()
@@ -131,6 +148,19 @@ def run_startup_selfcheck(enforce: bool = False) -> dict:
             "skipped": len(_CORE_MODULES),
             "failed_files": [],
         }
+
+    # 数据治理 P3-3：校验清单本身的 HMAC 签名。
+    # 清单与被校验代码同目录，"能改代码就能同步改清单"是原方案的结构性弱点；
+    # 签名把信任根外移到密钥文件（data/.seedvr2_secret，权限 0600）。
+    signature_ok = verify_manifest_signature(manifest_path)
+    if not signature_ok:
+        message = (
+            "[SELF-CHECK] 完整性清单缺少有效签名（运行 `python scripts/sign_integrity_manifest.py` 生成）。"
+            "未签名清单无法防御'同步篡改代码与清单'的投毒路径"
+        )
+        logger.warning(message)
+        if enforce:
+            raise RuntimeError(message + "；已开启 enforce，拒绝启动")
 
     expected_hashes = manifest.get("files", {})
     total = 0

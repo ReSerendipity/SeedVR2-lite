@@ -8,6 +8,7 @@ API 端点：
 - GET /api/system/history: 获取历史记录列表（JSON）
 - GET /api/system/history/table: 获取历史记录表格 HTML（HTMX）
 - GET /api/system/history/statistics: 获取历史统计数据
+- GET /api/system/history/resolve: 输出 → 任务反查（数据治理 P3-1）
 - DELETE /api/system/history/{record_id}: 删除单条历史记录
 - POST /api/system/history/{record_id}/cancel: 取消关联的进行中任务
 - DELETE /api/system/history: 批量清除历史记录
@@ -26,8 +27,64 @@ from app.integrated_app.dependencies import get_config, get_history_db, get_jinj
 from app.integrated_app.history_db import HistoryDB
 from app.integrated_app.security.path_guard import build_default_path_guard
 from app.integrated_app.task_queue import TaskQueue
+from app.integrated_app.utils.response import respond_success
 
 router = APIRouter(prefix="/api/system/history", tags=["历史记录"])
+
+
+@router.get("/resolve")
+async def resolve_output_provenance(
+    history_db: HistoryDB = Depends(get_history_db),
+    output_file: str | None = None,
+    task_id: str | None = None,
+    watermark_payload: str | None = None,
+):
+    """输出 → 任务反查（数据治理 P3-1 输出溯源）。
+
+    支持三种入口，任一命中即返回该输出对应的任务、输入与完整参数：
+    - output_file: 输出文件路径（精确匹配，取最新一条）
+    - task_id: 任务/批量 ID（水印 payload 即为此值）
+    - watermark_payload: 从输出图中提取到的水印 payload，等价于 task_id
+
+    API 端点：GET /api/system/history/resolve
+
+    返回格式（JSON，统一包装）:
+    {
+        "found": true,
+        "record": {...},   // 历史记录（含 input_file / parameters / input_sha256）
+        "task": {...}      // 关联任务状态（可能为 null）
+    }
+
+    Args:
+        history_db: 历史数据库实例。
+        output_file: 输出文件路径。
+        task_id: 任务 ID。
+        watermark_payload: 水印提取到的 payload（按 task_id 处理）。
+
+    Returns:
+        统一格式的 JSON 响应；未命中时 found=false（HTTP 200，便于前端直接判空）。
+    """
+    resolve_task_id = task_id or watermark_payload
+    record = None
+
+    if resolve_task_id:
+        task = await history_db.get_task(resolve_task_id)
+        if task is not None:
+            record = await history_db.get_record(task.record_id)
+    elif output_file:
+        record = await history_db.find_by_output_file(output_file)
+
+    if record is None:
+        return respond_success({"found": False, "record": None, "task": None})
+
+    task_record = await history_db.get_task_by_record_id(record.id or 0)
+    return respond_success(
+        {
+            "found": True,
+            "record": vars(record),
+            "task": vars(task_record) if task_record else None,
+        }
+    )
 
 
 @router.get("")

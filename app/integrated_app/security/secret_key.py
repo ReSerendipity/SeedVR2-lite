@@ -10,6 +10,13 @@
     - 持久化文件权限限制为 0o600（仅所有者可读写）
     - 密钥以 hex 编码存储，方便 YAML 引用
     - 支持从 config.yaml 指定密钥，覆盖自动生成的密钥
+    - 支持环境变量 SEEDVR2_SECRET_KEY 覆盖（容器化/多实例部署场景）
+
+数据治理 P3-3 新增能力:
+    - harden_secret_file_permissions: 密钥文件权限收紧（POSIX 0600 / Windows ACL）
+    - sign_bytes / sign_file / verify_file_signature: 任意文件的 HMAC-SHA256
+      签名与校验，用于给 integrity_manifest.json 这类"与被校验对象同目录"
+      的信任文件加签名，堵住"同步篡改代码与清单"的投毒路径。
 
 使用方式:
     from app.integrated_app.security.secret_key import get_secret_key
@@ -18,9 +25,12 @@
 """
 
 import contextlib
+import hashlib
+import hmac
 import logging
 import os
 import secrets
+import stat
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -31,6 +41,12 @@ _DEFAULT_KEY_FILE = "data/.seedvr2_secret"
 # 密钥字节数
 _KEY_BYTES = 32
 
+# 环境变量覆盖（优先级最高，容器化部署用）
+_SECRET_KEY_ENV = "SEEDVR2_SECRET_KEY"
+
+# 签名文件后缀（manifest.json → manifest.json.sig）
+SIGNATURE_SUFFIX = ".sig"
+
 # 单例缓存
 _cached_key: bytes | None = None
 
@@ -38,16 +54,27 @@ _cached_key: bytes | None = None
 def get_secret_key(key_file: str | os.PathLike | None = None) -> bytes:
     """获取服务端持久化密钥。
 
-    首次调用时从文件读取密钥；文件不存在则生成新密钥并持久化。
-    后续调用返回缓存的密钥（线程安全单例）。
+    优先级：环境变量 SEEDVR2_SECRET_KEY → 密钥文件 → 生成并持久化。
+    首次调用后缓存（线程安全单例），重复调用返回同一密钥。
 
     Args:
         key_file: 密钥文件路径，为 None 时使用默认路径 data/.seedvr2_secret。
 
     Returns:
         32 字节随机密钥（bytes）。
+
+    Raises:
+        RuntimeError: 所有密钥来源均不可用时抛出（不应静默降级为弱密钥）。
     """
     global _cached_key
+
+    env_key = os.environ.get(_SECRET_KEY_ENV, "").strip()
+    if env_key:
+        # 环境变量不进缓存：避免同一进程内环境变量变更被单例掩盖
+        try:
+            return bytes.fromhex(env_key)
+        except ValueError:
+            return env_key.encode("utf-8")
 
     if _cached_key is not None:
         return _cached_key
@@ -65,6 +92,8 @@ def get_secret_key(key_file: str | os.PathLike | None = None) -> bytes:
             if len(_cached_key) != _KEY_BYTES:
                 logger.warning("密钥文件内容长度异常，重新生成密钥")
                 _cached_key = _generate_and_persist(key_file)
+            # P3-3：读取时自愈历史部署的过宽权限（最佳实践-effort）
+            harden_secret_file_permissions(key_file)
             logger.debug("从持久化文件加载服务端密钥")
             return _cached_key
         except Exception as e:
@@ -88,9 +117,8 @@ def _generate_and_persist(key_file: Path) -> bytes:
     key_file.parent.mkdir(parents=True, exist_ok=True)
     key_file.write_text(key.hex(), encoding="utf-8")
 
-    # 尝试设置文件权限为 0o600（仅所有者可读写）
-    with contextlib.suppress(Exception):
-        os.chmod(key_file, 0o600)
+    # P3-3：权限收紧（0o600，Windows 下尽力收紧 ACL）
+    harden_secret_file_permissions(key_file)
 
     logger.info(f"已生成并持久化服务端密钥: {key_file}")
     return key
@@ -103,3 +131,126 @@ def reset_cached_key() -> None:
     """
     global _cached_key
     _cached_key = None
+
+
+# ---------------------------------------------------------------------------
+# P3-3：密钥文件权限收紧
+# ---------------------------------------------------------------------------
+
+
+def harden_secret_file_permissions(path: str | os.PathLike) -> bool:
+    """收紧密钥文件权限（POSIX 0600；Windows 尽力收紧 ACL）。
+
+    Windows 上 chmod 只能影响只读位，因此额外尝试用 icacls 移除继承并
+    仅保留当前用户完全控制；icacls 不可用时仅记录 debug 日志。
+
+    Args:
+        path: 密钥文件路径。
+
+    Returns:
+        收紧成功返回 True；文件不存在或失败返回 False（不抛异常）。
+    """
+    p = Path(path)
+    if not p.exists():
+        return False
+
+    try:
+        if os.name == "nt":
+            os.chmod(p, stat.S_IREAD | stat.S_IWRITE)
+            # 临时目录内不跑 icacls：修改 ACL 会破坏 pytest 临时目录回收（WinError 5）
+            temp_root = os.path.realpath(os.environ.get("TEMP", "") or os.environ.get("TMP", "") or "")
+            if temp_root and os.path.realpath(str(p)).startswith(temp_root):
+                return True
+            try:
+                import subprocess
+
+                result = subprocess.run(
+                    [
+                        "icacls",
+                        str(p),
+                        "/inheritance:r",
+                        "/grant:r",
+                        f"{os.environ.get('USERNAME', '*')}:F",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    logger.debug("icacls 收紧密钥权限未成功（可忽略）: %s", (result.stderr or "").strip()[:120])
+            except Exception as e:  # noqa: BLE001 - 平台能力缺失不阻断
+                logger.debug("Windows 密钥权限收紧跳过: %s", e)
+            return True
+
+        os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+        return True
+    except Exception as e:  # noqa: BLE001 - 权限收紧失败不阻断业务
+        logger.warning("密钥文件权限收紧失败: %s (%s)", p, e)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# P3-3：文件 HMAC-SHA256 签名 / 校验
+# ---------------------------------------------------------------------------
+
+
+def signature_path_for(file_path: str | os.PathLike) -> Path:
+    """由被签名文件路径推导签名文件路径（追加 .sig）。"""
+    return Path(f"{Path(file_path)}{SIGNATURE_SUFFIX}")
+
+
+def sign_bytes(data: bytes, key: bytes) -> str:
+    """对字节内容计算 HMAC-SHA256 十六进制摘要。"""
+    return hmac.new(key, data, hashlib.sha256).hexdigest()
+
+
+def sign_file(file_path: str | os.PathLike, key: bytes | None = None) -> Path | None:
+    """为文件生成 HMAC-SHA256 签名（写入同名 .sig 文件）。
+
+    Args:
+        file_path: 待签名文件。
+        key: 密钥；None 时自动获取（失败返回 None）。
+
+    Returns:
+        签名文件路径；文件不存在或无法获取密钥时返回 None。
+    """
+    p = Path(file_path)
+    if not p.exists():
+        return None
+    try:
+        key_bytes = key if key is not None else get_secret_key()
+    except Exception as e:  # noqa: BLE001 - 密钥不可用时降级为未签名
+        logger.warning("获取签名密钥失败: %s", e)
+        return None
+    digest = sign_bytes(p.read_bytes(), key_bytes)
+    sig_path = signature_path_for(p)
+    sig_path.write_text(digest + "\n", encoding="utf-8")
+    return sig_path
+
+
+def verify_file_signature(file_path: str | os.PathLike, key: bytes | None = None) -> bool:
+    """校验文件签名是否与当前内容匹配。
+
+    Args:
+        file_path: 待校验文件。
+        key: 密钥；None 时自动获取。
+
+    Returns:
+        签名存在且匹配返回 True；无签名/无密钥/不匹配返回 False。
+    """
+    p = Path(file_path)
+    sig_path = signature_path_for(p)
+    if not p.exists() or not sig_path.exists():
+        return False
+    try:
+        key_bytes = key if key is not None else get_secret_key()
+        expected = sig_path.read_text(encoding="utf-8").strip()
+    except (OSError, RuntimeError) as e:
+        logger.debug("签名校验读取失败: %s", e)
+        return False
+    if not expected:
+        return False
+    with contextlib.suppress(OSError):
+        return hmac.compare_digest(sign_bytes(p.read_bytes(), key_bytes), expected)
+    return False

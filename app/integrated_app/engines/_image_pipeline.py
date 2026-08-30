@@ -103,6 +103,7 @@ class _ImagePipelineMixin:
         output_dir: str,
         config: ImageInferenceConfig | None = None,
         output_name: str | None = None,
+        watermark_payload: str | None = None,
         **kwargs,
     ) -> RestoreResult:
         """图像修复推理 - 在线程中运行以避免阻塞事件循环
@@ -138,7 +139,14 @@ class _ImagePipelineMixin:
             self._vram_monitor = VRAMPeakMonitor(device=self.device, enabled=True)
         except Exception:
             self._vram_monitor = None
-        return await asyncio.to_thread(self._infer_image_impl, image_path, output_dir, config, output_name=output_name)
+        return await asyncio.to_thread(
+            self._infer_image_impl,
+            image_path,
+            output_dir,
+            config,
+            output_name=output_name,
+            watermark_payload=watermark_payload,
+        )
 
     def _vram_stage(self, name: str):
         """获取 VRAM 阶段监控上下文（监控不可用时返回空上下文，P2-1）。
@@ -223,6 +231,7 @@ class _ImagePipelineMixin:
         sample_steps: int,
         blockswap_was_active: bool,
         output_name: str | None = None,
+        watermark_payload: str | None = None,
     ) -> RestoreResult:
         """后处理: 颜色校正、保存输出、创建 RestoreResult
 
@@ -352,8 +361,9 @@ class _ImagePipelineMixin:
             try:
                 from app.integrated_app.security.watermark import embed_watermark
 
-                result_np = embed_watermark(result_np)
-                logger.debug("数字水印已嵌入输出图像")
+                # P3-1：payload 绑定 task_id，使输出图可反查到产生它的任务与参数
+                result_np = embed_watermark(result_np, payload=watermark_payload)
+                logger.debug("数字水印已嵌入输出图像 (payload=%s)", watermark_payload or "auto")
             except Exception as e:
                 logger.debug(f"水印嵌入失败 (不影响输出): {e}")
 
@@ -454,12 +464,25 @@ class _ImagePipelineMixin:
 
         # P2-1: 结束 VRAM 监控并把全局峰值写入 metadata（由上传路由落库 history.vram_peak_mb）
         vram_peak_mb = 0.0
+        # P3-2：分阶段耗时（毫秒）与 DiT 采样吞吐 it/s（口径见 docs/METRICS_SPEC.md）
+        stage_durations_ms: dict[str, float] = {}
+        dit_seconds = 0.0
+        steps_per_second = 0.0
         monitor = getattr(self, "_vram_monitor", None)
         if monitor is not None:
             try:
                 monitor.end_inference()
                 monitor.log_report()
-                vram_peak_mb = float(monitor.get_report().get("global_peak_allocated_mb", 0.0))
+                report = monitor.get_report()
+                vram_peak_mb = float(report.get("global_peak_allocated_mb", 0.0))
+                for stage in report.get("stages", []) or []:
+                    # 注意：vram_monitor 的阶段键名是 "stage"（非 "stage_name"）
+                    name = stage.get("stage")
+                    if name:
+                        stage_durations_ms[str(name)] = float(stage.get("duration_ms", 0.0) or 0.0)
+                dit_seconds = stage_durations_ms.get("dit_sample", 0.0) / 1000.0
+                if dit_seconds > 0:
+                    steps_per_second = round(float(sample_steps) / dit_seconds, 3)
             except Exception as e:
                 logger.debug(f"VRAM 监控报告生成失败: {e}")
             finally:
@@ -482,6 +505,11 @@ class _ImagePipelineMixin:
                 "mean": float(mean_val),
                 "std": float(std_val),
                 "vram_peak_mb": vram_peak_mb,
+                # P3-2：统一速度口径 —— it/s 只以 DiT 采样阶段耗时为分母（不含 VAE/IO），
+                # 与 processing_time（端到端墙钟）区分，避免跨口径比较
+                "dit_seconds": round(dit_seconds, 3),
+                "steps_per_second": steps_per_second,
+                "stage_durations_ms": stage_durations_ms,
                 "postprocessing": {
                     "wavelet": enable_wavelet,
                     "sharpen": sharpen_strength > 0,
@@ -496,6 +524,7 @@ class _ImagePipelineMixin:
         output_dir: str,
         cfg: ImageInferenceConfig,
         output_name: str | None = None,
+        watermark_payload: str | None = None,
     ) -> RestoreResult:
         """图像修复推理同步实现 - 在线程中运行
 
@@ -773,6 +802,7 @@ class _ImagePipelineMixin:
                 sample_steps=sample_steps,
                 blockswap_was_active=blockswap_was_active,
                 output_name=output_name,
+                watermark_payload=watermark_payload,
             )
             result.processing_time = time.time() - start_time
             return result

@@ -47,7 +47,12 @@ class _VideoPipelineMixin:
 
     @oom_protect
     async def infer_video(
-        self, video_path: str, output_dir: str, output_name: str | None = None, **kwargs
+        self,
+        video_path: str,
+        output_dir: str,
+        output_name: str | None = None,
+        watermark_payload: str | None = None,
+        **kwargs,
     ) -> RestoreResult:
         """视频修复推理 - 在线程中运行以避免阻塞事件循环
 
@@ -66,11 +71,21 @@ class _VideoPipelineMixin:
         except Exception:
             self._vram_monitor = None
         return await asyncio.to_thread(
-            self._infer_video_impl, video_path, output_dir, output_name=output_name, **kwargs
+            self._infer_video_impl,
+            video_path,
+            output_dir,
+            output_name=output_name,
+            watermark_payload=watermark_payload,
+            **kwargs,
         )
 
     def _infer_video_impl(
-        self, video_path: str, output_dir: str, output_name: str | None = None, **kwargs
+        self,
+        video_path: str,
+        output_dir: str,
+        output_name: str | None = None,
+        watermark_payload: str | None = None,
+        **kwargs,
     ) -> RestoreResult:
         """视频修复推理同步实现 - 分段流式处理，避免长视频全量加载导致 OOM
 
@@ -542,7 +557,8 @@ class _VideoPipelineMixin:
                             try:
                                 from app.integrated_app.security.watermark import embed_watermark
 
-                                frame = embed_watermark(frame)
+                                # P3-1：逐帧水印绑定 task_id（视频按帧嵌入，payload 同源）
+                                frame = embed_watermark(frame, payload=watermark_payload)
                             except Exception:
                                 pass
                         cv2.imwrite(
@@ -644,11 +660,23 @@ class _VideoPipelineMixin:
 
             # VRAM 监控: 结束并输出报告（峰值随 metadata 落库，P2-1）
             vram_peak_mb = 0.0
+            # P3-2：分阶段耗时与 DiT 采样吞吐 it/s（口径见 docs/METRICS_SPEC.md）
+            stage_durations_ms: dict[str, float] = {}
+            dit_seconds = 0.0
+            steps_per_second = 0.0
             if self._vram_monitor is not None:
                 self._vram_monitor.end_inference()
                 self._vram_monitor.log_report()
                 try:
-                    vram_peak_mb = float(self._vram_monitor.get_report().get("global_peak_allocated_mb", 0.0))
+                    report = self._vram_monitor.get_report()
+                    vram_peak_mb = float(report.get("global_peak_allocated_mb", 0.0))
+                    for stage in report.get("stages", []) or []:
+                        name = stage.get("stage")
+                        if name:
+                            stage_durations_ms[str(name)] = float(stage.get("duration_ms", 0.0) or 0.0)
+                    dit_seconds = stage_durations_ms.get("dit_sample", 0.0) / 1000.0
+                    if dit_seconds > 0:
+                        steps_per_second = round(float(sample_steps) / dit_seconds, 3)
                 except Exception as e:
                     logger.debug(f"VRAM 监控报告生成失败: {e}")
                 self._vram_monitor = None
@@ -679,6 +707,10 @@ class _VideoPipelineMixin:
                     "vram_peak_mb": vram_peak_mb,
                     "processing_fps": output_frames / processing_time if processing_time > 0 else 0,
                     "avg_frame_time_ms": (processing_time / output_frames * 1000) if output_frames > 0 else 0,
+                    # P3-2：it/s 仅以 DiT 采样耗时为分母；processing_fps 为端到端口径，二者不可混用
+                    "dit_seconds": round(dit_seconds, 3),
+                    "steps_per_second": steps_per_second,
+                    "stage_durations_ms": stage_durations_ms,
                     "cfg_scale": cfg_scale,
                     "sample_steps": sample_steps,
                     "inference_mode": inf["inference_mode"],
