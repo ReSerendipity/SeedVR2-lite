@@ -109,6 +109,11 @@ class ModelEntryConfig(BaseModel):
         min_vram_fp16_gb: 加载 FP16 版本所需最小显存（GB）。
         min_vram_fp8_gb: 加载 FP8 版本所需最小显存（GB）。
         num_blocks: Transformer 块数量，用于 BlockSwap 策略。
+        sha256_fp16: FP16 检查点期望 SHA256（空表示跳过完整性校验）。
+        sha256_fp8: FP8 检查点期望 SHA256。
+        sha256_vae: VAE 检查点期望 SHA256。
+        sha256_pos_emb: 正面嵌入期望 SHA256。
+        sha256_neg_emb: 负面嵌入期望 SHA256。
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -122,6 +127,11 @@ class ModelEntryConfig(BaseModel):
     min_vram_fp16_gb: int = 16
     min_vram_fp8_gb: int = 8
     num_blocks: int = 36
+    sha256_fp16: str = ""
+    sha256_fp8: str = ""
+    sha256_vae: str = ""
+    sha256_pos_emb: str = ""
+    sha256_neg_emb: str = ""
 
 
 class ModelConfig(BaseModel):
