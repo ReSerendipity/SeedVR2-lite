@@ -352,7 +352,11 @@
     "prev_page": "Previous",
     "next_page": "Next",
     "open_output_dir": "Open output directory",
-    "more_actions": "More actions"
+    "more_actions": "More actions",
+    "stat_total_records": "Completed Tasks",
+    "stat_total_time": "Total Restore Time",
+    "stat_total_output": "Total Output Size",
+    "stat_avg_time": "Avg Time per Task"
   },
   "system": {
     "title": "System Status",

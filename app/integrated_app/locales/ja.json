@@ -350,7 +350,11 @@
     "prev_page": "前へ",
     "next_page": "次へ",
     "open_output_dir": "出力ディレクトリを開く",
-    "more_actions": "その他の操作"
+    "more_actions": "その他の操作",
+    "stat_total_records": "完了タスク数",
+    "stat_total_time": "累計修復時間",
+    "stat_total_output": "累計出力サイズ",
+    "stat_avg_time": "平均タスク時間"
   },
   "system": {
     "title": "システム状態",

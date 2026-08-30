@@ -350,7 +350,11 @@
     "prev_page": "Précédent",
     "next_page": "Suivant",
     "open_output_dir": "Ouvrir le répertoire de sortie",
-    "more_actions": "Plus d'actions"
+    "more_actions": "Plus d'actions",
+    "stat_total_records": "Tâches terminées",
+    "stat_total_time": "Durée totale de restauration",
+    "stat_total_output": "Volume total produit",
+    "stat_avg_time": "Durée moyenne par tâche"
   },
   "system": {
     "title": "État Système",

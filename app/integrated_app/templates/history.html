@@ -46,6 +46,26 @@
             </button>
         </div>
 
+        <!-- 成本可见性统计卡片（成本治理 P1-1）：按全部完成记录聚合 -->
+        <div class="sv-history-stats" id="historyStats">
+            <div class="sv-history-stat">
+                <span class="sv-history-stat-value" id="statTotalRecords">--</span>
+                <span class="sv-history-stat-label">{{ t('history.stat_total_records') }}</span>
+            </div>
+            <div class="sv-history-stat">
+                <span class="sv-history-stat-value" id="statTotalTime">--</span>
+                <span class="sv-history-stat-label">{{ t('history.stat_total_time') }}</span>
+            </div>
+            <div class="sv-history-stat">
+                <span class="sv-history-stat-value" id="statTotalOutput">--</span>
+                <span class="sv-history-stat-label">{{ t('history.stat_total_output') }}</span>
+            </div>
+            <div class="sv-history-stat">
+                <span class="sv-history-stat-value" id="statAvgTime">--</span>
+                <span class="sv-history-stat-label">{{ t('history.stat_avg_time') }}</span>
+            </div>
+        </div>
+
         <!-- 表格 -->
         <div class="sv-table-wrapper sv-history-table-wrapper">
             <table class="sv-table">
@@ -151,8 +171,35 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    function formatBytes(bytes) {
+        if (!bytes || bytes <= 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let v = bytes, i = 0;
+        while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+        return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+    }
+
+    /** 成本可见性统计（P1-1）：拉取全库聚合并填充统计卡片 */
+    async function loadStatistics() {
+        try {
+            const stats = await SeedVR2.api.get('/api/system/history/statistics');
+            if (!stats) return;
+            const el = (id) => document.getElementById(id);
+            if (el('statTotalRecords')) el('statTotalRecords').textContent = String(stats.total_records ?? 0);
+            const totalSec = stats.total_processing_time || 0;
+            if (el('statTotalTime')) {
+                el('statTotalTime').textContent = totalSec >= 3600
+                    ? `${(totalSec / 3600).toFixed(1)} h`
+                    : `${Math.round(totalSec)} s`;
+            }
+            if (el('statTotalOutput')) el('statTotalOutput').textContent = formatBytes(stats.total_output_bytes || 0);
+            if (el('statAvgTime')) el('statAvgTime').textContent = `${stats.avg_processing_time || 0} s`;
+        } catch (e) { console.warn('loadStatistics failed:', e); }
+    }
+
     async function loadHistory(page = 1) {
         currentPage = page;
+        loadStatistics();
         const loadingEl = document.getElementById('historyLoading');
         if (loadingEl) loadingEl.classList.add('htmx-request');
         const taskType = document.getElementById('filterType').value;

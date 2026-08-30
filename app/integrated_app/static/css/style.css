@@ -3169,6 +3169,43 @@ input[type="number"].sv-form-control::-webkit-outer-spin-button {
 }
 
 /* ===== 历史记录页面 ===== */
+
+/* 成本可见性统计卡片（成本治理 P1-1） */
+.sv-history-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--sv-space-3);
+    margin-bottom: var(--sv-space-4);
+}
+
+.sv-history-stat {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sv-space-1);
+    padding: var(--sv-space-3);
+    background: var(--sv-surface-2);
+    border: 1px solid var(--sv-border);
+    border-radius: var(--sv-radius-sm);
+}
+
+.sv-history-stat-value {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--sv-text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.sv-history-stat-label {
+    font-size: 0.78rem;
+    color: var(--sv-text-muted);
+}
+
+@media (max-width: 640px) {
+    .sv-history-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
 .sv-history-toolbar {
     display: flex;
     align-items: center;

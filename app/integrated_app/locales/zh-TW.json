@@ -350,7 +350,11 @@
     "prev_page": "上一頁",
     "next_page": "下一頁",
     "open_output_dir": "開啟輸出目錄",
-    "more_actions": "更多操作"
+    "more_actions": "更多操作",
+    "stat_total_records": "完成任務總數",
+    "stat_total_time": "累計修復耗時",
+    "stat_total_output": "累計輸出體積",
+    "stat_avg_time": "平均單任務耗時"
   },
   "system": {
     "title": "系統狀態",

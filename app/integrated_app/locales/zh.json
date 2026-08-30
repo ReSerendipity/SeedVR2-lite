@@ -352,7 +352,11 @@
     "prev_page": "上一页",
     "next_page": "下一页",
     "open_output_dir": "打开输出目录",
-    "more_actions": "更多操作"
+    "more_actions": "更多操作",
+    "stat_total_records": "完成任务总数",
+    "stat_total_time": "累计修复耗时",
+    "stat_total_output": "累计输出体积",
+    "stat_avg_time": "平均单任务耗时"
   },
   "system": {
     "title": "系统状态",
