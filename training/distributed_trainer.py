@@ -79,6 +79,8 @@ class TrainingConfig:
         keep_last_checkpoints: 仅保留最近 N 个按步保存的检查点，防止磁盘被全量权重撑爆
             （0 表示不清理，保留全部）。
         keep_last_epoch_checkpoints: 仅保留最近 N 个 epoch 结尾快照（数据治理 P2-3）。
+            默认 2：长训练（上百 epoch × 数十 GB）此前被永久豁免会累积到 TB 级，
+            现默认启用滚动清理；设为 0 可恢复「全部保留」的旧行为。
             默认为 0（保持历史行为：epoch 快照全部保留），设置为正数后按 epoch
             序号滚动清理最旧的 epoch 快照——长训练下 epoch 快照同样可达 TB 级。
         resume_from_checkpoint: 断点续训的检查点路径。
@@ -113,7 +115,7 @@ class TrainingConfig:
     checkpoint_dir: str = "data/checkpoints"
     checkpoint_interval: int = 500
     keep_last_checkpoints: int = 3
-    keep_last_epoch_checkpoints: int = 0
+    keep_last_epoch_checkpoints: int = 2
     resume_from_checkpoint: str | None = None
     log_interval: int = 10
     seed: int | None = None

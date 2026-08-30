@@ -7,7 +7,8 @@ P2-2
   3. 无 sidecar 时 read/verify 安全返回 None/False；
   4. describe_provenance 生成可读溯源摘要。
 P2-3
-  5. keep_last_epoch_checkpoints=0（默认）时 epoch 快照全部保留（兼容旧行为）；
+  5. keep_last_epoch_checkpoints 默认 = 2（P2-3 已启用滚动清理），仅保留最近 2 个；
+     显式设为 0 时恢复「全部保留」旧行为（向后兼容）；
   6. 设为 N 时只保留最近 N 个 epoch 快照，最旧被删除；
   7. 删除 checkpoint 时同步回收其 sidecar，不留孤儿。
 """
@@ -115,11 +116,25 @@ class TestEpochCheckpointRetention:
         return created
 
     def test_default_keeps_all_epoch_checkpoints(self, tmp_path):
-        """验收点 5：默认 0 → 全部保留（向后兼容）。"""
+        """验收点 5（兼容路径）：显式 0 → 全部保留（向后兼容）。"""
         cfg, trainer = self._make_trainer(tmp_path, keep_epoch=0)
         files = self._seed_checkpoints(cfg.checkpoint_dir, 5)
         trainer._prune_epoch_checkpoints(__import__("pathlib").Path(cfg.checkpoint_dir))
         assert all(os.path.exists(f) for f in files)
+
+    def test_default_enables_rolling_retention(self, tmp_path):
+        """验收点 5（P2-3 启用）：默认 keep_last_epoch_checkpoints=2 即滚动保留。"""
+        from training.distributed_trainer import TrainingConfig
+
+        # 默认值已变为 2（不再是 0），P2-3 默认生效
+        assert TrainingConfig().keep_last_epoch_checkpoints == 2
+
+        cfg, trainer = self._make_trainer(tmp_path, keep_epoch=TrainingConfig().keep_last_epoch_checkpoints)
+        files = self._seed_checkpoints(cfg.checkpoint_dir, 5)
+        trainer._prune_epoch_checkpoints(__import__("pathlib").Path(cfg.checkpoint_dir))
+        remaining = [f for f in files if os.path.exists(f)]
+        assert len(remaining) == 2, f"默认应仅保留 2 个 epoch 快照，实际 {len(remaining)}"
+        assert remaining == files[-2:]
 
     def test_keeps_only_latest_n(self, tmp_path):
         """验收点 6：keep=2 → 仅保留最新 2 个 epoch 快照。"""
