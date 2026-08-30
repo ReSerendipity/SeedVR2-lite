@@ -13,6 +13,7 @@ from app.integrated_app.engines._memory_utils import (
     DEFAULT_VAE_SPATIAL_DOWNSAMPLE,
     TEXT_EMBED_DIM,
 )
+from common.seed import set_seed
 
 logger = logging.getLogger(__name__)
 
@@ -160,8 +161,9 @@ class _DitPipelineMixin:
         diff_cfg["timesteps"]["sampling"]["steps"] = sample_steps
         self._configure_diffusion(self._model_config, self.device)
 
-        # 设置随机种子
-        torch.manual_seed(seed)
+        # 设置随机种子（统一走 common.seed，同步 python/numpy/torch 全部 RNG；
+        # seed<=0 表示随机不播种。推理为单进程，各 rank 种子必须一致）
+        set_seed(seed if seed > 0 else None, same_across_ranks=True)
 
         # 生成噪声
         noises = [torch.randn_like(latent) for latent in cond_latents]
