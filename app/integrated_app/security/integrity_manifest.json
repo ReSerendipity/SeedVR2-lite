@@ -1,18 +1,18 @@
 {
-  "generated_at": "2026-08-28T15:23:58.188373",
+  "generated_at": "2026-08-30T13:28:10.102495",
   "generator": "scripts/generate_integrity_manifest.py",
   "description": "核心安全模块 SHA256 完整性清单，用于启动时自检",
   "files": {
-    "app_server.py": "ac6c6b031d5684d45a8680841a7e3e4c2c5824e566970de3bf1c1067ddcc1654",
+    "app_server.py": "a13609d560c5bcd0e17589c38f00105666e37c6c7fec4b2b0026692f755ce5d2",
     "config.py": "fd512ba10591647419c0d3f7a4e681abe352538efec1bb4b0ef75cdf0bca08e7",
     "model_manager.py": "a23e197f17527a57da76caa1a7f64d7edbde04dda510e74fcf49e05eb4d4e040",
-    "security/path_guard.py": "57971def777f7bd0600952320ad6f7723bf2b5477ecbaf16a7a786b8cc6f5322",
-    "security/integrity_check.py": "d45f73423ca8188f24b43f59fd25776d47611cb20db370d9a28d61fc4076ce20",
-    "security/watermark.py": "bd908cff12539efd87cdc5d6d8a1a98014e33600ddf2ffcd7f9152dc2a2a63c8",
-    "security/integrity_selfcheck.py": "74dacda29e92b3e7d9718739354bb798e25e6249eadae2ff9b5d3a876ce98df4",
-    "middleware/csrf.py": "fdf8e8584311e74e86a297187d53620829cec8381a160c63f1380ed53976c9d9",
-    "middleware/basic_auth.py": "2ceadaccda99e751adc52b77f91c3d89640f8f47eff74bfbe167de8792658cd4",
-    "middleware/rate_limit.py": "c1c6c945a43fc0655e7744cd6da67a5b32455556ea2e565c153e4bdaaa7a8f4c",
-    "engines/seedvr2_engine.py": "ceb32019d772db022b353d4ed238ae2e7ba6a0d08bd33d4c0a96dc90005e98d9"
+    "security/path_guard.py": "c28d7118a71d9c69284e46139386baa1d0e6b29563cbae6dfb89a08a55e637a5",
+    "security/integrity_check.py": "6fe45d5fc8230757f9ad92e7f7411c6973d85dc65fed18b8570e678e00e8f305",
+    "security/watermark.py": "f064671629fcc269f350eb963656930512297539dfee2c6158129e7f299735c9",
+    "security/integrity_selfcheck.py": "1a00155195b435e264e7f1602efbac43adedeb7f83b790c26c7dafbcab40f8d6",
+    "middleware/csrf.py": "f375b1d8d78c3c1b01cf83851679b3758bf57ba3aae8fc8b68c6b817837acb4c",
+    "middleware/basic_auth.py": "8fc11e0bf340c8ee20efa3b957df0960d4f53bbacf9a6a92f9fcb0ef269e8c1a",
+    "middleware/rate_limit.py": "73aaa4ee6848a6870c5baf00beef7b31e40a0667f446abf9ecd51e19a21f11b9",
+    "engines/seedvr2_engine.py": "0139ab82a1eb310b1c6024e2647f2fd6036e81355c354aeea396b0ecc2ba0aa5"
   }
 }
