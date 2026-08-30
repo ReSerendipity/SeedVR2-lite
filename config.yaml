@@ -171,6 +171,7 @@ runtime:
     id_length: 16
     max_timeout_seconds: 86400
     queue_maxsize: 100
+    stale_threshold_minutes: 30
   upload:
     chunk_size_bytes: 8192
     large_file_threshold_mb: 10

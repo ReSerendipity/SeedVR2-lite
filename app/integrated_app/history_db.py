@@ -340,29 +340,30 @@ class HistoryDB:
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
         try:
-            last_id = await self._execute_write(sql, rows, many=True)
-            if last_id is None:
-                last_id = (await self._fetch_one("SELECT last_insert_rowid()"))[0]
+            # P1-7：先取当前最大 id 作为基线，插入后按基线推算整批 id。
+            # 旧实现依赖 last_insert_rowid() 反推，语义脆弱（DELETE 后 rowcount 残留等）；
+            # 本类为单连接串行写，MAX(id) 基线在单事务内是确定性的。
+            base_row = await self._fetch_one("SELECT COALESCE(MAX(id), 0) FROM history")
+            base_id = int(base_row[0]) if base_row else 0
+            await self._execute_write(sql, rows, many=True)
+            await self._maybe_prune()
+            return list(range(base_id + 1, base_id + len(rows) + 1))
         except (aiosqlite.Error, sqlite3.Error, OSError) as e:
             # ROBUSTNESS: 批量插入失败时降级为逐条插入；仅捕获 DB/IO 异常，
-            # 不吞掉 KeyboardInterrupt 等系统级异常 (E2)
+            # 不吞掉 KeyboardInterrupt 等系统级异常 (E2)。逐条路径无法可靠
+            # 还原每行 id（调用方不消费该返回值），返回空列表。
             logger.warning(f"批量插入失败，回退到逐条插入: {type(e).__name__}: {e}")
-            last_id = None
+            inserted = 0
             for row in rows:
                 try:
                     await self._execute_write(sql, row)
+                    inserted += 1
                 except (aiosqlite.Error, sqlite3.Error, OSError) as row_err:
                     logger.error(f"单条插入失败，跳过: {row_err}")
                     continue
-            if last_id is None:
-                result = await self._fetch_one("SELECT last_insert_rowid()")
-                last_id = result[0] if result else None
-            if last_id is None:
-                return []
-
-        assert last_id is not None
-        await self._maybe_prune()
-        return list(range(last_id - len(rows) + 1, last_id + 1))
+            if inserted:
+                await self._maybe_prune()
+            return []
 
     async def update_record(self, record_id: int, **kwargs) -> bool:
         """更新历史记录"""

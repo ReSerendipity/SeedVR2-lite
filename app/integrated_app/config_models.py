@@ -453,6 +453,7 @@ class RuntimeTaskConfig(BaseModel):
         auto_recover: 启动时是否自动恢复未完成任务并继续推理，默认关闭。
         checkpoint_dir: 断点续跑 checkpoint 文件存储目录，相对于项目根目录。
         checkpoint_every: 每处理多少个文件写一次 checkpoint，1 表示每个文件都写。
+        stale_threshold_minutes: processing 任务超过该分钟数无更新视为卡死（0-1440，0=禁用）。
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -472,6 +473,12 @@ class RuntimeTaskConfig(BaseModel):
         ge=1,
         le=100,
         description="每处理多少个文件写一次 checkpoint",
+    )
+    stale_threshold_minutes: int = Field(
+        30,
+        ge=0,
+        le=1440,
+        description="processing 任务无更新超过该分钟数视为卡死并清理；0 表示禁用",
     )
 
 

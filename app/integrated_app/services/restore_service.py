@@ -569,6 +569,7 @@ async def process_batch_background(
     顺序处理媒体文件列表，每个文件失败后使用指数退避 + 抖动自动重试，
     重试次数和间隔从配置读取。处理过程中实时更新缓存和数据库状态。
     支持断点续跑：每个文件处理完成后保存 checkpoint，崩溃重启后可恢复。
+    历史账目逐文件即时落库（P1-7），崩溃不丢已完成文件的记录。
 
     Args:
         batch_id: 批量任务 ID。
@@ -639,7 +640,7 @@ async def process_batch_background(
         return
 
     # 磁盘空间预检（成本治理 P0-1）：批量任务输出量大，启动前先确认剩余空间。
-    # 批量任务的历史记录在全部文件处理完后才落库，此处直接标记任务失败并返回
+    # 空间不足时直接标记任务失败并返回（逐文件落库语义下不会有任何账目残留）
     try:
         ensure_disk_space(
             os.path.join(os.getcwd(), "outputs"),
@@ -649,7 +650,6 @@ async def process_batch_background(
         await task_state_store.update(batch_id, history_db, status="failed", error_message=e.message)
         return
 
-    records_to_insert: list[HistoryRecord] = []
     # 默认输出子目录名 (仅模板解析失败时回退时使用)
     output_subdir = "image" if media_type == "image" else "video"
 
@@ -673,7 +673,8 @@ async def process_batch_background(
                 task_item["status"] = "completed"
                 task_item["output_path"] = fp.get("output_path", "")
                 results.append(task_item)
-                records_to_insert.append(
+                # P1-7：逐文件即时落库，崩溃/重启不再丢失已完成文件的账目
+                await history_db.add_record(
                     HistoryRecord(
                         task_type=media_type,
                         input_file=media_path,
@@ -688,7 +689,7 @@ async def process_batch_background(
 
         if task_queue.is_cancelled(batch_id):
             for remaining in media_files[i:]:
-                records_to_insert.append(
+                await history_db.add_record(
                     HistoryRecord(
                         task_type=media_type,
                         input_file=remaining,
@@ -901,7 +902,9 @@ async def process_batch_background(
                     task_state_store.update_cached(batch_id, failed=failed)
                     logger.error(f"批量处理 {media_type} {i+1}/{len(media_files)} 最终失败：{media_path}, {e}")
 
-        records_to_insert.append(
+        # P1-7：每个文件处理完成后立即落库（原实现攒到批末一次性插入，
+        # 崩溃即丢失整批账目；逐文件插入在 WAL 单写者模型下开销可忽略）
+        await history_db.add_record(
             HistoryRecord(
                 task_type=media_type,
                 input_file=media_path,
@@ -917,13 +920,6 @@ async def process_batch_background(
 
         progress = round(((i + 1) / len(media_files)) * 100, 1)
         await task_state_store.update(batch_id, history_db, progress=progress)
-
-    try:
-        await history_db.add_records(records_to_insert)
-    except Exception:
-        for record in records_to_insert:
-            with contextlib.suppress(Exception):
-                await history_db.add_record(record)
 
     final_status = "cancelled" if task_queue.is_cancelled(batch_id) else "completed"
     final_cached = task_state_store.get_cached(batch_id) or {}

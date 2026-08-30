@@ -17,6 +17,7 @@ API 端点：
 import asyncio
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -52,12 +53,38 @@ from app.integrated_app.utils.response import respond_success
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/restore", tags=["修复"])
 
+# P1-4：客户端幂等键合法格式（字母/数字/下划线/点/连字符，≤64 字符）
+_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+
+
+def _resolve_idempotency_key(request: Request, form_key: str | None) -> str | None:
+    """解析并校验客户端幂等键（P1-4）。
+
+    优先取请求头 ``Idempotency-Key``，回退表单字段 ``idempotency_key``。
+
+    Returns:
+        str | None: 规范化后的幂等键；未提供返回 None。
+
+    Raises:
+        HTTPException: 幂等键格式非法时抛出 400。
+    """
+    raw = (request.headers.get("Idempotency-Key") or form_key or "").strip()
+    if not raw:
+        return None
+    if not _IDEMPOTENCY_KEY_RE.match(raw):
+        raise HTTPException(
+            status_code=400,
+            detail="幂等键格式非法：仅允许字母/数字/下划线/点/连字符，长度 1-64",
+        )
+    return raw
+
 
 @router.post("/")
 async def upload_and_restore(
     request: Request,
     file: UploadFile | None = File(None),
     folder_path: str | None = Form(None),
+    idempotency_key: str | None = Form(None),
     raw_params: UnifiedRestoreParams = Depends(common.parse_unified_params),
     history_db: HistoryDB = Depends(get_history_db),
     file_cache: FileCache = Depends(get_file_cache),
@@ -76,6 +103,9 @@ async def upload_and_restore(
     通用表单参数（由 common.parse_unified_params 解析）：
     - task_type: "auto"/"image"/"video"，默认 "auto"
     - dit_model, seed 等修复参数（详见 common.parse_unified_params）
+
+    幂等（P1-4）：请求头 ``Idempotency-Key``（优先）或表单字段 ``idempotency_key``
+    提供时，同键重复提交返回既有任务状态（duplicate=true），不会创建重复任务。
 
     返回格式（JSON，统一包装 {success, data, error}）：
     {
@@ -113,6 +143,26 @@ async def upload_and_restore(
     """
     if not (file and file.filename) and not (folder_path and folder_path.strip()):
         raise HTTPException(status_code=400, detail="请上传文件或指定文件夹路径")
+
+    # ============== 幂等键（P1-4） ==============
+    # 客户端提供 Idempotency-Key（头，优先）或 idempotency_key（表单）时，
+    # 以该键作为 task_id：同键重复提交不会创建重复任务，而是返回既有任务状态
+    client_key = _resolve_idempotency_key(request, idempotency_key)
+    if client_key is not None:
+        existing_task = await history_db.get_task(client_key)
+        if existing_task is not None:
+            existing_record = await history_db.get_record(existing_task.record_id)
+            logger.info(f"幂等命中：task_id={client_key} 已存在（status={existing_task.status}），未重复创建")
+            return respond_success(
+                {
+                    "task_id": client_key,
+                    "record_id": existing_task.record_id,
+                    "task_type": (existing_record.task_type if existing_record else "unknown"),
+                    "status": existing_task.status,
+                    "duplicate": True,
+                    "message": "幂等命中：同键任务已存在，未重复创建",
+                }
+            )
 
     if not gpu_manager.is_gpu_available:
         raise HTTPException(
@@ -220,7 +270,8 @@ async def upload_and_restore(
         }
         params = VideoRestoreParams(**video_fields)
 
-    task_id = uuid.uuid4().hex[: config.get("runtime", {}).get("task", {}).get("id_length", 16)]
+    # 幂等键通过格式校验后作为 task_id 使用（客户端可据此实现提交去重）
+    task_id = client_key or uuid.uuid4().hex[: config.get("runtime", {}).get("task", {}).get("id_length", 16)]
     record = HistoryRecord(
         task_type=task_type,
         input_file=input_path,

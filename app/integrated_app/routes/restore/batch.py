@@ -16,10 +16,11 @@ API 端点：
 import asyncio
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 
 from app.integrated_app.config_models import (
     ImageRestoreParams,
@@ -47,11 +48,29 @@ from app.integrated_app.utils.response import respond_success
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/restore", tags=["修复"])
 
+# P1-4：客户端幂等键合法格式（与 upload.py 一致）
+_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+
+
+def _resolve_idempotency_key(request: Request, form_key: str | None) -> str | None:
+    """解析并校验批量任务幂等键（P1-4）。格式非法抛 400。"""
+    raw = (request.headers.get("Idempotency-Key") or form_key or "").strip()
+    if not raw:
+        return None
+    if not _IDEMPOTENCY_KEY_RE.match(raw):
+        raise HTTPException(
+            status_code=400,
+            detail="幂等键格式非法：仅允许字母/数字/下划线/点/连字符，长度 1-64",
+        )
+    return raw
+
 
 @router.post("/batch")
 async def batch_restore_from_folder(
+    request: Request,
     folder_path: str = Form(...),
     task_type: str = Form("auto"),
+    idempotency_key: str | None = Form(None),
     raw_params: UnifiedRestoreParams = Depends(common.parse_unified_params),
     config: dict = Depends(get_config),
     history_db: HistoryDB = Depends(get_history_db),
@@ -103,6 +122,22 @@ async def batch_restore_from_folder(
             status_code=503,
             detail="SeedVR2 仅支持 NVIDIA GPU 推理，当前未检测到 NVIDIA GPU。请安装 NVIDIA GPU 并配置 CUDA 驱动。",
         )
+
+    # ============== 幂等键（P1-4） ==============
+    client_key = _resolve_idempotency_key(request, idempotency_key)
+    if client_key is not None:
+        existing_task = await history_db.get_task(client_key)
+        if existing_task is not None:
+            logger.info(f"幂等命中：batch_id={client_key} 已存在（status={existing_task.status}），未重复创建")
+            return respond_success(
+                {
+                    "batch_id": client_key,
+                    "record_id": existing_task.record_id,
+                    "status": existing_task.status,
+                    "duplicate": True,
+                    "message": "幂等命中：同键批量任务已存在，未重复创建",
+                }
+            )
 
     # 自动加载模型：未加载（或尺寸不符）时先加载再修复
     await common.ensure_model_loaded(model_manager, raw_params.dit_model)
@@ -156,7 +191,7 @@ async def batch_restore_from_folder(
             "seed": params.seed,
         }
 
-    batch_id = uuid.uuid4().hex[: config.get("runtime", {}).get("task", {}).get("id_length", 16)]
+    batch_id = client_key or uuid.uuid4().hex[: config.get("runtime", {}).get("task", {}).get("id_length", 16)]
 
     batch_results = [common.create_batch_item(path) for path, _ in media_files]
     await common.create_task_state(batch_id, 0, history_db, task_type="batch")

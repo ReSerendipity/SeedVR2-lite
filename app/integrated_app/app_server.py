@@ -230,7 +230,11 @@ async def lifespan(app: FastAPI):
         from app.integrated_app.routes.restore import unified as unified_routes
 
         # 先清理卡死的 processing 任务，再恢复可恢复的任务
-        cleaned_count = await unified_routes.cleanup_stale_tasks(history_db)
+        _task_cfg = config.get("runtime", {}).get("task", {})
+        stale_threshold = int(_task_cfg.get("stale_threshold_minutes", 30) or 0)
+        cleaned_count = await unified_routes.cleanup_stale_tasks(
+            history_db, threshold_minutes=stale_threshold if stale_threshold > 0 else 10**9
+        )
         if cleaned_count:
             logger.info(f"已清理 {cleaned_count} 个卡死的 processing 任务")
 
@@ -263,12 +267,16 @@ async def lifespan(app: FastAPI):
     file_cache: FileCache = app.state.file_cache
     file_cache.start_cleanup_task(interval=3600)
 
-    # 启动定期清理卡死任务的后台任务（每5分钟检查一次）
+    # 启动定期清理卡死任务的后台任务（每5分钟检查一次，阈值 runtime.task.stale_threshold_minutes）
     async def _periodic_stale_cleanup():
+        stale_threshold = int(config.get("runtime", {}).get("task", {}).get("stale_threshold_minutes", 30) or 0)
+        effective_threshold = stale_threshold if stale_threshold > 0 else 10**9
         while True:
             try:
                 await asyncio.sleep(300)  # 每5分钟
-                cleaned = await unified_routes.cleanup_stale_tasks(history_db, task_queue=app.state.task_queue)
+                cleaned = await unified_routes.cleanup_stale_tasks(
+                    history_db, threshold_minutes=effective_threshold, task_queue=app.state.task_queue
+                )
                 if cleaned:
                     logger.info(f"定期清理：已清理 {cleaned} 个卡死的 processing 任务")
             except asyncio.CancelledError:

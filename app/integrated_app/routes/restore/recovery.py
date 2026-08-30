@@ -85,6 +85,10 @@ async def recover_tasks(
             continue
 
         use_model_size = record.model_size or model_registry.current_model_size or "3b"
+        # P1-6：恢复任务同样注入 on_cancel，否则取消恢复任务时
+        # asyncio.Task.cancel 无法中断 to_thread 中的同步推理线程，GPU 会跑完整个任务
+        engine = model_registry.get_engine()
+        on_cancel = engine.request_cancel if engine else None
         if record.task_type == "image":
             p_img: ImageRestoreParams = params  # type: ignore[assignment]
             image_task = (  # type: ignore[misc]  # mypy cannot infer lambda type with complex defaults  # noqa: E731
@@ -92,7 +96,7 @@ async def recover_tasks(
                     t.task_id, r.id, r.input_file, p, history_db, task_queue
                 )
             )
-            await task_queue.submit(task_record.task_id, image_task)
+            await task_queue.submit(task_record.task_id, image_task, on_cancel=on_cancel)
         else:
             p_vid: VideoRestoreParams = params  # type: ignore[assignment]
             video_task = (  # type: ignore[misc]  # mypy cannot infer lambda type with complex defaults  # noqa: E731
@@ -100,7 +104,7 @@ async def recover_tasks(
                     t.task_id, r.id, r.input_file, m, p, h, q
                 )
             )
-            await task_queue.submit(task_record.task_id, video_task)
+            await task_queue.submit(task_record.task_id, video_task, on_cancel=on_cancel)
         recovered += 1
     return recovered
 
