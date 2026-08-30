@@ -3,6 +3,7 @@
 
 本包包含 SeedVR2 项目的系统管理相关路由模块，按职责拆分如下：
 - health.py: 系统健康检查与存活探针
+- readiness.py: 容器编排就绪探针（模型预热中返回 503）
 - gpu.py: GPU 信息查询端点
 - settings.py: 系统设置管理与模型操作端点
 - history.py: 历史记录查询与管理端点
