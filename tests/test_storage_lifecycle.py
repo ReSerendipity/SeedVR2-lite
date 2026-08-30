@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""存储生命周期治理单元测试（成本治理 P0-1）。
+
+覆盖评估报告 P0-1 的验收标准：
+1. outputs/ 保留策略清理（年龄规则 / 数量上限 / 占位文件豁免 / 临时帧目录回收 / 禁用时零操作）
+2. history.max_records 落实（超出自动裁剪最旧记录 / FTS 索引同步 / 禁用与下限语义）
+3. 任务启动前磁盘空间预检（阈值语义 / 507 拒绝 / 放行路径）
+
+所属项目：SeedVR2 (SeedVR2 视频/图像修复工具)
+"""
+
+import os
+import sqlite3
+import time
+
+import pytest
+from fastapi import HTTPException
+
+from app.integrated_app.history_db import HistoryDB, HistoryRecord
+from app.integrated_app.routes.restore.common import ensure_disk_space
+from app.integrated_app.services.output_retention import cleanup_outputs_once
+
+
+def _make_file(path: str, mtime: float | None = None) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(b"x" * 128)
+    if mtime is not None:
+        os.utime(path, (mtime, mtime))
+
+
+class TestCleanupOutputsOnce:
+    """outputs/ 保留策略清理。"""
+
+    def test_disabled_when_both_rules_zero(self, tmp_path):
+        _make_file(str(tmp_path / "image" / "a.png"))
+        removed, _freed = cleanup_outputs_once(str(tmp_path), max_age_days=0, max_files=0)
+        assert removed == 0
+        assert (tmp_path / "image" / "a.png").exists()
+
+    def test_age_rule_removes_only_old_files(self, tmp_path):
+        now = time.time()
+        old_path = tmp_path / "image" / "old.png"
+        new_path = tmp_path / "image" / "new.png"
+        _make_file(str(old_path), mtime=now - 30 * 86400)
+        _make_file(str(new_path), mtime=now)
+
+        removed, freed = cleanup_outputs_once(str(tmp_path), max_age_days=14, max_files=0)
+
+        assert removed == 1
+        assert freed == 128
+        assert not old_path.exists()
+        assert new_path.exists()
+
+    def test_age_rule_keeps_gitkeep(self, tmp_path):
+        now = time.time()
+        keep = tmp_path / "image" / ".gitkeep"
+        _make_file(str(keep), mtime=now - 365 * 86400)
+
+        cleanup_outputs_once(str(tmp_path), max_age_days=14, max_files=0)
+
+        assert keep.exists()
+
+    def test_age_rule_recycles_stale_frames_dir_keeps_active(self, tmp_path):
+        """残留 _frames 目录按年龄整树回收；正在写入（mtime 新鲜）的不动。"""
+        now = time.time()
+        stale_frames = tmp_path / "video" / "_frames"
+        active_frames = tmp_path / "video" / "_frames_active"
+        _make_file(str(stale_frames / "frame_000000.png"), mtime=now - 30 * 86400)
+        _make_file(str(active_frames / "frame_000000.png"), mtime=now)
+
+        removed, _freed = cleanup_outputs_once(str(tmp_path), max_age_days=14, max_files=0)
+
+        # 残留帧目录整树回收：目录内陈旧文件 + 目录本身
+        assert not stale_frames.exists()
+        assert active_frames.exists()
+        assert removed == 1  # 帧文件按年龄规则删除计数
+
+    def test_max_files_keeps_newest(self, tmp_path):
+        now = time.time()
+        for i in range(5):
+            _make_file(str(tmp_path / "image" / f"img_{i}.png"), mtime=now - (10 - i) * 3600)
+
+        removed, _freed = cleanup_outputs_once(str(tmp_path), max_age_days=0, max_files=3)
+
+        assert removed == 2
+        assert (tmp_path / "image" / "img_3.png").exists()
+        assert (tmp_path / "image" / "img_4.png").exists()
+        assert not (tmp_path / "image" / "img_0.png").exists()
+
+    def test_missing_dir_is_noop(self, tmp_path):
+        removed, freed = cleanup_outputs_once(str(tmp_path / "nonexistent"), max_age_days=14, max_files=0)
+        assert removed == 0
+        assert freed == 0
+
+
+@pytest.mark.asyncio
+class TestPruneOldRecords:
+    """history.max_records 自动裁剪。"""
+
+    async def _insert(self, db: HistoryDB, n: int, prefix: str = "img") -> None:
+        for i in range(n):
+            await db.add_record(
+                HistoryRecord(
+                    task_type="image",
+                    input_file=f"{prefix}_{i}.png",
+                    model_size="3b",
+                    status="completed",
+                    processing_time=1.0,
+                )
+            )
+
+    async def test_prune_keeps_latest_records(self, tmp_path):
+        # max_records=0 禁用自动裁剪，单独验证显式 prune 语义
+        async with HistoryDB(db_path=str(tmp_path / "history.db"), max_records=0) as db:
+            await self._insert(db, 8)
+
+            deleted = await db.prune_old_records(max_records=5)
+
+            assert deleted == 3
+            assert await db.count_records() == 5
+            # 保留的必须是最新的（id 最大的）记录
+            records, _total = await db.get_records(limit=10)
+            ids = [r.id for r in records]
+            assert ids == sorted(ids, reverse=True)
+            assert min(ids) == 4
+
+    async def test_prune_noop_below_limit(self, tmp_path):
+        async with HistoryDB(db_path=str(tmp_path / "history.db"), max_records=0) as db:
+            await self._insert(db, 3)
+
+            assert await db.prune_old_records(max_records=100) == 0
+            assert await db.count_records() == 3
+
+    async def test_prune_disabled_when_zero(self, tmp_path):
+        async with HistoryDB(db_path=str(tmp_path / "history.db"), max_records=0) as db:
+            await self._insert(db, 5)
+
+            assert await db.prune_old_records() == 0
+            assert await db.count_records() == 5
+
+    async def test_prune_uses_constructor_limit_by_default(self, tmp_path):
+        """不传参时使用构造时的 max_records 上限。"""
+        async with HistoryDB(db_path=str(tmp_path / "history.db"), max_records=4) as db:
+            await self._insert(db, 2)
+            assert await db.prune_old_records() == 0
+            await self._insert(db, 6)
+            assert await db.count_records() == 4
+
+    async def test_auto_prune_on_add_record(self, tmp_path):
+        """写入路径自动落实上限：add_record 内部触发裁剪。"""
+        async with HistoryDB(db_path=str(tmp_path / "history.db"), max_records=5) as db:
+            await self._insert(db, 12)
+
+            assert await db.count_records() <= 5
+
+    async def test_prune_syncs_fts_index(self, tmp_path):
+        async with HistoryDB(db_path=str(tmp_path / "history.db"), max_records=0) as db:
+            await self._insert(db, 6, prefix="video")
+
+            await db.prune_old_records(max_records=3)
+
+            records, total = await db.search_records("video")
+            assert total == 3
+            assert len(records) == 3
+            # 最旧的 3 条不应出现在 FTS 结果中
+            inputs = {r.input_file for r in records}
+            assert "video_0.png" not in inputs
+            assert "video_5.png" in inputs
+
+
+class TestEnsureDiskSpace:
+    """任务启动前磁盘空间预检。"""
+
+    def test_zero_threshold_skips_check(self, tmp_path):
+        # 阈值 0 表示禁用预检，任何情况都放行
+        ensure_disk_space(str(tmp_path), 0)
+
+    def test_negative_threshold_skips_check(self, tmp_path):
+        ensure_disk_space(str(tmp_path), -1.0)
+
+    def test_unreachable_threshold_rejects_with_507(self, tmp_path):
+        with pytest.raises(HTTPException) as exc_info:
+            ensure_disk_space(str(tmp_path), 1e9)
+        assert exc_info.value.status_code == 507
+        assert "磁盘剩余空间不足" in str(exc_info.value.detail)
+
+    def test_reasonable_threshold_passes(self, tmp_path):
+        # 正常机器剩余空间远大于 1KB
+        ensure_disk_space(str(tmp_path), 1e-6)
+
+    def test_missing_dir_still_checks(self, tmp_path):
+        # 目标目录不存在时以其父目录所在磁盘为检查对象（disk_usage 语义），
+        # 极大阈值仍应拒绝
+        with pytest.raises(HTTPException) as exc_info:
+            ensure_disk_space(str(tmp_path / "outputs"), 1e9)
+        assert exc_info.value.status_code == 507
+
+
+@pytest.mark.asyncio
+class TestCostVisibilityColumns:
+    """每任务成本可见性（成本治理 P1-1）：输出体积列 + 聚合统计。"""
+
+    async def test_output_size_persisted_and_aggregated(self, tmp_path):
+        async with HistoryDB(db_path=str(tmp_path / "history.db")) as db:
+            rid = await db.add_record(HistoryRecord(task_type="image", input_file="a.png", status="completed"))
+            await db.update_record(rid, status="completed", output_size_bytes=2048, processing_time=12.5)
+            await db.add_record(
+                HistoryRecord(
+                    task_type="video",
+                    input_file="b.mp4",
+                    status="completed",
+                    output_size_bytes=4096,
+                    processing_time=27.5,
+                )
+            )
+
+            stats = await db.get_statistics()
+            assert stats["total_output_bytes"] == 2048 + 4096
+            assert abs(stats["total_processing_time"] - 40.0) < 0.01
+            assert stats["total_records"] == 2
+
+            record = await db.get_record(rid)
+            assert record.output_size_bytes == 2048
+            assert record.vram_peak_mb == 0.0
+
+    async def test_migration_adds_columns_to_legacy_db(self, tmp_path):
+        """老库（无新列）初始化时自动 ALTER TABLE 补列。"""
+        db_path = str(tmp_path / "legacy.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("""CREATE TABLE history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_type TEXT NOT NULL,
+                input_file TEXT NOT NULL,
+                output_file TEXT DEFAULT '',
+                model_size TEXT DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                parameters TEXT DEFAULT '{}',
+                processing_time REAL DEFAULT 0.0,
+                created_at TEXT NOT NULL,
+                error_message TEXT DEFAULT ''
+            )""")
+        conn.commit()
+        conn.close()
+
+        async with HistoryDB(db_path=db_path) as db:
+            rid = await db.add_record(HistoryRecord(task_type="image", input_file="x.png", status="completed"))
+            await db.update_record(rid, output_size_bytes=512, vram_peak_mb=8123.5)
+            record = await db.get_record(rid)
+            assert record.output_size_bytes == 512
+            assert abs(record.vram_peak_mb - 8123.5) < 0.01
