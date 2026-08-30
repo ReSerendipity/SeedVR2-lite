@@ -20,6 +20,8 @@ P0-2 分层治理：将原 routes/restore/upload.py 与 routes/restore/batch.py 
     - process_image_task / process_video_task: 单文件推理编排（含坏案例重试）
     - process_batch_background: 批量推理编排（含逐文件重试、OOM 降级、断点续跑）
     - apply_oom_degradation: 批量级 OOM 分类降级（参数持久到批级配置）
+    - build_degradation_metadata / merge_degradation_into_parameters:
+      OOM 降级事件写入历史 parameters（数据治理 P0-3，血缘可解释性）
 
 所属项目：SeedVR2 (SeedVR2 视频/图像修复工具)
 """
@@ -27,6 +29,7 @@ P0-2 分层治理：将原 routes/restore/upload.py 与 routes/restore/batch.py 
 import asyncio
 import contextlib
 import dataclasses
+import json
 import logging
 import os
 import shutil
@@ -46,8 +49,10 @@ from app.integrated_app.exceptions import DiskSpaceError
 from app.integrated_app.history_db import HistoryDB, HistoryRecord
 from app.integrated_app.metrics import metrics_collector
 from app.integrated_app.model_registry import model_registry
+from app.integrated_app.optimization.gpu.vram_leak_detector import vram_leak_detector
 from app.integrated_app.services.oom_breaker import OomBreaker
 from app.integrated_app.services.task_state import task_state_store
+from app.integrated_app.utils.hashing import compute_file_sha256
 from app.integrated_app.utils.retry import exponential_backoff_with_jitter
 
 logger = logging.getLogger(__name__)
@@ -306,6 +311,17 @@ async def run_task_with_state(
                 model_size=model_size,
                 input_type=input_type,
             )
+            # P2-4：显存泄漏自动告警（峰值落库后喂给趋势检测器）
+            if vram_peak_mb > 0:
+                try:
+                    vram_leak_detector.record(
+                        peak_mb=vram_peak_mb,
+                        model_size=model_size,
+                        input_type=input_type,
+                        task_id=task_id,
+                    )
+                except Exception as leak_err:  # noqa: BLE001 — 检测失败不影响主流程
+                    logger.warning(f"[{task_id}] 显存泄漏检测失败: {leak_err}")
             # P2-12：成功推理复位 OOM 熔断器
             oom_breaker.record_success()
             logger.info(f"任务完成: {task_id}, 耗时 {result.processing_time:.1f}s, 输出 {output_size} 字节")
@@ -395,7 +411,10 @@ async def process_image_task(
             if force_reload["flag"] and not cfg.force_reload_dit:
                 # 已缓存的 DiT 以旧 blocks_to_swap 加载，重试必须强制重载新参数才生效
                 cfg = dataclasses.replace(cfg, force_reload_dit=True)
-            return await engine.infer_image(image_path=input_path, output_dir=output_dir, config=cfg)
+            # P3-1：水印 payload 绑定 task_id（输出图可反查到本任务与参数）
+            return await engine.infer_image(
+                image_path=input_path, output_dir=output_dir, config=cfg, watermark_payload=task_id
+            )
 
         retry_result = await retry_with_bad_case_detection(
             _generate,
@@ -414,6 +433,15 @@ async def process_image_task(
                     + "）"
                 ),
             )
+        # P0-3：降级事件写入历史 parameters（血缘可解释性，best-effort 不影响主流程）
+        degradation_meta = build_degradation_metadata({"config": image_config}, retry_result.final_params, retry_result)
+        if degradation_meta:
+            try:
+                await history_db.update_record(
+                    record_id, parameters=merge_degradation_into_parameters(params.model_dump_json(), degradation_meta)
+                )
+            except Exception as meta_err:  # noqa: BLE001 — 血缘记录失败不阻断任务
+                logger.warning(f"[{task_id}] 降级血缘写入历史失败: {meta_err}")
         return retry_result.result
 
     await run_task_with_state(
@@ -504,6 +532,8 @@ async def process_video_task(
                 blocks_to_swap=merged["blocks_to_swap"],
                 batch_size=merged["batch_size"],
                 force_reload_dit=merged["force_reload_dit"],
+                # P3-1：水印 payload 绑定 task_id
+                watermark_payload=task_id,
             )
 
         retry_result = await retry_with_bad_case_detection(
@@ -523,6 +553,15 @@ async def process_video_task(
                     + "）"
                 ),
             )
+        # P0-3：降级事件写入历史 parameters（血缘可解释性，best-effort 不影响主流程）
+        degradation_meta = build_degradation_metadata(dict(video_params), retry_result.final_params, retry_result)
+        if degradation_meta:
+            try:
+                await history_db.update_record(
+                    record_id, parameters=merge_degradation_into_parameters(params.model_dump_json(), degradation_meta)
+                )
+            except Exception as meta_err:  # noqa: BLE001 — 血缘记录失败不阻断任务
+                logger.warning(f"[{task_id}] 降级血缘写入历史失败: {meta_err}")
         return retry_result.result
 
     await run_task_with_state(
@@ -575,6 +614,83 @@ def apply_oom_degradation(
     batch_config.update(merged)
     logger.warning(f"批量任务 OOM，参数已自动降级并应用于后续文件: {merged}")
     return True
+
+
+# ---------------------------------------------------------------------------
+# OOM 降级血缘（数据治理 P0-3）：降级事件写入历史 parameters，
+# 使"低质量但成功"的输出在血缘中可解释（用户可识别该结果经历过自动降级）
+# ---------------------------------------------------------------------------
+
+# 降级阶梯可能触及的参数键，写入血缘时逐键对比 from → to
+_DEGRADATION_TRACKED_KEYS = ("blocks_to_swap", "resolution", "max_resolution", "dit_model", "seed")
+
+
+def _param_value(params: dict | None, key: str):
+    """从参数字典取值：优先嵌套 config dataclass，回退顶层键。"""
+    if not params:
+        return None
+    cfg = params.get("config")
+    if cfg is not None and dataclasses.is_dataclass(cfg) and hasattr(cfg, key):
+        return getattr(cfg, key)
+    return params.get(key)
+
+
+def build_degradation_metadata(
+    original_params: dict | None,
+    final_params: dict | None,
+    retry_result,
+) -> dict | None:
+    """根据重试结果构造降级血缘元数据。
+
+    Args:
+        original_params: 首次推理使用的参数字典（{"config": ...} 或扁平 dict）。
+        final_params: 重试结束后实际生效的参数字典。
+        retry_result: bad_case_retry.RetryResult（或具有 degraded/attempts/
+            failure_reason 属性的等价对象）。
+
+    Returns:
+        降级元数据 dict；未发生降级时返回 None。
+    """
+    if retry_result is None or not getattr(retry_result, "degraded", False):
+        return None
+    adjusted: dict[str, dict] = {}
+    for key in _DEGRADATION_TRACKED_KEYS:
+        old_value = _param_value(original_params, key)
+        new_value = _param_value(final_params, key)
+        if new_value != old_value:
+            adjusted[key] = {"from": old_value, "to": new_value}
+    return {
+        "degraded": True,
+        "attempts": int(getattr(retry_result, "attempts", 0) or 0),
+        "adjusted": adjusted,
+        "failure_reason": (getattr(retry_result, "failure_reason", "") or "")[:500],
+        "note": "推理失败自动重试，参数已按降级阶梯调整",
+    }
+
+
+def merge_degradation_into_parameters(parameters_json: str, metadata: dict | None) -> str:
+    """把降级元数据合并进历史记录的 parameters JSON 字符串。
+
+    parameters 本就是 JSON 字符串列，合并策略：反序列化 → 写入 "degradation"
+    键 → 重新序列化。原参数反序列化失败时把原文挂到 "raw" 键兜底，不丢数据。
+
+    Args:
+        parameters_json: 原始 parameters JSON 字符串（可能为空）。
+        metadata: build_degradation_metadata 的返回值，None 时原样返回。
+
+    Returns:
+        合并后的 parameters JSON 字符串。
+    """
+    if not metadata:
+        return parameters_json or ""
+    try:
+        data = json.loads(parameters_json) if parameters_json else {}
+    except (ValueError, TypeError):
+        data = {"raw": parameters_json}
+    if not isinstance(data, dict):
+        data = {"raw": parameters_json}
+    data["degradation"] = metadata
+    return json.dumps(data, ensure_ascii=False)
 
 
 async def process_batch_background(
@@ -737,6 +853,8 @@ async def process_batch_background(
         task_state_store.update_cached(batch_id, current_index=i, current_file=current_filename)
 
         last_error = None
+        # P0-3：本文件的 OOM 降级事件记录（写入该文件历史记录 parameters）
+        degradation_events: list[dict] = []
 
         # 两倍模式：每个文件需要单独计算分辨率（因为不同文件分辨率可能不同）
         current_config = config.copy()  # 为当前文件创建配置副本
@@ -808,6 +926,8 @@ async def process_batch_background(
                         output_dir=output_dir,
                         config=image_config,
                         output_name=output_name,
+                        # P3-1：批量场景水印绑定 batch_id（批内统一归属）
+                        watermark_payload=batch_id,
                     )
                 else:
                     # 批量任务的进度回调（同步函数 - 推理在工作线程同步执行）
@@ -836,6 +956,8 @@ async def process_batch_background(
                         video_path=media_path,
                         output_dir=output_dir,
                         output_name=output_name,
+                        # P3-1：批量场景水印绑定 batch_id
+                        watermark_payload=batch_id,
                         **infer_kwargs,
                     )
 
@@ -862,6 +984,18 @@ async def process_batch_background(
                         model_size=use_model_size,
                         input_type=media_type,
                     )
+                    # P2-4：批量链路同样喂入显存泄漏检测器
+                    batch_vram = float(task_item.get("vram_peak_mb") or 0.0)
+                    if batch_vram > 0:
+                        try:
+                            vram_leak_detector.record(
+                                peak_mb=batch_vram,
+                                model_size=use_model_size,
+                                input_type=media_type,
+                                task_id=batch_id,
+                            )
+                        except Exception as leak_err:  # noqa: BLE001 — 检测失败不影响主流程
+                            logger.warning(f"[{batch_id}] 显存泄漏检测失败: {leak_err}")
                     task_state_store.update_cached(batch_id, completed=completed)
 
                     # 断点续跑：保存 checkpoint
@@ -886,7 +1020,19 @@ async def process_batch_background(
                             f"批量处理 {media_type} {i+1}/{len(media_files)} 第{attempt+1}次失败，重试中：{media_path}, {last_error}"
                         )
                         # OOM 坏案例降级（P0-2）：重试前分类失败并调整参数
-                        apply_oom_degradation(current_config, config, last_error, attempt + 1, app_config)
+                        if apply_oom_degradation(current_config, config, last_error, attempt + 1, app_config):
+                            # P0-3：记录降级事件供血缘落库
+                            degradation_events.append(
+                                {
+                                    "attempt": attempt + 1,
+                                    "error": last_error[:300],
+                                    "adjusted": {
+                                        k: current_config.get(k)
+                                        for k in _DEGRADATION_TRACKED_KEYS
+                                        if k in current_config
+                                    },
+                                }
+                            )
                         await exponential_backoff_with_jitter(attempt, base=retry_base, max_delay=retry_max)
                     else:
                         task_item["status"] = "failed"
@@ -912,7 +1058,17 @@ async def process_batch_background(
                         f"批量处理 {media_type} {i+1}/{len(media_files)} 第{attempt+1}次异常，重试中：{media_path}, {e}"
                     )
                     # OOM 坏案例降级（P0-2）：重试前分类异常并调整参数
-                    apply_oom_degradation(current_config, config, last_error, attempt + 1, app_config)
+                    if apply_oom_degradation(current_config, config, last_error, attempt + 1, app_config):
+                        # P0-3：记录降级事件供血缘落库
+                        degradation_events.append(
+                            {
+                                "attempt": attempt + 1,
+                                "error": last_error[:300],
+                                "adjusted": {
+                                    k: current_config.get(k) for k in _DEGRADATION_TRACKED_KEYS if k in current_config
+                                },
+                            }
+                        )
                     await exponential_backoff_with_jitter(attempt, base=retry_base, max_delay=retry_max)
                 else:
                     task_item["status"] = "failed"
@@ -929,17 +1085,34 @@ async def process_batch_background(
 
         # P1-7：每个文件处理完成后立即落库（原实现攒到批末一次性插入，
         # 崩溃即丢失整批账目；逐文件插入在 WAL 单写者模型下开销可忽略）
+        # P0-3：批量链路发生降级时，把事件写入该文件记录的 parameters（血缘可解释性）
+        batch_parameters_json = ""
+        # P1-1：源文件内容哈希（内容寻址血缘，线程内计算不阻塞事件循环）
+        input_sha256 = await asyncio.to_thread(compute_file_sha256, media_path)
+        if degradation_events:
+            batch_parameters_json = json.dumps(
+                {
+                    "degradation": {
+                        "degraded": True,
+                        "events": degradation_events,
+                        "note": "批量推理失败自动重试，参数已按降级阶梯调整",
+                    }
+                },
+                ensure_ascii=False,
+            )
         await history_db.add_record(
             HistoryRecord(
                 task_type=media_type,
                 input_file=media_path,
                 model_size=use_model_size,
                 status=task_item["status"],
+                parameters=batch_parameters_json,
                 output_file=task_item.get("output_path") or "",
                 processing_time=float(task_item.get("processing_time") or 0.0),
                 error_message=task_item.get("error") or "",
                 output_size_bytes=int(task_item.get("output_size_bytes") or 0),
                 vram_peak_mb=float(task_item.get("vram_peak_mb") or 0.0),
+                input_sha256=input_sha256,
             )
         )
 

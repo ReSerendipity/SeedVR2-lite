@@ -684,6 +684,7 @@ def create_app(config: dict | None = None) -> FastAPI:
     app.state.file_cache = FileCache(
         cache_dir="data/uploads",
         ttl=config.get("cache", {}).get("ttl", 86400),
+        max_size_mb=config.get("cache", {}).get("max_size_mb", 0) or 0,
     )
 
     static_dir = os.path.join(os.path.dirname(__file__), "static")

@@ -15,6 +15,7 @@ API 端点：
 """
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -48,6 +49,7 @@ from app.integrated_app.services.restore_service import (
     process_video_task,
 )
 from app.integrated_app.task_queue import TaskQueue
+from app.integrated_app.utils.hashing import compute_file_sha256
 from app.integrated_app.utils.response import respond_success
 
 logger = logging.getLogger(__name__)
@@ -189,6 +191,8 @@ async def upload_and_restore(
 
     input_path: str
     detected_type: str | None = None
+    # P1-1：源文件内容哈希（内容寻址血缘），上传分支用已读入内存的字节，folder 分支落盘计算
+    input_sha256: str = ""
 
     if file and file.filename:
         file_ext = os.path.splitext(file.filename)[1].lower()
@@ -213,6 +217,8 @@ async def upload_and_restore(
             magic_ok, _, magic_err = validate_upload_magic(contents, file_ext)
             if not magic_ok:
                 raise HTTPException(status_code=400, detail=magic_err)
+            # P1-1：源文件内容哈希（血缘）
+            input_sha256 = hashlib.sha256(contents).hexdigest()
             await file.seek(0)
             _, input_path = await file_cache.save_upload_file(file, sub_dir="image")
         else:
@@ -227,6 +233,8 @@ async def upload_and_restore(
             magic_ok, _, magic_err = validate_upload_magic(contents, file_ext)
             if not magic_ok:
                 raise HTTPException(status_code=400, detail=magic_err)
+            # P1-1：源文件内容哈希（血缘）
+            input_sha256 = hashlib.sha256(contents).hexdigest()
             await file.seek(0)
             _, input_path = await file_cache.save_upload_file(file, sub_dir="video")
 
@@ -245,6 +253,10 @@ async def upload_and_restore(
             raise HTTPException(status_code=400, detail=f"文件夹中未找到图片或视频: {folder_path}")
         input_path, file_ext = media_files[0]
         detected_type = common.detect_media_type(file_ext)
+        # P1-2：folder 模式对齐上传分支的输入防线（大小 + 魔数），堵旁路校验缺口
+        common.validate_local_media_files([(input_path, detected_type)], config)
+        # P1-1：folder 模式源文件内容哈希（线程内计算，避免阻塞事件循环）
+        input_sha256 = await asyncio.to_thread(compute_file_sha256, input_path)
 
     # ============== 两倍模式后端互斥校验 ==============
     # 当 double_res=True 且输入是图片时，忽略任何客户端传入的分辨率，
@@ -292,6 +304,7 @@ async def upload_and_restore(
         model_size=use_model_size,
         status="pending",
         parameters=params.model_dump_json(),
+        input_sha256=input_sha256,
     )
     record_id = await history_db.add_record(record)
     await common.create_task_state(task_id, record_id, history_db, task_type=task_type)

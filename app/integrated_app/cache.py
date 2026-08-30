@@ -31,6 +31,7 @@ class FileCache:
     - 唯一文件名生成（时间戳 + UUID + 原始扩展名）
     - 大文件/小文件差异化写入策略（大文件异步流式，小文件一次性读取）
     - TTL 过期文件自动清理（后台任务，默认每小时执行一次）
+    - 总大小上限清理（按 mtime 淘汰最旧文件，落实 config.cache.max_size_mb 承诺，P1-4）
     - 缓存统计信息查询
 
     Attributes:
@@ -38,6 +39,7 @@ class FileCache:
         ttl: 文件存活时间（秒），超过此时间未访问的文件将被清理。
         large_file_threshold: 大文件阈值（字节），超过则使用流式写入。
         chunk_size: 流式写入时的块大小（字节）。
+        max_size_bytes: 缓存总大小上限（字节），0 表示不限制（P1-4）。
         _cleanup_task: 后台自动清理的 asyncio Task 引用。
     """
 
@@ -48,6 +50,7 @@ class FileCache:
         *,
         large_file_threshold_mb: int = 10,
         chunk_size_bytes: int = 8192,
+        max_size_mb: int = 0,
     ):
         """初始化文件缓存管理器。
 
@@ -56,12 +59,16 @@ class FileCache:
             ttl: 文件存活时间（秒），默认 86400 秒（24小时）。
             large_file_threshold_mb: 大文件阈值（MB），超过此大小使用流式写入，避免阻塞事件循环。
             chunk_size_bytes: 流式写入的块大小（字节），默认 8192（8KB）。
+            max_size_mb: 缓存总大小上限（MB），超出自动淘汰最旧文件（按 mtime）；
+                0 表示不限制（默认，向后兼容）。
         """
         self.cache_dir = cache_dir
         self.ttl = ttl
         # REFACTOR: 外置原本硬编码的魔法数字 (A4/F1)，支持从 config.runtime.upload 注入
         self.large_file_threshold = large_file_threshold_mb * 1024 * 1024
         self.chunk_size = chunk_size_bytes
+        # P1-4：兑现 config.cache.max_size_mb "超出自动清理最旧文件" 的承诺
+        self.max_size_bytes = max(0, int(max_size_mb)) * 1024 * 1024
         self._cleanup_task: asyncio.Task | None = None
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -236,6 +243,61 @@ class FileCache:
 
         return cleaned
 
+    def cleanup_oversize(self) -> int:
+        """按总大小上限淘汰最旧文件（数据治理 P1-4）。
+
+        落实 config.cache.max_size_mb "超出自动清理最旧文件" 的承诺：
+        递归收集全部缓存文件的 (路径, 大小, mtime)，总大小超过
+        self.max_size_bytes 时按 mtime 升序（最旧优先）逐个删除，
+        直到回落到上限以内。
+
+        Returns:
+            淘汰的文件数量；未配置上限（max_size_bytes=0）时返回 0。
+        """
+        if not self.max_size_bytes or not os.path.exists(self.cache_dir):
+            return 0
+
+        entries: list[tuple[str, int, float]] = []
+
+        def _collect(dir_path: str) -> None:
+            try:
+                with os.scandir(dir_path) as it:
+                    for entry in it:
+                        if entry.is_dir(follow_symlinks=False):
+                            _collect(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            try:
+                                st = entry.stat(follow_symlinks=False)
+                                entries.append((entry.path, st.st_size, st.st_mtime))
+                            except OSError:
+                                continue
+            except OSError:
+                pass
+
+        _collect(self.cache_dir)
+
+        total = sum(size for _path, size, _mtime in entries)
+        if total <= self.max_size_bytes:
+            return 0
+
+        # 最旧优先淘汰（mtime 升序）；总大小恰好回落到上限即停
+        entries.sort(key=lambda item: item[2])
+        evicted = 0
+        for path, size, _mtime in entries:
+            if total <= self.max_size_bytes:
+                break
+            try:
+                os.remove(path)
+                total -= size
+                evicted += 1
+            except OSError:
+                continue
+        if evicted:
+            logger.info(
+                f"缓存总大小超过上限 ({self.max_size_bytes // (1024 * 1024)}MB)，已按最旧优先淘汰 {evicted} 个文件"
+            )
+        return evicted
+
     def _cleanup_expired_in_dir(self, dir_path: str, now: float) -> int:
         """递归清理指定目录下的过期文件（内部辅助方法）。
 
@@ -275,6 +337,8 @@ class FileCache:
             while True:
                 try:
                     self.cleanup_expired()
+                    # P1-4：周期性执行总大小上限淘汰
+                    self.cleanup_oversize()
                 except Exception as e:
                     logger.error(f"自动清理失败: {e}")
                 await asyncio.sleep(interval)

@@ -29,10 +29,18 @@ async def get_metrics():
     推理次数/成功率/平均耗时、缓存统计等 KPI 指标。
 
     Returns:
-        JSON 响应，data 字段包含指标快照字典
+        JSON 响应，data 字段包含指标快照字典（含 vram_leak 显存峰值趋势，P2-4）
     """
     snapshot = metrics_collector.snapshot()
-    return respond_success(data=snapshot.to_dict())
+    data = snapshot.to_dict()
+    # P2-4：暴露显存峰值趋势，便于运维在 OOM 前发现泄漏苗头
+    try:
+        from app.integrated_app.optimization.gpu.vram_leak_detector import vram_leak_detector
+
+        data["vram_leak"] = vram_leak_detector.snapshot()
+    except Exception as e:  # noqa: BLE001 — 可观测性字段失败不影响主指标
+        logger.warning(f"显存泄漏监控快照获取失败: {e}")
+    return respond_success(data=data)
 
 
 @router.get("/metrics/inference")

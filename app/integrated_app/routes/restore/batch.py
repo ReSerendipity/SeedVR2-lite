@@ -182,6 +182,9 @@ async def batch_restore_from_folder(
     if not media_files:
         raise HTTPException(status_code=400, detail=f"文件夹中未找到可处理文件：{folder_path}")
 
+    # P1-2：批量入口对齐上传分支的输入防线（大小 + 魔数），堵旁路校验缺口
+    common.validate_local_media_files(media_files, config)
+
     actual_type = task_type if task_type != "auto" else media_files[0][1]
 
     dit_model = raw_params.dit_model

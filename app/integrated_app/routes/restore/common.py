@@ -21,10 +21,13 @@ API 路由前缀：/api/restore（由子模块注册）
 import logging
 import os
 
+from collections.abc import Sequence
+
 from fastapi import Form, HTTPException
 
 from app.integrated_app.config_models import UnifiedRestoreParams
 from app.integrated_app.model_registry import model_registry
+from app.integrated_app.security.magic_check import validate_upload_magic
 from app.integrated_app.services.restore_service import (  # noqa: F401 — 再导出保持兼容
     build_retry_config,
     create_batch_item,
@@ -91,6 +94,54 @@ def detect_media_type(file_ext: str) -> str | None:
     if ext in ALLOWED_VIDEO_EXTENSIONS:
         return "video"
     return None
+
+
+def validate_local_media_files(media_files: Sequence[tuple[str, str | None]], config: dict) -> None:
+    """folder 模式本地媒体文件安全校验（大小上限 + 魔数，数据治理 P1-2）。
+
+    与 multipart 上传分支对齐同一套输入防线：扩展名白名单已在文件收集时
+    保证，本函数补充大小上限与魔数校验，堵住"本地文件绕过上传校验"
+    的旁路缺口（伪装扩展名/损坏文件不再静默进入推理管线）。
+
+    Args:
+        media_files: 待校验 (文件路径, 媒体类型 "image"/"video") 列表。
+        config: 应用配置 dict（读取 runtime.security.max_upload_*_mb）。
+
+    Raises:
+        HTTPException: 任一文件大小超限、不可读或魔数校验失败时抛出 400。
+    """
+    security_cfg = (config.get("runtime", {}) or {}).get("security", {}) or {}
+    max_image_size = int(security_cfg.get("max_upload_image_mb", 50) or 50) * 1024 * 1024
+    max_video_size = int(security_cfg.get("max_upload_video_mb", 500) or 500) * 1024 * 1024
+
+    for path, media_type in media_files:
+        # 调用方可能只给出路径（类型待推断）：按扩展名补齐，仍无法识别则拒绝
+        resolved_type = media_type or detect_media_type(os.path.splitext(path)[1].lower())
+        if resolved_type not in ("image", "video"):
+            raise HTTPException(status_code=400, detail=f"不支持的文件类型: {os.path.basename(path)}")
+
+        try:
+            size = os.path.getsize(path)
+        except OSError as e:
+            raise HTTPException(status_code=400, detail=f"无法读取文件大小: {path}: {e}") from e
+
+        limit = max_image_size if resolved_type == "image" else max_video_size
+        if size > limit:
+            raise HTTPException(
+                status_code=400,
+                detail=f"文件大小超过限制（最大 {limit // (1024 * 1024)}MB）: {os.path.basename(path)}",
+            )
+
+        try:
+            with open(path, "rb") as f:
+                header = f.read(32)
+        except OSError as e:
+            raise HTTPException(status_code=400, detail=f"无法读取文件内容: {path}: {e}") from e
+
+        file_ext = os.path.splitext(path)[1].lower()
+        magic_ok, _dtype, magic_err = validate_upload_magic(header, file_ext)
+        if not magic_ok:
+            raise HTTPException(status_code=400, detail=f"{os.path.basename(path)}: {magic_err}")
 
 
 def parse_unified_params(
