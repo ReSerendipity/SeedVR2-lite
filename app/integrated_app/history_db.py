@@ -10,6 +10,8 @@
 - WAL 模式: 启用 Write-Ahead Logging 提升并发读写性能
 - FTS5 全文搜索: 对输入/输出文件名、模型大小、状态建立全文索引
 - 自动触发器: INSERT/UPDATE/DELETE 时自动同步 FTS 索引
+- Schema 版本化迁移: 通过 ``PRAGMA user_version`` 标记结构版本（数据治理 P0-2），
+  增量结构变更登记在 ``_MIGRATIONS`` 迁移表中按序执行，每步迁移必须幂等
 - 异步上下文管理器: 支持 async with 语法，确保连接正确释放
 - 白名单列验证: UPDATE 操作验证列名，防止 SQL 注入
 - 批量插入降级: 批量插入失败时自动回退到逐条插入，保证鲁棒性
@@ -20,7 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -29,6 +31,36 @@ import aiosqlite
 from .utils.fts import escape_fts_query
 
 logger = logging.getLogger(__name__)
+
+# 历史库 schema 当前版本（数据治理 P0-2）。
+# 约定：新增列/索引等结构变更时 +1，并在 _MIGRATIONS 登记对应迁移步骤（v0 表示
+# 未打版本标记的历史旧库）。首次建表即包含全部列，因此新库从 v0 一步推进到最新版。
+SCHEMA_VERSION = 1
+
+
+async def _migrate_v0_to_v1(db: aiosqlite.Connection) -> None:
+    """v0（未打版本标记的旧库）→ v1：补列 output_size_bytes / vram_peak_mb。
+
+    兼容在本迁移框架引入之前创建的历史库（成本治理 P1-1 存储可见性 +
+    P2-1 VRAM 峰值落库两批增量列）。必须幂等：新库 CREATE TABLE 已含全部列，
+    重复执行为 no-op。
+
+    Args:
+        db: aiosqlite 连接。
+    """
+    cursor = await db.execute("PRAGMA table_info(history)")
+    existing_cols = {row[1] for row in await cursor.fetchall()}
+    if existing_cols and "output_size_bytes" not in existing_cols:
+        await db.execute("ALTER TABLE history ADD COLUMN output_size_bytes INTEGER DEFAULT 0")
+    if existing_cols and "vram_peak_mb" not in existing_cols:
+        await db.execute("ALTER TABLE history ADD COLUMN vram_peak_mb REAL DEFAULT 0.0")
+
+
+# 迁移登记表：(目标版本, 描述, 迁移函数)。按目标版本升序排列，逐版本顺序执行。
+# 新增迁移时：SCHEMA_VERSION += 1，并在此追加一项；迁移函数必须幂等。
+_MIGRATIONS: tuple[tuple[int, str, Callable[[aiosqlite.Connection], Awaitable[None]]], ...] = (
+    (1, "补列 output_size_bytes / vram_peak_mb（旧库兼容）", _migrate_v0_to_v1),
+)
 
 
 @dataclass
@@ -164,13 +196,26 @@ class HistoryDB:
             )
         """)
 
-        # 增量迁移：老库补列（成本治理 P1-1 每任务存储可见性 + P2-1 VRAM 峰值落库）
-        cursor = await db.execute("PRAGMA table_info(history)")
-        existing_cols = {row[1] for row in await cursor.fetchall()}
-        if "output_size_bytes" not in existing_cols:
-            await db.execute("ALTER TABLE history ADD COLUMN output_size_bytes INTEGER DEFAULT 0")
-        if "vram_peak_mb" not in existing_cols:
-            await db.execute("ALTER TABLE history ADD COLUMN vram_peak_mb REAL DEFAULT 0.0")
+        # ---- 版本化迁移（数据治理 P0-2）：按 _MIGRATIONS 顺序推进 user_version ----
+        current_version = await self._get_schema_version(db)
+        if current_version > SCHEMA_VERSION:
+            logger.warning(
+                f"历史数据库 schema 版本 ({current_version}) 高于代码版本 ({SCHEMA_VERSION})，"
+                f"可能是程序回滚，跳过迁移"
+            )
+        else:
+            initial_version = current_version
+            for target, desc, migrate in _MIGRATIONS:
+                if current_version < target:
+                    logger.info(f"应用 history schema 迁移 v{current_version} → v{target}: {desc}")
+                    await migrate(db)
+                    current_version = target
+            # 版本落盘：迁移函数只负责结构变更，user_version 标记统一在此收口。
+            # 判据用"落库前版本"而非循环推进后的变量——新库从 v0 一步推进到最新版
+            # 时推进后变量已等于 SCHEMA_VERSION，旧写法（<）与同值比较均会漏写。
+            if initial_version != SCHEMA_VERSION:
+                await self._set_schema_version(db, SCHEMA_VERSION)
+                logger.info(f"历史数据库 schema 版本已标记为 v{SCHEMA_VERSION}")
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
@@ -227,6 +272,39 @@ class HistoryDB:
         logger.info(f"历史数据库已初始化: {self.db_path}")
 
     # ==================== 私有辅助方法 ====================
+
+    async def _get_schema_version(self, db: aiosqlite.Connection) -> int:
+        """读取数据库 schema 版本标记（PRAGMA user_version），无标记返回 0。
+
+        Args:
+            db: aiosqlite 连接。
+
+        Returns:
+            当前 schema 版本号；未打过标记的历史旧库为 0。
+        """
+        cursor = await db.execute("PRAGMA user_version")
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
+    async def _set_schema_version(self, db: aiosqlite.Connection, version: int) -> None:
+        """写入 schema 版本标记（PRAGMA user_version）。version 为代码内常量，无注入面。
+
+        Args:
+            db: aiosqlite 连接。
+            version: 要写入的版本号（来自 SCHEMA_VERSION 常量）。
+        """
+        # nosemgrep: sqlalchemy-execute-raw-query - version 为代码常量 SCHEMA_VERSION，无注入面
+        await db.execute(f"PRAGMA user_version={int(version)}")
+
+    async def get_schema_version(self) -> int:
+        """查询当前数据库的 schema 版本（公开接口，供运维/测试自检）。
+
+        Returns:
+            当前 schema 版本号；未初始化时返回 0。
+        """
+        if not self._initialized or self._db is None:
+            return 0
+        return await self._get_schema_version(self._db)
 
     async def _execute_write(
         self,
