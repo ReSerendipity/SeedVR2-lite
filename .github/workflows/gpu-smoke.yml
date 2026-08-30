@@ -94,10 +94,11 @@ jobs:
             -BundleDir "$PWD\bundle" -TargetDir $target
           if ($LASTEXITCODE -ne 0) { throw "unpack failed" }
 
-      - name: Smoke with REAL inference (--require-inference)
+      - name: Smoke with REAL inference + quality gate (--require-inference --quality-gate)
         shell: pwsh
         run: |
           python .\scripts\smoke_portable_bundle.py `
             --app-dir (Join-Path $PWD 'target\SeedVR2-Portable') `
-            --require-inference --boot-timeout 900 --task-timeout 1800 --resolution 512
+            --require-inference --quality-gate --min-psnr 15 --min-ssim 0.5 `
+            --boot-timeout 900 --task-timeout 1800 --resolution 512
           if ($LASTEXITCODE -ne 0) { throw "GPU smoke failed" }

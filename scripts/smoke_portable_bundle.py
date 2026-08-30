@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import struct
@@ -320,6 +321,110 @@ def verify_output(data: dict[str, Any], app_dir: Path) -> Path:
     return candidate
 
 
+def compute_quality(python_exe: str, app_dir: Path, input_path: Path, output_path: Path) -> dict[str, float]:
+    """用便携解释器（含 numpy/PIL）计算修复输出相对原始输入的 PSNR/SSIM。
+
+    复用应用内置的 ``app.integrated_app.utils.image_metrics``（与 CI 期 golden
+    质量门禁同一套口径），保证「冒烟质量门禁」与「开发期质量门禁」指标一致。
+
+    输出会被缩放到输入尺寸后再比较（修复常伴随上采样），只衡量内容保真度，
+    用于拦截灾难性失败（黑屏 / 冻结模型 / NaN / 内容错乱）。
+
+    Args:
+        python_exe: 便携解释器路径（含 numpy/PIL/torch）。
+        app_dir: 解包目录（其下 ``app/`` 含 integrated_app 包）。
+        input_path: 原始输入图路径。
+        output_path: 修复输出图路径。
+
+    Returns:
+        ``{"psnr_db": float, "ssim": float}``；图像无法解码或依赖缺失时返回
+        ``{"error": ...}``，交由调用方判失败。
+    """
+    import tempfile
+
+    snippet = """
+import importlib.util, json, os, sys
+from pathlib import Path
+app_dir = sys.argv[1]
+input_path = sys.argv[2]
+output_path = sys.argv[3]
+# 直接按文件路径加载 image_metrics，避免触发 integrated_app.utils 包 __init__
+# 的潜在重导入（与 CI golden 门禁同一套 PSNR/SSIM 实现）
+img_mod = os.path.join(app_dir, 'app', 'integrated_app', 'utils', 'image_metrics.py')
+spec = importlib.util.spec_from_file_location("seedvr2_image_metrics", img_mod)
+metrics_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(metrics_mod)
+try:
+    from PIL import Image
+    import numpy as np
+    psnr = metrics_mod.psnr
+    ssim = metrics_mod.ssim
+except Exception as exc:
+    print(json.dumps({"error": repr(exc)}))
+    sys.exit(2)
+try:
+    inp = np.array(Image.open(input_path).convert('RGB'))
+    out0 = Image.open(output_path).convert('RGB')
+    if out0.size != (inp.shape[1], inp.shape[0]):
+        out0 = out0.resize((inp.shape[1], inp.shape[0]))
+    out = np.array(out0)
+    print(json.dumps({"psnr_db": psnr(inp, out), "ssim": ssim(inp, out)}))
+except Exception as exc:
+    print(json.dumps({"error": repr(exc)}))
+    sys.exit(3)
+"""
+    tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115 - 用完即删
+        suffix=".py", delete=False, dir=str(app_dir)
+    )
+    tmp.write(snippet.encode("utf-8"))
+    tmp.close()
+    try:
+        proc = subprocess.run(  # noqa: S603
+            [python_exe, tmp.name, str(app_dir), str(input_path), str(output_path)],
+            cwd=str(app_dir),
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        out = (proc.stdout or "").strip().splitlines()
+        if not out:
+            return {"error": (proc.stderr or "no output").strip()[:300]}
+        return json.loads(out[-1])
+    except (ValueError, json.JSONDecodeError) as exc:
+        return {"error": f"无法解析质量评估输出: {exc}"}
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp.name)
+
+
+def passes_quality_gate(
+    metrics: dict[str, float], min_psnr: float, min_ssim: float
+) -> tuple[bool, str]:
+    """判定真实推理输出是否满足质量门禁。
+
+    Args:
+        metrics: ``compute_quality`` 的返回（含 psnr_db/ssim 或 error）。
+        min_psnr: PSNR 下限（dB）。
+        min_ssim: SSIM 下限。
+
+    Returns:
+        (是否通过, 人类可读说明)。
+    """
+    if "error" in metrics:
+        return False, f"质量评估失败：{metrics['error']}"
+    psnr_db = float(metrics.get("psnr_db", 0.0))
+    ssim_v = float(metrics.get("ssim", 0.0))
+    reasons: list[str] = []
+    if psnr_db < min_psnr:
+        reasons.append(f"PSNR {psnr_db:.2f}dB < {min_psnr:.2f}dB")
+    if ssim_v < min_ssim:
+        reasons.append(f"SSIM {ssim_v:.4f} < {min_ssim:.4f}")
+    if reasons:
+        return False, "；".join(reasons)
+    return True, f"PSNR {psnr_db:.2f}dB / SSIM {ssim_v:.4f}"
+
+
 def find_python(app_dir: Path, explicit: str) -> str:
     """确定用于跑冒烟的 python：显式参数 → 便携 WPy64 → 当前解释器。"""
     if explicit:
@@ -376,7 +481,18 @@ def run(args: argparse.Namespace) -> int:
                 raise
             print(f"  任务已创建：{task_id}")
             data = poll_result(base, task_id, args.task_timeout)
-            verify_output(data, app_dir)
+            output_path = verify_output(data, app_dir)
+            if args.quality_gate:
+                # 真实推理输出保真度校验：输出应与原输入内容高度一致
+                # （修复是内容保持型上采样，而非重绘），拦截黑屏/冻结/NaN/错乱
+                input_path = app_dir / "logs" / "smoke_input.png"
+                input_path.parent.mkdir(parents=True, exist_ok=True)
+                input_path.write_bytes(png)
+                metrics = compute_quality(python_exe, app_dir, input_path, output_path)
+                ok, why = passes_quality_gate(metrics, args.min_psnr, args.min_ssim)
+                if not ok:
+                    raise SmokeError(f"GPU 真实推理质量门禁未通过：{why}")
+                print(f"  质量门禁通过：{why}")
             elapsed = data.get("processing_time") or data.get("elapsed")
             print(f"  推理耗时：{elapsed}")
             print(f"PASS  解包后可真实完成一次修复（{'required' if args.require_inference else 'observed'}）")
@@ -413,6 +529,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--resolution", type=int, default=512, help="冒烟任务目标分辨率，小才快")
     parser.add_argument("--log", default="", help="服务日志路径，默认 <app-dir>/logs/smoke_portable.log")
     parser.add_argument("--require-inference", action="store_true", help="必须真跑完一次修复（有 GPU 时使用）")
+    parser.add_argument(
+        "--quality-gate",
+        action="store_true",
+        help="真实推理后校验输出保真度（PSNR/SSIM 不低于阈值），仅在有真实输出时生效",
+    )
+    parser.add_argument("--min-psnr", type=float, default=15.0, help="质量门禁 PSNR 下限(dB)，默认 15（拦截黑屏/冻结/NaN）")
+    parser.add_argument("--min-ssim", type=float, default=0.5, help="质量门禁 SSIM 下限，默认 0.5")
     parser.add_argument("--keep-log", action="store_true", help="结束时打印日志路径")
     return parser.parse_args(argv)
 
