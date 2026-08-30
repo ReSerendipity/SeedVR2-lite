@@ -25,12 +25,17 @@
 特性:
     - 幂等：已存在的文件自动跳过，不会重复下载
     - 断点续传：由 huggingface_hub 内部机制保证
+    - 镜像加速：--endpoint https://hf-mirror.com 或 HF_ENDPOINT 环境变量（P1-3）
+    - 下载后校验：立即按 config.yaml 中的 sha256_* 期望哈希校验完整性，
+      损坏文件当场暴露，而不是拖到推理加载时才失败（P1-3）
     - 文件名与 config.yaml 中 model.models.<size> 的引用完全一致，
       下载完成后无需任何改名/移动即可被应用识别
 """
 
 import argparse
+import hashlib
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -105,6 +110,7 @@ def download_model(
     repo_id: str = _DEFAULT_REPO,
     with_vae: bool = True,
     only_files: list[str] | None = None,
+    verify_hashes: bool = True,
 ) -> None:
     """从 HuggingFace 下载指定尺寸的 SeedVR2 模型权重到根目录。
 
@@ -117,12 +123,14 @@ def download_model(
                     用于便携包只取单一精度（如只要 FP8）而不拖下整组权重。默认为 None。
                     注意：only_files 模式下**任何文件下载不到都会抛错终止**，不允许静默跳过，
                     因为调用方（便携包 CI）把「全部权重就在该仓库」当作前提。
+        verify_hashes: 下载后按 config.yaml 的 sha256_* 期望哈希校验完整性。默认 True。
 
     Returns:
         None
 
     Raises:
         ValueError: model_size 不在支持列表时抛出（only_files 未给定 & model_size 非法）。
+        RuntimeError: 文件缺失或 SHA256 校验失败时抛出。
     """
     if importlib.util.find_spec("huggingface_hub") is None:
         print("请先安装 huggingface_hub: pip install huggingface_hub")
@@ -168,6 +176,99 @@ def download_model(
     if missing or not ok:
         raise RuntimeError(f"以下权重文件未能从 {repo_id} 下载到（或下载后缺失）：{', '.join(missing or files)}")
 
+    # 下载后立即按 config.yaml 的 sha256_* 期望哈希校验（成本治理 P1-3）
+    if verify_hashes:
+        config_path = Path(__file__).resolve().parent.parent / "config.yaml"
+        verify_downloaded_hashes(save_path, files, config_path)
+
+
+def _load_expected_hashes(config_path: Path) -> dict[str, str]:
+    """从 config.yaml 收集「文件名 → 期望 sha256」映射。
+
+    遍历 model.models 各条目，收集主权重（fp16/fp8）与共享组件
+    （vae / pos_emb / neg_emb）的期望哈希。
+
+    Args:
+        config_path: config.yaml 路径。
+
+    Returns:
+        dict: 文件名到期望哈希的映射（缺失字段的文件不进入映射）。
+    """
+    import yaml
+
+    if not config_path.exists():
+        print(f"  [警告] 未找到 {config_path}，跳过 SHA256 校验")
+        return {}
+
+    with open(config_path, encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+
+    hash_pairs = (
+        ("checkpoint_fp16", "sha256_fp16"),
+        ("checkpoint_fp8", "sha256_fp8"),
+        ("vae_checkpoint", "sha256_vae"),
+        ("pos_emb", "sha256_pos_emb"),
+        ("neg_emb", "sha256_neg_emb"),
+    )
+    hashes: dict[str, str] = {}
+    for entry in ((cfg.get("model") or {}).get("models") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        for name_key, hash_key in hash_pairs:
+            name = entry.get(name_key)
+            expected = entry.get(hash_key)
+            if name and expected:
+                hashes[str(name)] = str(expected)
+    return hashes
+
+
+def _sha256_of(path: Path) -> str:
+    """流式计算文件 SHA256（避免大权重整文件读入内存）。"""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_downloaded_hashes(save_dir: Path, files: list[str], config_path: Path) -> None:
+    """对下载产物按 config.yaml 期望哈希逐一校验（成本治理 P1-3）。
+
+    Args:
+        save_dir: 下载目录。
+        files: 本次下载清单内的文件名。
+        config_path: config.yaml 路径（期望哈希来源）。
+
+    Raises:
+        RuntimeError: 任一文件的 SHA256 与期望值不符时抛出。
+    """
+    expected_map = _load_expected_hashes(config_path)
+    if not expected_map:
+        return
+
+    verified = skipped = 0
+    print()
+    print("开始 SHA256 完整性校验（期望哈希来自 config.yaml）:")
+    for filename in files:
+        expected = expected_map.get(filename)
+        if not expected:
+            skipped += 1
+            continue
+        target = save_dir / filename
+        if not target.exists() or target.stat().st_size == 0:
+            continue  # 缺失文件已由存在性检查负责报错
+        actual = _sha256_of(target)
+        if actual.lower() != expected.lower():
+            raise RuntimeError(
+                f"SHA256 校验失败: {filename}\n"
+                f"  期望: {expected}\n"
+                f"  实际: {actual}\n"
+                f"该文件可能在下载或镜像过程中损坏，请删除后重新下载。"
+            )
+        verified += 1
+        print(f"  [校验] {filename}: SHA256 OK")
+    print(f"SHA256 校验完成: {verified} 个通过, {skipped} 个无期望哈希（跳过）")
+
 
 if __name__ == "__main__":
     # Windows 控制台/CI runner 的默认编码可能是 cp1252/GBK，本脚本输出含中文，
@@ -186,6 +287,17 @@ if __name__ == "__main__":
     parser.add_argument("--save-dir", default="model", help="保存目录 (默认 model)")
     parser.add_argument("--repo", default=_DEFAULT_REPO, help="HuggingFace 仓库 ID (默认 numz/SeedVR2_comfyUI)")
     parser.add_argument(
+        "--endpoint",
+        default=None,
+        help="HuggingFace endpoint，如 https://hf-mirror.com（国内镜像加速，P1-3）。"
+        "未指定时保留 HF_ENDPOINT 环境变量或官方默认值",
+    )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="跳过下载后的 SHA256 完整性校验（默认开启校验）",
+    )
+    parser.add_argument(
         "--no-vae",
         action="store_true",
         help="不下载共享的 VAE / 文本嵌入文件",
@@ -198,4 +310,15 @@ if __name__ == "__main__":
         help="只下载列出的文件名（忽略 --size/--no-vae 的整组清单），" "用于便携打包只取单一精度权重",
     )
     args = parser.parse_args()
-    download_model(args.size, args.save_dir, args.repo, with_vae=not args.no_vae, only_files=args.files)
+    # HF_ENDPOINT 必须在 huggingface_hub 导入前设置（库在 import 时读取该变量）
+    if args.endpoint:
+        os.environ["HF_ENDPOINT"] = args.endpoint
+        print(f"使用 HuggingFace endpoint: {args.endpoint}")
+    download_model(
+        args.size,
+        args.save_dir,
+        args.repo,
+        with_vae=not args.no_vae,
+        only_files=args.files,
+        verify_hashes=not args.no_verify,
+    )

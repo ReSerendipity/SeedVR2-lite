@@ -85,13 +85,17 @@ function Find-SeedVR2SevenZip {
 }
 
 function Find-SeedVR2SystemTar {
-    <# 系统自带 bsdtar（Win10 1803+ 提供），可读 zip / 写 zip。 #>
+    <# 系统自带 bsdtar（Win10 1803+ 提供），可读 zip / 写 zip。
+       注意：必须优先取 System32 的 bsdtar——从 Git Bash/MSYS 环境调用本脚本时
+       PATH 里的 /usr/bin/tar（GNU tar）会排在前面，GNU tar 把 C:\ 路径当
+       远程主机处理（"Cannot connect to C: resolve failed"，退出码 128），
+       见 KNOWN_ISSUES #35。Get-Command 仅作 System32 缺失时的回退。 #>
+    if (Test-Path -LiteralPath "$env:SystemRoot\System32\tar.exe") {
+        return "$env:SystemRoot\System32\tar.exe"
+    }
     $cmd = Get-Command tar.exe -ErrorAction SilentlyContinue
     if ($cmd) {
         return $cmd.Source
-    }
-    if (Test-Path -LiteralPath "$env:SystemRoot\System32\tar.exe") {
-        return "$env:SystemRoot\System32\tar.exe"
     }
     return $null
 }

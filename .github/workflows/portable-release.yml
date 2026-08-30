@@ -99,6 +99,19 @@ jobs:
           Write-Host "required weights: $($names -join ', ')"
           "names=$($names -join ' ')" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
+      - name: Restore model weight cache (cost P1-3)
+        uses: actions/cache@v4
+        with:
+          # Cache the downloaded safetensors so repeated release builds skip the
+          # ~3.6 GB re-download from HF. download_model.py is idempotent (skips
+          # existing non-empty files) and now also verifies sha256 against
+          # config.yaml, so a corrupted/stale cache fails loudly instead of
+          # producing a bad bundle.
+          path: model
+          key: model-weights-${{ steps.files.outputs.names }}-${{ hashFiles('config.yaml') }}
+          restore-keys: |
+            model-weights-${{ steps.files.outputs.names }}-
+
       - name: 下载便携包模型权重
         shell: powershell
         run: |
