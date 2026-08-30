@@ -35,7 +35,21 @@ logger = logging.getLogger(__name__)
 # 历史库 schema 当前版本（数据治理 P0-2）。
 # 约定：新增列/索引等结构变更时 +1，并在 _MIGRATIONS 登记对应迁移步骤（v0 表示
 # 未打版本标记的历史旧库）。首次建表即包含全部列，因此新库从 v0 一步推进到最新版。
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+
+async def _migrate_v1_to_v2(db: aiosqlite.Connection) -> None:
+    """v1 → v2：history 表新增 input_sha256 列（数据治理 P1-1 内容寻址血缘）。
+
+    必须幂等：列已存在时 no-op。
+
+    Args:
+        db: aiosqlite 连接。
+    """
+    cursor = await db.execute("PRAGMA table_info(history)")
+    existing_cols = {row[1] for row in await cursor.fetchall()}
+    if existing_cols and "input_sha256" not in existing_cols:
+        await db.execute("ALTER TABLE history ADD COLUMN input_sha256 TEXT DEFAULT ''")
 
 
 async def _migrate_v0_to_v1(db: aiosqlite.Connection) -> None:
@@ -60,6 +74,7 @@ async def _migrate_v0_to_v1(db: aiosqlite.Connection) -> None:
 # 新增迁移时：SCHEMA_VERSION += 1，并在此追加一项；迁移函数必须幂等。
 _MIGRATIONS: tuple[tuple[int, str, Callable[[aiosqlite.Connection], Awaitable[None]]], ...] = (
     (1, "补列 output_size_bytes / vram_peak_mb（旧库兼容）", _migrate_v0_to_v1),
+    (2, "补列 input_sha256（源文件内容寻址血缘，P1-1）", _migrate_v1_to_v2),
 )
 
 
@@ -82,6 +97,8 @@ class HistoryRecord:
         error_message: 失败时的错误信息。
         output_size_bytes: 输出文件大小（字节），用于按任务聚合存储成本（P1-1）。
         vram_peak_mb: 本次推理的 VRAM 峰值（MB），无监控数据时为 0（P2-1）。
+        input_sha256: 源输入文件内容 SHA-256（hex），内容寻址血缘（数据治理 P1-1）；
+            空串表示未计算（如内存数据库/测试桩场景）。
     """
 
     id: int | None = None
@@ -96,6 +113,7 @@ class HistoryRecord:
     error_message: str = ""
     output_size_bytes: int = 0
     vram_peak_mb: float = 0.0
+    input_sha256: str = ""
 
 
 @dataclass
@@ -192,7 +210,8 @@ class HistoryDB:
                 created_at TEXT NOT NULL,
                 error_message TEXT DEFAULT '',
                 output_size_bytes INTEGER DEFAULT 0,
-                vram_peak_mb REAL DEFAULT 0.0
+                vram_peak_mb REAL DEFAULT 0.0,
+                input_sha256 TEXT DEFAULT ''
             )
         """)
 
@@ -369,8 +388,8 @@ class HistoryDB:
             record.created_at = datetime.now().isoformat()
 
         record_id = await self._execute_write(
-            """INSERT INTO history (task_type, input_file, output_file, model_size, status, parameters, processing_time, created_at, error_message, output_size_bytes, vram_peak_mb)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO history (task_type, input_file, output_file, model_size, status, parameters, processing_time, created_at, error_message, output_size_bytes, vram_peak_mb, input_sha256)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 record.task_type,
                 record.input_file,
@@ -383,6 +402,7 @@ class HistoryDB:
                 record.error_message,
                 record.output_size_bytes,
                 record.vram_peak_mb,
+                record.input_sha256,
             ),
         )
         await self._maybe_prune()
@@ -411,11 +431,12 @@ class HistoryDB:
                     record.error_message,
                     record.output_size_bytes,
                     record.vram_peak_mb,
+                    record.input_sha256,
                 )
             )
 
-        sql = """INSERT INTO history (task_type, input_file, output_file, model_size, status, parameters, processing_time, created_at, error_message, output_size_bytes, vram_peak_mb)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        sql = """INSERT INTO history (task_type, input_file, output_file, model_size, status, parameters, processing_time, created_at, error_message, output_size_bytes, vram_peak_mb, input_sha256)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
         try:
             # P1-7：先取当前最大 id 作为基线，插入后按基线推算整批 id。
@@ -457,6 +478,7 @@ class HistoryDB:
             "parameters",
             "output_size_bytes",
             "vram_peak_mb",
+            "input_sha256",
         }
         invalid_keys = set(kwargs.keys()) - allowed_columns
         if invalid_keys:
@@ -562,6 +584,23 @@ class HistoryDB:
         total = count_row[0] if count_row else 0
 
         return records, total
+
+    async def find_by_output_file(self, output_file: str) -> HistoryRecord | None:
+        """按输出文件路径反查历史记录（数据治理 P3-1 输出溯源）。
+
+        Args:
+            output_file: 输出文件路径（精确匹配）。
+
+        Returns:
+            命中的最新一条 HistoryRecord；未找到或空路径返回 None。
+        """
+        if not output_file:
+            return None
+        row = await self._fetch_one(
+            "SELECT * FROM history WHERE output_file = ? ORDER BY id DESC LIMIT 1",
+            (output_file,),
+        )
+        return self._row_to_record(row) if row else None
 
     async def delete_record(self, record_id: int) -> bool:
         """删除记录"""
@@ -778,6 +817,7 @@ class HistoryDB:
             error_message=row["error_message"],
             output_size_bytes=row["output_size_bytes"] if "output_size_bytes" in cols else 0,
             vram_peak_mb=row["vram_peak_mb"] if "vram_peak_mb" in cols else 0.0,
+            input_sha256=row["input_sha256"] if "input_sha256" in cols else "",
         )
 
     def _row_to_task_record(self, row: sqlite3.Row) -> TaskRecord:
