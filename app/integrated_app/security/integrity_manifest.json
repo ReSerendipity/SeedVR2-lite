@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-08-30T13:28:10.102495",
+  "generated_at": "2026-08-30T17:38:02.874879",
   "generator": "scripts/generate_integrity_manifest.py",
   "description": "核心安全模块 SHA256 完整性清单，用于启动时自检",
   "files": {
-    "app_server.py": "a13609d560c5bcd0e17589c38f00105666e37c6c7fec4b2b0026692f755ce5d2",
+    "app_server.py": "b048ba9a072dcee87c077155807fb876bf03972eaac3c70796e921e20f7ed4e2",
     "config.py": "fd512ba10591647419c0d3f7a4e681abe352538efec1bb4b0ef75cdf0bca08e7",
     "model_manager.py": "a23e197f17527a57da76caa1a7f64d7edbde04dda510e74fcf49e05eb4d4e040",
     "security/path_guard.py": "c28d7118a71d9c69284e46139386baa1d0e6b29563cbae6dfb89a08a55e637a5",
@@ -13,6 +13,6 @@
     "middleware/csrf.py": "f375b1d8d78c3c1b01cf83851679b3758bf57ba3aae8fc8b68c6b817837acb4c",
     "middleware/basic_auth.py": "8fc11e0bf340c8ee20efa3b957df0960d4f53bbacf9a6a92f9fcb0ef269e8c1a",
     "middleware/rate_limit.py": "73aaa4ee6848a6870c5baf00beef7b31e40a0667f446abf9ecd51e19a21f11b9",
-    "engines/seedvr2_engine.py": "0139ab82a1eb310b1c6024e2647f2fd6036e81355c354aeea396b0ecc2ba0aa5"
+    "engines/seedvr2_engine.py": "33726dfdfd419c184b5f8c5864397e0367a9dbaebe5ffa6303a7dd6cc40d9365"
   }
 }

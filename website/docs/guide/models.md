@@ -87,4 +87,25 @@ model/
 └── neg_emb.pt
 ```
 
-> 💡 多项目共用一套模型？把 `config.yaml` 的 `model.model_source_mode` 改为 `shared` 并指定 `model.shared_models_root` 指向共享目录即可（见「模型共享模式」章节）。
+> 💡 多项目共用一套模型？把 `config.yaml` 的 `model.model_source_mode` 改为 `shared` 并指定 `model.shared_models_root` 指向共享目录即可（见下方「模型共享模式」）。
+
+## 模型共享模式（shared）
+
+一台机器跑多个 SeedVR2 实例（或家族内多个项目）时，默认的 `portable` 模式会让每个实例各自持有一份约 60 GB 的权重。`shared` 模式让所有实例指向同一份物理文件，磁盘占用只算一份：
+
+```yaml
+model:
+  model_source_mode: shared
+  shared_models_root: "D:/shared_models"   # 绝对路径，目录结构要求与 portable 的 model/ 完全一致
+  pretrained_dir: model                    # portable 模式的回退值，shared 下不再使用
+```
+
+要求与行为：
+
+- 共享目录必须是**平铺结构**（权重直接放在根下，不要建子目录），文件名与各模型条目的 `checkpoint_fp16` / `checkpoint_fp8` / `vae_checkpoint` / `pos_emb` / `neg_emb` 字段一致；
+- `shared_models_root` 为空字符串时自动回退到 `portable` 模式（使用 `pretrained_dir`）；
+- SHA256 完整性校验（`config.yaml` 各条目的 `sha256_*` 字段）在 shared 模式下同样生效，多个实例共享的是同一份已校验权重；
+- 首次配置：把现有 `model/` 目录的内容复制或移动到共享目录即可，之后其他实例无需再下载；
+- 下载脚本可直接写入共享目录：`python scripts/download_model.py --size 3b --save-dir "D:/shared_models"`；
+- 7B 与 7B-Sharp 是**不同的权重**（字节数相同但内容不同，`sha256_*` 可验证），共享目录里两组文件都需要保留；如果只用得上 FP8，可按需只保留 `*_fp8_e4m3fn.safetensors` 以减半存储。
+

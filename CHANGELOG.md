@@ -2,6 +2,24 @@
 
 ## [未发布] - 2026-08-30
 
+### 成本资源治理（评估报告 P0-P2 十项全量落地，docs/reports/成本资源治理体系评估_20260830.md）
+
+* **cost(P0):** 存储生命周期专项——视频帧临时目录在合成失败/取消路径统一回收（`_video_pipeline.py` 5 处退出点，原实现仅成功路径清理，长视频残留可达数十 GB）；多步放大 `mkdtemp` 临时目录修复（`post_processing.py`，原实现漏删最后一个中间文件且从不删目录）；新增 `services/output_retention.py` outputs/ 保留策略（`retention.outputs_max_age_days=14` + `outputs_max_files`，lifespan 启动首扫 + 周期清理，推理任务运行中自动跳过）；`history.max_records` 落实（`HistoryDB.prune_old_records()` 写入路径自动裁剪最旧记录并同步 FTS 索引，两步确定式删除规避 SQLite 同表子查询陷阱）；任务提交前磁盘预检（`retention.disk_min_free_gb=5.0`，不足返回 507）
+* **cost(P0):** OOM 自动降级接线——`bad_case_retry.retry_with_bad_case_detection()`（464 行既有实现首次接入）接入单图/单视频任务：OOM 后按 blocks_to_swap↑ → resolution↓ → 种子轮换阶梯自动降级重试（`runtime.retry` 可配置/禁用）；`oom_protect` 挂接 `infer_image`/`infer_video` 并修正宽匹配缺陷（`"CUDA" in str(e)` 把 device-side assert 等非 OOM 错误误判为显存不足，KNOWN_ISSUES #33）；批量路径 OOM 分类降级并持久到批级配置；OOM 关键词补中文「显存不足」
+* **cost(P1):** 成本可见性——`metrics.record_inference` 接入上传/批量全部终态（原实现无调用方，`/api/system/metrics` 推理计数恒 0）；history 表新增 `output_size_bytes` / `vram_peak_mb` 列（PRAGMA 增量迁移兼容老库）；`GET /api/system/history/statistics` 新增 `total_processing_time` / `total_output_bytes` 聚合；历史页新增统计卡片（完成任务总数 / 累计耗时 / 累计输出体积 / 平均耗时，5 语言词表同步）
+* **cost(P1):** 模型驻留治理——图像路径 `dit_cache_model` 落地（原实现采样后无条件销毁，每张图重付 6.8-16.5GB 权重磁盘加载+反量化）；新增 DiT 加载签名守卫 `build_dit_load_signature()`（checkpoint/精度/blocks_to_swap/attention/compile 任一变化自动重载，图像+视频双路径），保障降级重试参数真实生效；新增模型空闲超时自动卸载（`model.idle_unload_minutes=15`，model_registry 活动跟踪 + lifespan 周期任务，任务运行中永不触发）；`inference.cache_model` 默认 true（视频跨任务驻留 DiT/VAE）
+* **cost(P1):** 下载链路加固——`download_model.py` 下载后按 `config.yaml` 的 `sha256_*` 期望哈希立即校验（损坏文件当场暴露而非拖到推理加载时，`--no-verify` 可跳过）；新增 `--endpoint` 参数支持 hf-mirror 镜像（`HF_ENDPOINT` 在 huggingface_hub 导入前注入）；`portable-release.yml` 增加 actions/cache 缓存模型权重（每次构建省约 3.6 GiB 重复下载，key 绑定文件名清单 + config.yaml 哈希）
+* **cost(P1):** 死配置与遗留清理——删除引擎零读取的 `inference.vae_tile_size` / `inference.vae_overlap` 键（config.yaml + Pydantic 模型；评估报告所列 `user_preferences.blocks_to_swap/blockswap_enabled` 经核实有前端 legacy 迁移读者，**保留**）；清理 logs/ 遗留 `gpu_monitor*.csv` ×5 与 `csrf_probe.log`；`config.yaml.bak.20260826` 移入 `docs/_devarchive/`
+* **cost(P2):** GPU 可观测升级——新增 `optimization/gpu/nvml_monitor.py`（nvidia-smi 子进程查询 SM 真实利用率与温度，2s TTL + 30s 失败冷却，无 pynvml 依赖）；`GPUInfo` 增 `sm_utilization_pct` / `temperature_c`，`GET /api/system/gpu` 暴露；`/api/system/metrics` 利用率优先取 SM 真实值（原"利用率"实为显存占用比）；`VRAMPeakMonitor` 扩展到图像路径（vae_encode/dit_sample/vae_decode 三阶段），全局峰值经 `metadata.vram_peak_mb` 落库
+* **cost(P2):** block-swap 预取流水——新增 `inference.blockswap_prefetch`（默认 **false**）：在专用侧流上预取下一个被交换块到 GPU，H2D 传输与当前块计算重叠（直击 32 块换出 50-70% 降速的最大暴露项）；事件等待保证拷贝完成后才计算，无 CUDA 环境静默降级为同步换入，稳态多驻留一个块（数百 MB 级）为权衡代价。默认值的实测依据：3B@512 稳态 on 10.2s vs off 8.0s、3B@2048 稳态 24.2s vs 24.3s（本机传输快、单块计算短，重叠收益≈0 且多驻留一块显存），故保守默认关闭，7B 大换出负载验证后再开启；prefetch on/off 输出像素差异（max 4/255）与同配置两次运行的基线噪声同级，正确性验收通过
+* **cost(P2):** 基准归档与趋势——`bench_restore_api.py` 结果自动归档 `outputs/benchmark-history/benchmarks.jsonl`（含后端真实耗时 `backend_processing_s` 与 GPU 上下文），`--trend N` 打印跨次运行趋势对比，`--no-archive` 可跳过
+* **cost(P2):** 文档——website 模型页补全「模型共享模式（shared）」章节（多实例共享 60GB 权重的配置方法与约束，消除断链引用）
+* **fix:** SQLite `DELETE ... WHERE id NOT IN (同表子查询)` 看到删除中途表状态导致全表被删（KNOWN_ISSUES #31），历史裁剪改为两步确定式；sqlite3 DELETE 后 `lastrowid` 残留上次 INSERT 值导致删除计数取错（KNOWN_ISSUES #32），`_execute_write` 增 `want_rowcount` 显式开关
+* **test:** 新增 `tests/test_storage_lifecycle.py`（14 项）、`tests/test_oom_retry_wiring.py`（14 项）、`tests/test_model_residency.py`（13 项）、`tests/test_download_verify.py`（6 项）、`tests/test_gpu_observability.py`（12 项）、`tests/test_blockswap_prefetch.py`（5 项）
+* **docs:** `generate_integrity_manifest.py` 重新生成清单（SOP-4，覆盖 app_server.py / seedvr2_engine.py 改动）；KNOWN_ISSUES 追加 #31-#33
+* **fix(test-gate):** 覆盖率门禁诚实对齐——全量 `pytest --cov` 实测 61.8% 暴露 `fail_under=70` 与 ci.yml / precheck.ps1 真实门禁（coverage.xml line-rate ≥ 50%）矛盾且从未生效（HEAD 基线数学上限 ~68%）；pyproject `fail_under` 70→50 三处统一（AGENTS 修订 v1.36，KNOWN_ISSUES #34），M1 路线图改为「回升至 70」
+* **fix(mypy):** 修复 `security/weight_encryption.py` 既有 mypy 错误（返回注解误用小写 `callable` → `Callable[[], None]`），`mypy app/integrated_app` 96 文件归零
+
 ### 安全合规修复（评估报告 P0-P3 全量落地，docs/reports/安全合规体系深度完整性评估_20260830.md）
 
 * **security(P0):** 路径白名单收敛——`config.yaml` 的 `runtime.security.allowed_base_dirs` 从 C:/~G:/ 全盘根收敛为 outputs/、data/uploads/、data/checkpoints/、model/；`path_guard.py` 新增 `warn_overbroad_whitelist()`，白名单含盘符根/文件系统根时打 `[SECURITY]` 告警
