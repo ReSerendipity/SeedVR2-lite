@@ -123,6 +123,19 @@ async def batch_restore_from_folder(
             detail="SeedVR2 仅支持 NVIDIA GPU 推理，当前未检测到 NVIDIA GPU。请安装 NVIDIA GPU 并配置 CUDA 驱动。",
         )
 
+    # OOM 熔断检查（P2-12）：连续 OOM 达到阈值后拒绝新任务，避免队列白烧 GPU
+    from app.integrated_app.services.restore_service import oom_breaker_remaining
+
+    _breaker_remaining = oom_breaker_remaining(config)
+    if _breaker_remaining > 0:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"连续推理 OOM 触发熔断，请降低分辨率/切换更小模型后重试（约 {_breaker_remaining:.0f} 秒后自动恢复）"
+            ),
+            headers={"Retry-After": str(int(_breaker_remaining) + 1)},
+        )
+
     # ============== 幂等键（P1-4） ==============
     client_key = _resolve_idempotency_key(request, idempotency_key)
     if client_key is not None:

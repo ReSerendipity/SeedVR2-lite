@@ -46,10 +46,30 @@ from app.integrated_app.exceptions import DiskSpaceError
 from app.integrated_app.history_db import HistoryDB, HistoryRecord
 from app.integrated_app.metrics import metrics_collector
 from app.integrated_app.model_registry import model_registry
+from app.integrated_app.services.oom_breaker import OomBreaker
 from app.integrated_app.services.task_state import task_state_store
 from app.integrated_app.utils.retry import exponential_backoff_with_jitter
 
 logger = logging.getLogger(__name__)
+
+# P2-12：进程级 OOM 熔断器单例（阈值/冷却期由 app_config 在 oom_breaker_remaining 中同步）
+oom_breaker = OomBreaker()
+
+
+def oom_breaker_remaining(app_config: dict | None = None) -> float:
+    """查询 OOM 熔断剩余拒绝时间（秒），并按 config 同步阈值/冷却期。
+
+    Returns:
+        float: >0 表示熔断打开（调用方应拒绝新任务并返回 Retry-After）。
+    """
+    cfg = (app_config or {}).get("runtime", {}).get("retry", {}).get("oom_breaker", {}) or {}
+    if not cfg.get("enabled", True):
+        return 0.0
+    oom_breaker.configure(
+        threshold=int(cfg.get("threshold", 3) or 3),
+        cooldown_seconds=float(cfg.get("cooldown_seconds", 600.0) or 600.0),
+    )
+    return oom_breaker.remaining_cooldown()
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +306,8 @@ async def run_task_with_state(
                 model_size=model_size,
                 input_type=input_type,
             )
+            # P2-12：成功推理复位 OOM 熔断器
+            oom_breaker.record_success()
             logger.info(f"任务完成: {task_id}, 耗时 {result.processing_time:.1f}s, 输出 {output_size} 字节")
         else:
             error = result.error or "未知错误"
@@ -297,6 +319,9 @@ async def run_task_with_state(
                 model_size=model_size,
                 input_type=input_type,
             )
+            # P2-12：OOM 失败计入熔断（非 OOM 失败重置连续计数）
+            _has_failure, failure_type, _reason = classify_failure(message=error)
+            oom_breaker.record_failure(is_oom=(failure_type == FailureType.OOM))
             logger.error(f"任务失败: {task_id}, 错误: {result.error}")
 
     except asyncio.CancelledError:

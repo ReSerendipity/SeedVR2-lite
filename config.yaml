@@ -151,6 +151,10 @@ runtime:
     enabled: true
     max_delay_seconds: 30.0
     max_retries: 2
+    oom_breaker:
+      cooldown_seconds: 600.0
+      enabled: true
+      threshold: 3
   security:
     allowed_base_dirs:
     - outputs/

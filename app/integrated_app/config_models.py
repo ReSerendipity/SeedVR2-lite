@@ -544,6 +544,21 @@ class RetentionConfig(BaseModel):
     disk_min_free_gb: float = Field(5.0, ge=0.0, le=1024.0)
 
 
+class RuntimeOomBreakerConfig(BaseModel):
+    """OOM 连续失败熔断配置（P2-12）。
+
+    Attributes:
+        enabled: 是否启用熔断（False 时 oom_breaker_remaining 恒返回 0）。
+        threshold: 连续 OOM 失败次数阈值（1-20），达到即打开熔断。
+        cooldown_seconds: 熔断冷却期（30-7200 秒），期间新任务提交返回 503 + Retry-After。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = True
+    threshold: int = Field(3, ge=1, le=20)
+    cooldown_seconds: float = Field(600.0, ge=30.0, le=7200.0)
+
+
 class RuntimeRetryConfig(BaseModel):
     """推理坏案例自动重试配置模型。
 
@@ -562,6 +577,10 @@ class RuntimeRetryConfig(BaseModel):
     max_retries: int = Field(2, ge=0, le=10)
     base_delay_seconds: float = Field(1.0, ge=0.0, le=60.0)
     max_delay_seconds: float = Field(30.0, ge=1.0, le=600.0)
+    oom_breaker: RuntimeOomBreakerConfig = Field(
+        default_factory=RuntimeOomBreakerConfig,
+        description="OOM 连续失败熔断（P2-12）",
+    )
 
 
 class RuntimeConfig(BaseModel):

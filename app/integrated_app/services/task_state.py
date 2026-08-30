@@ -43,6 +43,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
 from typing import Any
 
 from ..history_db import HistoryDB, TaskRecord
@@ -77,6 +78,9 @@ class TaskStateStore:
         self._cache: OrderedDict[str, dict] = OrderedDict()
         self._lock = threading.Lock()
         self._max_size = max(10, max_cache_size)
+        # P2-11：进度通知钩子——状态更新后回调（由 app_server 接线到 task_event_bus），
+        # SSE /progress 端点由此从轮询转事件驱动；节流在通知实现侧完成
+        self._progress_notifier: Callable[[str, dict], None] | None = None
 
     def _evict_if_needed(self) -> None:
         """缓存超过上限时按 FIFO 策略淘汰最早写入的条目。
@@ -171,6 +175,29 @@ class TaskStateStore:
                 self._evict_if_needed()
             return dict(self._cache[task_id])
 
+    def set_progress_notifier(self, notifier: Callable[[str, dict], None] | None) -> None:
+        """注册进度通知回调（P2-11）。
+
+        Args:
+            notifier: 回调签名 (task_id, state_snapshot)；传 None 注销。
+                回调异常会被捕获记录，不影响状态更新主流程。
+        """
+        self._progress_notifier = notifier
+
+    def _notify_progress(self, task_id: str) -> None:
+        """向通知钩子投递状态快照（best-effort，绝不抛出）。"""
+        notifier = self._progress_notifier
+        if notifier is None:
+            return
+        try:
+            with self._lock:
+                cached = self._cache.get(task_id)
+                snapshot = dict(cached) if cached is not None else None
+            if snapshot is not None:
+                notifier(task_id, snapshot)
+        except Exception as e:  # noqa: BLE001 — 通知失败不影响状态主流程
+            logger.debug(f"进度通知投递失败: {e}")
+
     async def update(self, task_id: str, history_db: HistoryDB, **kwargs: Any) -> dict:
         """更新数据库任务状态并同步缓存。
 
@@ -204,7 +231,9 @@ class TaskStateStore:
                     cached["error"] = value
                 else:
                     cached[key] = value
-            return dict(cached)
+            result = dict(cached)
+        self._notify_progress(task_id)
+        return result
 
     def update_cached(self, task_id: str, **kwargs: Any) -> dict | None:
         """仅更新内存缓存中的任务字段（同步方法，不写数据库）。
@@ -228,7 +257,9 @@ class TaskStateStore:
             if cached is None:
                 return None
             cached.update(kwargs)
-            return dict(cached)
+            result = dict(cached)
+        self._notify_progress(task_id)
+        return result
 
     def get_cached(self, task_id: str) -> dict | None:
         """仅从内存缓存获取状态（同步方法，不回源数据库）。

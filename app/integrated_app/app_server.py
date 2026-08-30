@@ -250,6 +250,52 @@ async def lifespan(app: FastAPI):
     model_registry.add_listener(_bridge_model_status_to_sse)
     logger.info("已注册模型状态 SSE 桥接监听器")
 
+    # P2-11：任务进度事件接线——task_state_store 的每次状态更新经节流后发布到
+    # task_event_bus（按 task_id 分片），SSE /progress 端点由 0.5s 轮询转事件驱动
+    from app.integrated_app.services.task_events import task_event_bus
+    from app.integrated_app.services.task_state import task_state_store
+
+    _last_progress_publish: dict[str, float] = {}
+
+    def _publish_task_progress(task_id: str, state: dict) -> None:
+        status = state.get("status")
+        if status in ("completed", "failed", "cancelled"):
+            _last_progress_publish.pop(task_id, None)
+            task_event_bus.publish_final(
+                task_id,
+                {
+                    "task_id": task_id,
+                    "status": status,
+                    "progress": state.get("progress", 0),
+                    "output_path": state.get("output_path"),
+                    "error": state.get("error"),
+                    "processing_time": state.get("processing_time", 0),
+                    "task_type": state.get("task_type", "single"),
+                    "message": state.get("message", ""),
+                },
+            )
+            return
+        now = time.monotonic()
+        if now - _last_progress_publish.get(task_id, 0.0) < 1.0:
+            return  # 进度事件按任务节流到 1s，避免逐帧刷爆订阅者队列
+        _last_progress_publish[task_id] = now
+        task_event_bus.publish(
+            task_id,
+            {
+                "task_id": task_id,
+                "status": status,
+                "progress": state.get("progress", 0),
+                "current_frame": state.get("current_frame", 0),
+                "total_frames": state.get("total_frames", 0),
+                "task_type": state.get("task_type", "single"),
+                "message": state.get("message", ""),
+                "processing_time": state.get("processing_time", 0),
+            },
+        )
+
+    task_state_store.set_progress_notifier(_publish_task_progress)
+    logger.info("任务进度事件总线已接线（SSE 进度推送化，P2-11）")
+
     try:
         from app.integrated_app.routes.restore import unified as unified_routes
 
@@ -303,6 +349,9 @@ async def lifespan(app: FastAPI):
                 )
                 if cleaned:
                     logger.info(f"定期清理：已清理 {cleaned} 个卡死的 processing 任务")
+                # P2-11：顺带清理事件总线过期的最终状态缓存（TTL 60s，5min 扫一次足够）
+                task_event_bus.cleanup_expired()
+                _last_progress_publish.clear()
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -318,7 +367,6 @@ async def lifespan(app: FastAPI):
     # current_frame/current_progress 也会持续变化，误杀窗口极大（默认 30 分钟）。
     stall_minutes = int(config.get("runtime", {}).get("task", {}).get("progress_stall_timeout_minutes", 30) or 0)
     if stall_minutes > 0:
-        from app.integrated_app.services.task_state import task_state_store
 
         async def _progress_stall_watchdog():
             last_signature = None

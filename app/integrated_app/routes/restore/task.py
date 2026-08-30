@@ -14,11 +14,12 @@ API 端点：
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.integrated_app.dependencies import get_config, get_history_db, get_task_queue
@@ -35,6 +36,7 @@ router = APIRouter(prefix="/api/restore", tags=["修复"])
 @router.get("/{task_id}/progress")
 async def get_progress(
     task_id: str,
+    request: Request,
     history_db: HistoryDB = Depends(get_history_db),
     config: dict = Depends(get_config),
 ):
@@ -82,41 +84,62 @@ async def get_progress(
     heartbeat_interval = sse_cfg.get("heartbeat_interval_seconds", 30)
     poll_interval = sse_cfg.get("poll_interval_seconds", 0.5)
 
+    # P2-11：进度由 task_event_bus 推送唤醒（服务端每次状态更新发布事件，
+    # 按任务节流 1s）；poll_interval 仅作为兜底轮询间隔保留，保证事件丢失时
+    # 行为与纯轮询一致。断线重连时 Last-Event-ID 只需触发一次全量快照——
+    # 进度本身是有状态快照而非事件流，重连即续传，无事件回放需求。
+    last_event_id = request.headers.get("last-event-id")
+    if last_event_id:
+        logger.debug(f"SSE 断线重连: task_id={task_id}, Last-Event-ID={last_event_id}")
+
+    from app.integrated_app.services.task_events import task_event_bus
+
+    event_queue = await task_event_bus.subscribe(task_id)
+
     async def event_generator():
         start_time = asyncio.get_event_loop().time()
         last_heartbeat = start_time
+        last_payload: str | None = None
+        try:
+            while True:
+                now = asyncio.get_event_loop().time()
+                if now - start_time > max_duration:
+                    yield f"data: {json.dumps({'task_id': task_id, 'status': 'timeout', 'message': '连接超时'})}\n\n"
+                    break
 
-        while True:
-            now = asyncio.get_event_loop().time()
-            if now - start_time > max_duration:
-                yield f"data: {json.dumps({'task_id': task_id, 'status': 'timeout', 'message': '连接超时'})}\n\n"
-                break
+                # 事件唤醒（或兜底轮询超时）后读取最新快照（缓存优先）
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(event_queue.get(), timeout=poll_interval)
 
-            task = await common.get_task_state(task_id, history_db)
-            if not task:
-                yield f"data: {json.dumps({'error': '任务不存在'})}\n\n"
-                break
+                task = await common.get_task_state(task_id, history_db)
+                if not task:
+                    yield f"data: {json.dumps({'error': '任务不存在'})}\n\n"
+                    break
 
-            data = {
-                "task_id": task["task_id"],
-                "status": task["status"],
-                "progress": task.get("progress", 0),
-                "current_frame": task.get("current_frame", 0),
-                "total_frames": task.get("total_frames", 0),
-                "task_type": task.get("task_type", "image"),
-                "message": task.get("message", ""),
-                "processing_time": task.get("processing_time", 0),
-            }
-            yield f"data: {json.dumps(data)}\n\n"
+                data = {
+                    "task_id": task["task_id"],
+                    "status": task["status"],
+                    "progress": task.get("progress", 0),
+                    "current_frame": task.get("current_frame", 0),
+                    "total_frames": task.get("total_frames", 0),
+                    "task_type": task.get("task_type", "image"),
+                    "message": task.get("message", ""),
+                    "processing_time": task.get("processing_time", 0),
+                }
+                payload = json.dumps(data)
+                now = asyncio.get_event_loop().time()
+                if payload != last_payload:
+                    last_payload = payload
+                    yield f"data: {payload}\n\n"
 
-            if task["status"] in ("completed", "failed", "cancelled"):
-                break
+                if task["status"] in ("completed", "failed", "cancelled"):
+                    break
 
-            if now - last_heartbeat >= heartbeat_interval:
-                yield ": heartbeat\n\n"
-                last_heartbeat = now
-
-            await asyncio.sleep(poll_interval)
+                if now - last_heartbeat >= heartbeat_interval:
+                    yield ": heartbeat\n\n"
+                    last_heartbeat = now
+        finally:
+            await task_event_bus.unsubscribe(task_id, event_queue)
 
     return StreamingResponse(
         event_generator(),
