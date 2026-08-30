@@ -1,40 +1,49 @@
+# ============================================================
+# 便携包非 torch 依赖清单（build_portable_bundle.ps1 预装进 WinPython）
+#
+# 钉版策略（发布管理体系评估 P1-3）：全部 == 精确钉版，版本与
+# requirements-lock.txt（venv 实测环境）对齐，保证两次构建产出的
+# 便携解释器依赖完全一致。升级依赖时先在开发环境验证，再同步
+# requirements.txt / requirements-lock.txt / 本文件三处版本。
+# ============================================================
+
 # Core
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-gunicorn>=23.0
-pydantic>=2.9.0
-pyyaml>=6.0
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+gunicorn==26.1.0
+pydantic==2.13.4
+pyyaml==6.0.3
 
 # Template & Frontend
-jinja2>=3.1.0
-python-multipart>=0.0.12
+jinja2==3.1.6
+python-multipart==0.0.32
 
 # Deep Learning
 
 # Model & Inference
-transformers>=4.44.0
-safetensors>=0.4.0
-huggingface_hub>=0.25.0
-einops>=0.8.0
-omegaconf>=2.3.0
-diffusers>=0.30.0
-mediapy>=1.1.0
-rotary-embedding-torch>=0.5.0
+transformers==5.15.0
+safetensors==0.8.0
+huggingface_hub==1.28.0
+einops==0.8.2
+omegaconf==2.3.1
+diffusers==0.39.0
+mediapy==1.2.7
+rotary-embedding-torch==0.9.1
 
 # Video Processing
-opencv-python>=4.10.0
-imageio>=2.35.0
-imageio-ffmpeg>=0.5.0
-pillow>=10.4.0
+opencv-python==5.0.0.93
+imageio==2.37.4
+imageio-ffmpeg==0.6.0
+pillow==12.3.0
 
 # Database
-aiosqlite>=0.20.0
+aiosqlite==0.22.1
 
 # Utilities
-aiofiles>=24.1.0
-psutil>=6.0.0
-rich>=13.8.0
-PyWavelets>=1.9.0
+aiofiles==25.1.0
+psutil==7.2.2
+rich==15.0.0
+PyWavelets==1.9.0
 
 # Flash Attention (需要 CUDA 编译环境，Windows 下可能需要预编译包)
 # 如果安装失败，请从以下地址下载预编译 whl：

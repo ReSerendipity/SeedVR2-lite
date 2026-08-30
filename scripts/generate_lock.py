@@ -33,6 +33,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -41,6 +42,8 @@ import urllib.request
 from pathlib import Path
 
 PYPI_JSON_URL = "https://pypi.org/pypi/{name}/{version}/json"
+PYTORCH_INDEX_URL = os.environ.get("SEEDVR2_PYTORCH_INDEX_URL", "https://download.pytorch.org/whl/cu132")
+TORCH_FAMILY = {"torch", "torchvision", "torchaudio"}
 REQUEST_TIMEOUT_SECONDS = 30
 
 
@@ -121,6 +124,45 @@ def fetch_hashes_from_pypi(name, version, retries=3):
     return []
 
 
+def fetch_hashes_from_pytorch_index(name, version, retries=3):
+    """从 PyTorch 官方 wheel 索引页提取该版本全部平台轮子的 SHA256。
+
+    torch 家族的 +cuXXX 本地版本不在 PyPI 上，其 PEP 503 索引页
+    （https://download.pytorch.org/whl/<cu>/<pkg>/）每个 wheel 链接都带
+    ``#sha256=<hex>`` 锚点，无需下载轮子本体即可取得全平台官方哈希
+    ——这是锁文件能跨 Windows/Linux 双平台 ``--require-hashes`` 安装的前提。
+
+    Returns:
+        list[str]: 匹配版本的 sha256 去重列表；索引不可达或无匹配时返回 []。
+    """
+    import time
+
+    if "+" not in version:
+        return []
+    url = f"{PYTORCH_INDEX_URL.rstrip('/')}/{name}/"
+    prefix = f"{name}-{version.replace('+', '%2B')}-"
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "text/html"})
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+            hashes = []
+            for match in re.finditer(re.escape(prefix) + r'[^"#\s>]*#sha256=([0-9a-fA-F]{64})', html):
+                digest = match.group(1).lower()
+                if digest not in hashes:
+                    hashes.append(digest)
+            if not hashes:
+                print(f"  ! PyTorch 索引无 {name}=={version} 的轮子锚点")
+            return hashes
+        except Exception as e:  # noqa: BLE001 — 网络层异常类型繁杂，统一按可重试处理
+            if attempt < retries - 1:
+                time.sleep(2 * (attempt + 1))
+                continue
+            print(f"  ! PyTorch 索引查询失败 {name}=={version}: {type(e).__name__}")
+            return []
+    return []
+
+
 def collect_local_cache_hashes():
     """从本地 pip 缓存收集 wheel 哈希 (联网不可用时的回退)。"""
     try:
@@ -163,8 +205,10 @@ def generate_lock_file():
     output.append("# 重新生成: python scripts/generate_lock.py")
     output.append("#")
     output.append("# 注意:")
-    output.append("#   - torch/torchvision/torchaudio 使用 CUDA 预编译包 (+cu128),")
-    output.append("#     发布文件托管在 PyTorch index, PyPI API 查不到时保留 NO HASH 标记")
+    output.append("#   - torch/torchvision/torchaudio 使用 CUDA 本地版本 (+cu132):")
+    output.append("#     索引页带 #sha256 锚点的版本取全平台锚点（Windows/Linux 均可校验），")
+    output.append("#     新版本若索引页只提供 PEP 658 元数据（无轮子哈希锚点，如 torch 2.13.0），")
+    output.append("#     则保留本地 wheel 哈希（当前为 Windows 轮）——跨平台安装该包前需先补齐哈希")
     output.append("#   - 切换 CUDA 版本时需重新生成哈希")
     output.append("")
 
@@ -183,6 +227,16 @@ def generate_lock_file():
                 source = "cache"
         else:
             source = "local-wheel"
+        if name in TORCH_FAMILY and "+" in version:
+            # +cuXXX 本地版本：把 PyTorch 索引页的全平台锚点合并进来（与本地 wheel
+            # 哈希同源应一致），否则锁文件只有本机平台一个哈希，跨平台 CI 必失败。
+            index_hashes = fetch_hashes_from_pytorch_index(name, version)
+            if index_hashes:
+                merged = list(hashes) + [h for h in index_hashes if h not in hashes]
+                if hashes and len(merged) == len(index_hashes):
+                    print(f"  ! 警告：{name} 本地 wheel 哈希与索引锚点不一致，请人工复核")
+                hashes = merged
+                source = f"{source}+pytorch-index"
 
         if hashes:
             hash_lines = [f"    --hash=sha256:{h}" for h in hashes]

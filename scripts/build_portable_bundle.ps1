@@ -27,7 +27,19 @@ param(
     [long]$MaxPartBytes = 0,
     [double]$MinFreeGb = 0,
     [string]$WinPythonUrl = 'https://github.com/winpython/winpython/releases/download/16.5.20250614/Winpython64-3.12.10.1dotb4.exe',
+    # 官方 release 资产 digest（GitHub API 实测，2026-08-30），防下载损坏/上游篡改；
+    # 升级 WinPython 版本时必须同步更新 URL 与哈希。
+    [string]$WinPythonSha256 = '4061f0e936289ca1df48fc8e7357a4c30e6010f053ffd2f986f518a09bbf03e8',
     [string]$TorchIndexUrl = 'https://download.pytorch.org/whl/cu128',
+    # torch 三件套钉版（P1-3 复现性）：cu128 索引当前最高版本，两次构建产出一致；
+    # 升级时先查 pip index versions torch --index-url <TorchIndexUrl> 再同步三处。
+    [string]$TorchVersion = '2.11.0',
+    [string]$TorchvisionVersion = '0.26.0',
+    [string]$TorchaudioVersion = '2.11.0',
+    # 可选 Authenticode 代码签名（P3）：提供代码签名证书 .pfx 时，随包分发的
+    # .ps1 助手在生成 SHA256SUMS.txt 之前完成签名（否则清单哈希会失配）。
+    [string]$SigningPfxPath = '',
+    [string]$SigningPfxPassword = '',
     [switch]$SkipAutoPrepare,
     [switch]$SkipOfflineTorchCheck,
     [switch]$PrintModelFiles,
@@ -166,7 +178,7 @@ function Get-SeedVR2ModelFilesFromConfig {
 $BundleAssetsDir = Join-Path $PSScriptRoot 'bundle_assets'
 
 $CoreIncludeDirs = @('app', 'common', 'model_lib', 'configs_3b', 'configs_7b', 'data')
-$CoreIncludeFiles = @('config.yaml', 'requirements.txt', 'LICENSE', 'NOTICE', 'README.md',
+$CoreIncludeFiles = @('config.yaml', 'pyproject.toml', 'requirements.txt', 'LICENSE', 'NOTICE', 'README.md',
     'USER_AGREEMENT.md', 'SECURITY.md', 'CHANGELOG.md')
 $CoreExcludePatterns = @(
     '__pycache__\*', '*.pyc', '*.pyo', '.pytest_cache\*',
@@ -349,6 +361,13 @@ function Start-SeedVR2RuntimePrepare {
         Write-Host "  下载 WinPython 便携解释器 ..."
         Invoke-WebRequest -Uri $Url -OutFile $exePath -UseBasicParsing -TimeoutSec 900
     }
+    if ($WinPythonSha256) {
+        $actual = (Get-SeedVR2FileSha256 -Path $exePath).ToLowerInvariant()
+        if ($actual -ne $WinPythonSha256.ToLowerInvariant()) {
+            throw ("WinPython 安装器 SHA256 不符（期望 {0}，实际 {1}）——下载损坏或上游被篡改" -f $WinPythonSha256, $actual)
+        }
+        Write-Host "  WinPython 安装器 SHA256 校验通过"
+    }
     $extractDir = Join-Path $WorkDir 'wp'
     if (-not (Test-Path -LiteralPath $extractDir)) {
         New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
@@ -412,7 +431,8 @@ function Start-SeedVR2TorchWheelPrepare {
     # （filelock / fsspec / jinja2 / networkx / sympy / typing-extensions）必须一起落盘，
     # 否则解包端 pip 会因找不到依赖而失败（旧 exe 安装器正是踩了这个坑，已删除）。
     $res = Invoke-SeedVR2Native -Exe $PythonExe -Arguments @(
-        '-m', 'pip', 'download', 'torch', 'torchvision', 'torchaudio',
+        '-m', 'pip', 'download',
+        "torch==$TorchVersion", "torchvision==$TorchvisionVersion", "torchaudio==$TorchaudioVersion",
         '--index-url', $IndexUrl, '-d', $WheelDir, '--timeout', '300', '--retries', '3'
     )
     if ($res.ExitCode -ne 0) {
@@ -439,6 +459,41 @@ function Test-SeedVR2TorchOfflineInstallable {
         throw "离线可装性验证失败（wheels 缺依赖或平台不匹配）：`n  $text"
     }
     Write-Host '  离线可装性验证通过（pip --no-index --dry-run）' -ForegroundColor Green
+}
+
+function Invoke-SeedVR2AuthenticodeSign {
+    <#
+        可选 Authenticode 签名（P3）：对随包分发的 .ps1 助手脚本签名，需提供
+        代码签名证书 .pfx。必须在 SHA256SUMS.txt 生成之前调用——签名会改变
+        文件字节，先签名后生成清单才能保证哈希一致。
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Files,
+        [Parameter(Mandatory = $true)][string]$PfxPath,
+        [Parameter(Mandatory = $true)][string]$PfxPassword
+    )
+    $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue
+    if (-not $signtool) {
+        $kits = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending
+        foreach ($kit in $kits) {
+            $candidate = Join-Path $kit.FullName 'x64\signtool.exe'
+            if (Test-Path -LiteralPath $candidate) { $signtool = Get-Item $candidate; break }
+        }
+    }
+    if (-not $signtool) {
+        throw "signtool.exe 不可用：请安装 Windows SDK 或把 signtool 加入 PATH"
+    }
+    foreach ($f in $Files) {
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        $res = Invoke-SeedVR2Native -Exe $signtool.FullName -Arguments @(
+            'sign', '/fd', 'SHA256', '/f', $PfxPath, '/p', $PfxPassword, $f
+        )
+        if ($res.ExitCode -ne 0) {
+            throw "Authenticode 签名失败 $(Split-Path -Leaf $f)：$($res.Text.Split("`n")[-5..-1] -join ' | ')"
+        }
+        Write-Host ("  Authenticode 已签名：{0}" -f (Split-Path -Leaf $f))
+    }
 }
 
 # ------------------------------------------------------------------ 主流程 ----
@@ -709,6 +764,15 @@ if (Test-Path -LiteralPath $unpackScript) {
 }
 $libName = 'portable_bundle_lib.ps1'
 
+if ($SigningPfxPath) {
+    Write-Host ''
+    Write-Host '[Authenticode] 签名随包 .ps1 助手（先签名后生成 SHA256SUMS.txt）...' -ForegroundColor Yellow
+    Invoke-SeedVR2AuthenticodeSign -Files @(
+        (Join-Path $OutDir 'unpack_portable_bundle.ps1'),
+        (Join-Path $OutDir $libName)
+    ) -PfxPath $SigningPfxPath -PfxPassword $SigningPfxPassword
+}
+
 $totalRaw = 0
 $totalDist = 0
 foreach ($c in $components) {
@@ -759,6 +823,6 @@ foreach ($c in $components) {
     Write-Host ("   {0,-13} {1} 卷  {2}" -f $c.id, $c.volume_count, (Format-SeedVR2Size $cSum))
 }
 Write-Host '==============================================' -ForegroundColor Green
-Write-Host '下一步：上传到 Release（每个文件均 < 2 GiB）' -ForegroundColor Green
+Write-Host '下一步：上传到 Release（每个文件均 < 2 GiB；已发布资产不可变，禁用 --clobber）' -ForegroundColor Green
 Write-Host '  gh release create v<ver> --target main --generate-notes'
-Write-Host "  Get-Content '$(Join-Path $OutDir 'upload-list.txt')' | %{ gh release upload v<ver> `"`$_`" --clobber }"
+Write-Host "  Get-Content '$(Join-Path $OutDir 'upload-list.txt')' | %{ gh release upload v<ver> `"`$_`" }"

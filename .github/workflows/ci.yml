@@ -3,8 +3,19 @@ name: CI - Backend Quality Gate
 on:
   pull_request:
     branches: [main]
+    # 文档/演示站改动不触发后端质量门禁（DX 评估 P2：docs-only push 不必全量跑流水线）
+    paths-ignore:
+      - 'docs/**'
+      - 'website/**'
+      - 'demo/**'
+      - '**/*.md'
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - 'website/**'
+      - 'demo/**'
+      - '**/*.md'
 
 permissions:
   contents: read
@@ -26,7 +37,20 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install dependencies (Windows: hash-locked)
+        if: matrix.os == 'windows-latest'
+        # Windows 与锁平台一致（同 dependency-audit.yml 的先例）：torch 2.13.0+cu132 的
+        # 索引页只提供 PEP 658 元数据、无轮子哈希锚点，锁内该包哈希为 Windows 轮实测值，
+        # 故 Windows 侧走 --require-hashes 真实锁安装（可复现）。
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements-lock.txt --extra-index-url https://download.pytorch.org/whl/cu132
+          pip check
+
+      - name: Install dependencies (Linux: requirements)
+        if: matrix.os == 'ubuntu-latest'
+        # torch +cu132 本地版本的 Linux 轮子暂无公开哈希（见上），锁安装暂不可跨平台；
+        # ubuntu 侧保持 requirements 安装，待 torch 索引补齐哈希锚点后统一接入锁。
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
