@@ -194,6 +194,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 logger.warning(
                     f"速率限制触发: {request.method} {request.url.path} from {client_ip} " f"(limit={self._limit}/min)"
                 )
+                from app.integrated_app.security.audit import audit_event
+
+                audit_event(
+                    "RATE_LIMITED", request=request, client_ip=client_ip, limit_per_minute=self._limit
+                )
                 return JSONResponse(
                     status_code=429,
                     content={

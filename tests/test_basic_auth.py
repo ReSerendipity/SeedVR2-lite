@@ -6,6 +6,7 @@
 - create_auth_middleware 工厂函数（返回 None vs 实例）
 - 环境变量 SEEDVR2_AUTH_PASSWORD 优先级高于配置文件
 - 常量时间比较防时序攻击
+- AuthFailureTracker 暴力破解防护：失败计数 / 临时封禁 / 成功清零 / 解封
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from fastapi.testclient import TestClient
 from starlette.responses import Response
 
 from app.integrated_app.middleware.basic_auth import (
+    AuthFailureTracker,
     BasicAuthMiddleware,
     create_auth_middleware,
     should_enable_auth,
@@ -184,3 +186,131 @@ class TestCreateAuthMiddleware:
         result = create_auth_middleware(config)
         # 访问 protected attributes for testing
         assert hasattr(result, "_username")
+
+
+class TestAuthFailureTracker:
+    """AuthFailureTracker 暴力破解防护单元测试"""
+
+    def test_ban_after_max_failures(self, monkeypatch):
+        """窗口内失败达到上限应触发封禁"""
+        import app.integrated_app.middleware.basic_auth as ba
+
+        clock = [1000.0]
+        monkeypatch.setattr(ba, "_monotonic", lambda: clock[0])
+        tracker = ba.AuthFailureTracker(max_failures=3, window_seconds=300, ban_seconds=600)
+
+        assert tracker.is_banned("1.2.3.4") is False
+        tracker.record_failure("1.2.3.4")
+        tracker.record_failure("1.2.3.4")
+        assert tracker.is_banned("1.2.3.4") is False
+        tracker.record_failure("1.2.3.4")
+        assert tracker.is_banned("1.2.3.4") is True
+
+    def test_ban_expires_after_ban_seconds(self, monkeypatch):
+        """封禁期满应自动解除并清空失败计数"""
+        import app.integrated_app.middleware.basic_auth as ba
+
+        clock = [1000.0]
+        monkeypatch.setattr(ba, "_monotonic", lambda: clock[0])
+        tracker = ba.AuthFailureTracker(max_failures=2, window_seconds=300, ban_seconds=600)
+
+        tracker.record_failure("1.2.3.4")
+        tracker.record_failure("1.2.3.4")
+        assert tracker.is_banned("1.2.3.4") is True
+        clock[0] += 601.0
+        assert tracker.is_banned("1.2.3.4") is False
+        # 解封后需要重新累计失败才会再封禁
+        tracker.record_failure("1.2.3.4")
+        assert tracker.is_banned("1.2.3.4") is False
+
+    def test_success_resets_failure_count(self, monkeypatch):
+        """成功认证应清零失败计数"""
+        import app.integrated_app.middleware.basic_auth as ba
+
+        monkeypatch.setattr(ba, "_monotonic", lambda: 1000.0)
+        tracker = ba.AuthFailureTracker(max_failures=3, window_seconds=300, ban_seconds=600)
+
+        tracker.record_failure("1.2.3.4")
+        tracker.record_failure("1.2.3.4")
+        tracker.record_success("1.2.3.4")
+        tracker.record_failure("1.2.3.4")
+        assert tracker.is_banned("1.2.3.4") is False
+
+    def test_sliding_window_expiry(self, monkeypatch):
+        """窗口外的旧失败应过期，不计入上限"""
+        import app.integrated_app.middleware.basic_auth as ba
+
+        clock = [1000.0]
+        monkeypatch.setattr(ba, "_monotonic", lambda: clock[0])
+        tracker = ba.AuthFailureTracker(max_failures=3, window_seconds=300, ban_seconds=600)
+
+        tracker.record_failure("1.2.3.4")
+        tracker.record_failure("1.2.3.4")
+        clock[0] += 301.0  # 超出 300s 窗口
+        tracker.record_failure("1.2.3.4")
+        assert tracker.is_banned("1.2.3.4") is False
+
+    def test_disabled_when_max_failures_zero(self):
+        """max_failures<=0 应完全禁用封禁"""
+        tracker = AuthFailureTracker(max_failures=0)
+        for _ in range(100):
+            tracker.record_failure("1.2.3.4")
+        assert tracker.is_banned("1.2.3.4") is False
+
+    def test_per_ip_isolation(self, monkeypatch):
+        """不同 IP 的失败计数应互相隔离"""
+        import app.integrated_app.middleware.basic_auth as ba
+
+        monkeypatch.setattr(ba, "_monotonic", lambda: 1000.0)
+        tracker = ba.AuthFailureTracker(max_failures=2, window_seconds=300, ban_seconds=600)
+        tracker.record_failure("1.1.1.1")
+        tracker.record_failure("1.1.1.1")
+        assert tracker.is_banned("1.1.1.1") is True
+        assert tracker.is_banned("2.2.2.2") is False
+
+    def test_retry_after_seconds(self, monkeypatch):
+        """封禁期应返回剩余秒数"""
+        import app.integrated_app.middleware.basic_auth as ba
+
+        clock = [1000.0]
+        monkeypatch.setattr(ba, "_monotonic", lambda: clock[0])
+        tracker = ba.AuthFailureTracker(max_failures=1, window_seconds=300, ban_seconds=600)
+        tracker.record_failure("1.2.3.4")
+        clock[0] += 100.0
+        assert tracker.retry_after_seconds("1.2.3.4") == 500
+
+
+class TestBruteForceBanIntegration:
+    """BasicAuthMiddleware 端到端封禁流程"""
+
+    def _make_app(self, **kwargs):
+        app = FastAPI()
+
+        @app.get("/")
+        async def root():
+            return {"message": "OK"}
+
+        app.add_middleware(BasicAuthMiddleware, username="admin", password="secret123", **kwargs)
+        return app
+
+    def test_ban_after_repeated_failures(self):
+        """连续失败达到上限后应返回 429 并带 Retry-After"""
+        app = self._make_app(max_auth_failures=3, auth_failure_window_seconds=300, auth_ban_seconds=600)
+        with TestClient(app) as client:
+            for _ in range(3):
+                resp = client.get("/", headers={"Authorization": "Basic d3Jvbmc6d3Jvbmc="})
+                assert resp.status_code == 401
+            # 第 4 次起被封禁，即使凭据正确也拒绝
+            good = base64.b64encode(b"admin:secret123").decode("ascii")
+            resp = client.get("/", headers={"Authorization": f"Basic {good}"})
+            assert resp.status_code == 429
+            assert "Retry-After" in resp.headers
+
+    def test_success_within_limit_not_banned(self):
+        """少量失败后成功认证应放行且不封禁"""
+        app = self._make_app(max_auth_failures=3, auth_failure_window_seconds=300, auth_ban_seconds=600)
+        with TestClient(app) as client:
+            client.get("/", headers={"Authorization": "Basic d3Jvbmc6d3Jvbmc="})
+            good = base64.b64encode(b"admin:secret123").decode("ascii")
+            resp = client.get("/", headers={"Authorization": f"Basic {good}"})
+            assert resp.status_code == 200

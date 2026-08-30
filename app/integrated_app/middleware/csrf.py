@@ -211,6 +211,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         logger.warning(f"CSRF 验证失败: {request.method} {request.url.path}")
+        from app.integrated_app.security.audit import audit_event
+
+        audit_event("CSRF_FAILURE", request=request)
         response = JSONResponse(
             status_code=403,
             content={"error": "CSRF token 验证失败"},
