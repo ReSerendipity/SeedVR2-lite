@@ -206,14 +206,19 @@ def dequantize_nvfp4(
 # ---------------------------------------------------------------------------
 
 
-def dequantize_state_dict(state_dict: dict[str, torch.Tensor]) -> int:
+def dequantize_state_dict(state_dict: dict[str, torch.Tensor], dtype: torch.dtype = torch.float32) -> int:
     """按 comfy_quant 元数据就地对每个量化 Linear 权重做反量化。
 
     处理逻辑：扫描 ``*.comfy_quant`` 键，找到兄弟 ``.weight`` / ``.weight_scale``
-    [``.weight_scale_2``]，替换 ``.weight`` 为 float32 反量化结果并删除量化附属键。
+    [``.weight_scale_2``]，替换 ``.weight`` 为反量化结果并删除量化附属键。
+
+    内存优化：反量化在 float32 中完成（Hadamard/缩放需要精度），完成后立即
+    转为 ``dtype``（默认 float32；加载期调用方应传 bf16 以避免全量 float32
+    与后续 bf16 转换同时存在导致 RAM 峰值）。
 
     Args:
         state_dict: load_file 得到的权字典（CPU）。
+        dtype: 反量化结果的存储 dtype（默认 float32；加载期建议传 bf16）。
 
     Returns:
         int: 成功反量化的权重张量数（0 表示非 Comfy-Org 量化包，静默跳过）。
@@ -239,22 +244,24 @@ def dequantize_state_dict(state_dict: dict[str, torch.Tensor]) -> int:
         if fmt == "int8_tensorwise":
             convrot = bool(meta.get("convrot", False))
             groupsize = int(meta.get("convrot_groupsize", 256))
-            state_dict[wk] = dequantize_int8_convrot(weight, scale, convrot=convrot, groupsize=groupsize)
+            w_deq = dequantize_int8_convrot(weight, scale, convrot=convrot, groupsize=groupsize)
         elif fmt == "mxfp8":
-            state_dict[wk] = dequantize_mxfp8(weight, scale)
+            w_deq = dequantize_mxfp8(weight, scale)
         elif fmt == "nvfp4":
             s2k = f"{base}.weight_scale_2"
             scale2 = state_dict.get(s2k)
             if scale2 is None:
                 raise ValueError(f"{s2k} 缺失，无法反量化 nvfp4（{base}）")
-            state_dict[wk] = dequantize_nvfp4(weight, scale, scale2)
+            w_deq = dequantize_nvfp4(weight, scale, scale2)
             del state_dict[s2k]
         else:
             raise ValueError(f"不支持的 comfy_quant 格式: {fmt}（{base}）")
+        # 反量化在 float32 完成，立即转目标 dtype 以控制 RAM 峰值
+        state_dict[wk] = w_deq.to(dtype=dtype) if dtype != torch.float32 else w_deq
         del state_dict[sk]
         del state_dict[qk]
         done += 1
-    logger.info("Comfy-Org 量化权重反量化完成: %d 个 Linear", done)
+    logger.info("Comfy-Org 量化权重反量化完成: %d 个 Linear (dtype=%s)", done, dtype)
     return done
 
 

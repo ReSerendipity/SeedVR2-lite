@@ -72,7 +72,8 @@
     "browse_folder": "Parcourir le dossier",
     "open_explorer": "Ouvrir dans l'explorateur",
     "select_folder": "Sélectionner le dossier",
-    "collapse": "Réduire"
+    "collapse": "Réduire",
+    "clear": "Effacer"
   },
   "video": {
     "title": "Restauration Vidéo",
@@ -183,7 +184,8 @@
     "detail_natural": "Naturel",
     "current_frame": "Image Actuelle",
     "total_frames": "Total des Images",
-    "result_preview": "Aperçu du Résultat"
+    "result_preview": "Aperçu du Résultat",
+    "force_reload_dit": "Forcer le rechargement du modèle"
   },
   "restore": {
     "title": "Atelier de restauration",
@@ -309,7 +311,30 @@
     "cancel_batch_task": "Annuler la Tâche par Lots",
     "cancel_batch_confirm": "Êtes-vous sûr de vouloir annuler la tâche de restauration par lots en cours ? La progression traitée sera perdue.",
     "batch_task_cancelled": "Tâche par lots annulée",
-    "no_files_found": "Aucun fichier traitable trouvé"
+    "no_files_found": "Aucun fichier traitable trouvé",
+    "replace": "Remplacer",
+    "allow_dirs_title": "Gestion des autorisations de répertoires",
+    "allow_dirs_loading": "Chargement des répertoires autorisés…",
+    "tip_output_format": "Format du fichier produit après la restauration.\nPar défaut : s'aligne sur le format d'entrée (PNG → PNG)\nPNG (recommandé) : sans perte, conserve la transparence\nJPG : avec perte, fichier plus léger, idéal pour les photos\nWebP : format moderne équilibrant qualité et poids\nBMP : sans compression, fichier le plus lourd\nTIFF : sans perte, pour un usage professionnel",
+    "tip_force_reload": "Désactivé par défaut : le modèle en cache est réutilisé (plus rapide). Activé : DiT est rechargé avec les paramètres actuels (nombre de blocs échangés / taille de lot) même si un cache existe, garantissant leur prise en compte ; au prix d'un rechargement de 15 à 25 s par tâche.",
+    "help_title": "Aide rapide",
+    "onboarding_ack": "Compris, commencer",
+    "allow_dirs_empty": "Répertoires par défaut uniquement (outputs/, data/uploads/)",
+    "allow_dirs_load_failed": "Échec du chargement des répertoires autorisés",
+    "allow_dir_add_scan": "Ajouter aux autorisations et réanalyser",
+    "allow_dir_adding": "Ajout en cours…",
+    "allow_dir_added": "Répertoire ajouté, réanalyse en cours…",
+    "allow_dir_add_failed": "Échec de l'ajout du répertoire aux autorisations",
+    "allow_dir_delete": "Supprimer",
+    "allow_dir_delete_title": "Retirer le répertoire autorisé",
+    "allow_dir_delete_default_warn": "Ce répertoire ne pourra plus être analysé",
+    "allow_dir_removed": "Retiré de la liste d'autorisation",
+    "allow_dir_remove_failed": "Échec de la suppression du répertoire autorisé",
+    "dir_not_allowed": "Ce répertoire n'est pas dans la liste d'autorisation",
+    "dir_not_allowed_desc": "Ajoutez-le aux autorisations pour relancer l'analyse",
+    "batch_tip": "Cliquez sur « Traitement par lot depuis un dossier » pour traiter tous les fichiers du dossier ci-dessus",
+    "magnifier_tip": "Loupe : zone agrandie sous le curseur",
+    "zoom_reset": "Cliquez pour revenir au zoom 1:1"
   },
   "history": {
     "title": "Historique",
@@ -351,10 +376,12 @@
     "next_page": "Suivant",
     "open_output_dir": "Ouvrir le répertoire de sortie",
     "more_actions": "Plus d'actions",
-    "stat_total_records": "Tâches terminées",
+    "stat_total_records": "Enregistrements",
     "stat_total_time": "Durée totale de restauration",
     "stat_total_output": "Volume total produit",
-    "stat_avg_time": "Durée moyenne par tâche"
+    "stat_avg_time": "Durée moyenne par tâche",
+    "clear_include_completed": "Effacer aussi les tâches terminées",
+    "records": "enregistrements"
   },
   "system": {
     "title": "État Système",
@@ -510,7 +537,8 @@
     "social_xiaohongshu": "Xiaohongshu (RedNote)",
     "social_douyin": "Douyin (TikTok)",
     "social_kuaishou": "Kuaishou",
-    "social_bilibili": "Bilibili"
+    "social_bilibili": "Bilibili",
+    "model_management": "Modèle"
   },
   "status": {
     "gpu_detecting": "Détection du GPU...",
@@ -539,6 +567,7 @@
     "double_res": "Mode Auto 2×",
     "double_res_tip": "Si activé, la résolution et les paramètres de tuile sont calculés automatiquement en petit-côté × 2 après envoi ; la saisie manuelle est ignorée",
     "double_res_hint_default": "Après envoi d'une image ou d'une vidéo, la résolution est calculée automatiquement en petit-côté × 2 (modification manuelle désactivée dans ce mode)",
-    "double_res_applied": "Résolution et paramètres de tuile pré-remplis à petit-côté × 2"
+    "double_res_applied": "Résolution et paramètres de tuile pré-remplis à petit-côté × 2",
+    "initializing": "Initialisation"
   }
 }

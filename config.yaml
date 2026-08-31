@@ -1,4 +1,4 @@
-cache:
+﻿cache:
   max_size_mb: 500
   ttl: 86400
 gpu:
@@ -41,8 +41,8 @@ inference:
   input_noise_scale: 0.0
   latent_noise_scale: 0.0
   max_resolution: 0
-  memory_min_available_gb: 2.0
-  memory_threshold: 0.95
+  memory_min_available_gb: 0.5
+  memory_threshold: 0.98
   offload_device: cpu
   prepend_frames: 0
   resolution: 2048

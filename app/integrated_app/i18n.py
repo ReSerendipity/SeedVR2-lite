@@ -193,6 +193,40 @@ def t(key: str, locale: str | None = None, default: str | None = None, **kwargs)
     return default if default is not None else key
 
 
+def get_flat_translations(locale: str | None = None) -> dict[str, str]:
+    """把命名空间词表压平为 `{"namespace.key": "译文"}` 单层字典，供前端一次性注入。
+
+    背景：base.html 曾以手写白名单形式向 `window.__I18N__` 暴露翻译键，
+    实测有 30+ 个 JS 实际引用的键不在名单内，取词静默退化为硬编码中文。
+    改为由本函数按当前语言整表导出，杜绝「漏登记」这一类缺陷。
+
+    只收集字符串叶子节点（子树 dict 跳过）；语言不支持或加载失败时返回空字典，
+    调用方（前端）各取词点均有 `|| '中文兜底'`，因此降级是安全的。
+
+    Args:
+        locale: 目标语言代码，None 时使用默认语言。
+
+    Returns:
+        压平后的翻译字典，键形如 "restore.upload_and_restore"。
+    """
+    lang = locale or _DEFAULT_LANG
+    data = _load_translations(lang)
+    if data is None and lang != "en":
+        data = _load_translations("en")
+    if not isinstance(data, dict):
+        return {}
+
+    flat: dict[str, str] = {}
+    for key, value in data.items():
+        if isinstance(value, str):
+            flat[key] = value
+        elif isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                if isinstance(sub_value, str):
+                    flat[f"{key}.{sub_key}"] = sub_value
+    return flat
+
+
 def _format(value: str, kwargs: dict) -> str:
     """对翻译值进行 str.format() 参数替换。
 

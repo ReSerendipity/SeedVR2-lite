@@ -25,6 +25,9 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
+from app.integrated_app.i18n import get_flat_translations
+from app.integrated_app.version import get_app_version
+
 logger = logging.getLogger(__name__)
 
 
@@ -121,6 +124,8 @@ def render_page(request: Request, template_name: str, active_page: str = "", **c
     - current_locale: 当前语言代码
     - locale_name: 当前语言名称
     - locales: 可用语言列表
+    - app_version: 应用版本号（来自 version.py 单一事实来源）
+    - i18n_flat: 当前语言的压平词表，供前端 window.__I18N__ 整表注入
 
     Args:
         request: FastAPI 请求对象。
@@ -140,6 +145,8 @@ def render_page(request: Request, template_name: str, active_page: str = "", **c
         "current_locale": i18n.current_locale,
         "locale_name": i18n.get_locale_name(i18n.current_locale),
         "locales": locales,
+        "app_version": get_app_version(),
+        "i18n_flat": get_flat_translations(i18n.current_locale),
         # CSP nonce: 每次页面渲染生成一次，注入 <script nonce> 与 CSP meta，
         # 使现代浏览器按 nonce 白名单执行内联脚本（unsafe-inline 仅作旧浏览器回退）
         "csp_nonce": secrets.token_urlsafe(16),

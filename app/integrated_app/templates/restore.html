@@ -39,25 +39,25 @@
 
         <!-- 一体化画布工具条 -->
         <div class="sv2-toolbar" id="canvasToolbar">
-            <span class="sv2-badge" id="canvasStateLabel">{{ t('restore.empty_state') or '未上传' }}</span>
+            <span class="sv2-badge" id="canvasStateLabel">{{ t('restore.empty_state') }}</span>
             <span class="sv2-filename" id="tbFileName" style="display:none"></span>
             <span class="sv2-meta" id="resultMetaText" style="display:none"></span>
             <span class="sv2-flex"></span>
             <div class="sv2-tb-group">
-                <button type="button" class="sv2-tb-btn" id="btnCanvasClear" disabled><i class="bi bi-x-lg"></i> 清除</button>
-                <button type="button" class="sv2-tb-btn" id="btnCanvasReplace" disabled><i class="bi bi-arrow-repeat"></i> 替换</button>
+                <button type="button" class="sv2-tb-btn" id="btnCanvasClear" disabled><i class="bi bi-x-lg"></i> {{ t('common.clear') }}</button>
+                <button type="button" class="sv2-tb-btn" id="btnCanvasReplace" disabled><i class="bi bi-arrow-repeat"></i> {{ t('restore.replace') }}</button>
             </div>
             <span class="sv2-tb-sep"></span>
             <div class="sv2-tb-group">
-                <button type="button" class="sv2-tb-btn sv2-ico" id="btnMagnifier" disabled title="放大镜（局部放大）"><i class="bi bi-search"></i></button>
-                <button type="button" class="sv2-tb-btn sv2-toggle" id="btnCanvasCompare" disabled><i class="bi bi-columns-gap"></i> {{ t('restore.compare_mode') or '对比模式' }}</button>
-                <button type="button" class="sv2-tb-btn sv2-ico active" id="btnCompareHorizontal" disabled title="{{ t('restore.compare_horizontal') or '水平' }}"><i class="bi bi-arrows-left-right"></i></button>
-                <button type="button" class="sv2-tb-btn sv2-ico" id="btnCompareVertical" disabled title="{{ t('restore.compare_vertical') or '垂直' }}"><i class="bi bi-arrows-up-down"></i></button>
-                <button type="button" class="sv2-tb-btn sv2-ico" id="btnCompareZoomIn" disabled title="{{ t('restore.zoom_in') or '放大' }}"><i class="bi bi-zoom-in"></i></button>
-                <span class="sv2-zoomlabel" id="compareZoomLabel" title="点击回到 1:1">—</span>
-                <button type="button" class="sv2-tb-btn sv2-ico" id="btnCompareZoomOut" disabled title="{{ t('restore.zoom_out') or '缩小' }}"><i class="bi bi-zoom-out"></i></button>
-                <button type="button" class="sv2-tb-btn sv2-ico" id="btnCompareFit" disabled title="{{ t('restore.fit_window') or '适配窗口' }}"><i class="bi bi-arrows-angle-expand"></i></button>
-                <button type="button" class="sv2-tb-btn sv2-ico" id="btnCompareReset" disabled title="{{ t('restore.reset') or '重置' }}"><i class="bi bi-arrow-counterclockwise"></i></button>
+                <button type="button" class="sv2-tb-btn sv2-ico" id="btnMagnifier" disabled title="{{ t('restore.magnifier_tip') }}" aria-label="{{ t('restore.magnifier_tip') }}"><i class="bi bi-search" aria-hidden="true"></i></button>
+                <button type="button" class="sv2-tb-btn sv2-toggle" id="btnCanvasCompare" disabled><i class="bi bi-columns-gap" aria-hidden="true"></i> {{ t('restore.compare_mode') }}</button>
+                <button type="button" class="sv2-tb-btn sv2-ico active" id="btnCompareHorizontal" disabled title="{{ t('restore.compare_horizontal') }}" aria-label="{{ t('restore.compare_horizontal') }}"><i class="bi bi-arrow-left-right" aria-hidden="true"></i></button>
+                <button type="button" class="sv2-tb-btn sv2-ico" id="btnCompareVertical" disabled title="{{ t('restore.compare_vertical') }}" aria-label="{{ t('restore.compare_vertical') }}"><i class="bi bi-arrow-down-up" aria-hidden="true"></i></button>
+                <button type="button" class="sv2-tb-btn sv2-ico" id="btnCompareZoomIn" disabled title="{{ t('restore.zoom_in') }}" aria-label="{{ t('restore.zoom_in') }}"><i class="bi bi-zoom-in" aria-hidden="true"></i></button>
+                <span class="sv2-zoomlabel" id="compareZoomLabel" title="{{ t('restore.zoom_reset') }}" aria-label="{{ t('restore.zoom_reset') }}">—</span>
+                <button type="button" class="sv2-tb-btn sv2-ico" id="btnCompareZoomOut" disabled title="{{ t('restore.zoom_out') }}" aria-label="{{ t('restore.zoom_out') }}"><i class="bi bi-zoom-out" aria-hidden="true"></i></button>
+                <button type="button" class="sv2-tb-btn sv2-ico" id="btnCompareFit" disabled title="{{ t('restore.fit_window') }}" aria-label="{{ t('restore.fit_window') }}"><i class="bi bi-arrows-angle-expand" aria-hidden="true"></i></button>
+                <button type="button" class="sv2-tb-btn sv2-ico" id="btnCompareReset" disabled title="{{ t('common.reset') }}" aria-label="{{ t('common.reset') }}"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>
             </div>
             <span class="sv2-tb-sep"></span>
             <div class="sv2-tb-group">
@@ -92,7 +92,7 @@
                         <div class="mg-layer mg-after" style="display:none"></div>
                     </div>
                 </div>
-                <button type="button" class="sv2-clear-btn" id="btnClearImage" title="{{ t('restore.clear_image') or '清除图片' }}"><i class="bi bi-x-lg"></i></button>
+                <button type="button" class="sv2-clear-btn" id="btnClearImage" title="{{ t('restore.clear_image') }}"><i class="bi bi-x-lg"></i></button>
             </div>
 
             <!-- 进度 -->
@@ -136,12 +136,12 @@
                     <div class="sv-compare-viewport sv2-viewport" id="compareViewport" tabindex="0">
                         <div class="sv-compare-container" id="compareContainer">
                             <img id="compareBefore" alt="{{ t('restore.before') }}">
-                            <span class="sv-compare-label sv-compare-label-before">{{ t('restore.before') or 'Before' }}</span>
+                            <span class="sv-compare-label sv-compare-label-before">{{ t('restore.before') }}</span>
                             <div class="sv-compare-after" id="compareAfter">
                                 <img id="compareAfterImg" alt="{{ t('restore.after') }}">
-                                <span class="sv-compare-label sv-compare-label-after">{{ t('restore.after') or 'After' }}</span>
+                                <span class="sv-compare-label sv-compare-label-after">{{ t('restore.after') }}</span>
                             </div>
-                            <div class="sv-compare-slider" id="compareSlider"><i class="bi bi-arrows-expand-horizontal"></i></div>
+                            <div class="sv-compare-slider" id="compareSlider"><i class="bi bi-arrows"></i></div>
                         </div>
                         <span class="sv2-hud" id="compareHud">—</span>
                         <span class="sv2-hint"><kbd>滚轮</kbd> 缩放 · <kbd>左键</kbd> 分割线/平移 · <kbd>双击</kbd> 适配/1:1</span>
@@ -156,12 +156,12 @@
                     <div class="sv-compare-viewport sv2-viewport" id="videoCompareViewport" tabindex="0">
                         <div class="sv-compare-container" id="videoCompareContainer">
                             <video id="videoCompareBefore" muted loop playsinline></video>
-                            <span class="sv-compare-label sv-compare-label-before">{{ t('restore.before') or 'Before' }}</span>
+                            <span class="sv-compare-label sv-compare-label-before">{{ t('restore.before') }}</span>
                             <div class="sv-compare-after" id="videoCompareAfter">
                                 <video id="videoCompareAfterImg" muted loop playsinline></video>
-                                <span class="sv-compare-label sv-compare-label-after">{{ t('restore.after') or 'After' }}</span>
+                                <span class="sv-compare-label sv-compare-label-after">{{ t('restore.after') }}</span>
                             </div>
-                            <div class="sv-compare-slider" id="videoCompareSlider"><i class="bi bi-arrows-expand-horizontal"></i></div>
+                            <div class="sv-compare-slider" id="videoCompareSlider"><i class="bi bi-arrows"></i></div>
                         </div>
                         <span class="sv2-hud" id="videoCompareHud">—</span>
                         <span class="sv2-hint"><kbd>滚轮</kbd> 缩放 · <kbd>左键</kbd> 分割线/平移 · <kbd>双击</kbd> 适配/1:1 · <kbd>空格</kbd> 播放/暂停</span>
@@ -177,14 +177,20 @@
                 <span class="sv-badge sv-badge-info">{{ t('restore.folder_mode') }}</span>
             </div>
             <details class="sv2-allow-dirs" id="allowDirsPanel" style="margin-bottom:10px;">
-                <summary style="cursor:pointer;font-size:12px;color:var(--sv-fg-secondary);user-select:none;display:flex;align-items:center;gap:6px;">
-                    <i class="bi bi-shield-check"></i> {{ '允许目录管理' if t('restore.allow_dirs_title') == 'restore.allow_dirs_title' else t('restore.allow_dirs_title') }}
+                <summary style="cursor:pointer;font-size:12px;color:var(--sv-text-secondary);user-select:none;display:flex;align-items:center;gap:6px;">
+                    <i class="bi bi-shield-check"></i> {{ t('restore.allow_dirs_title') }}
                 </summary>
                 <div class="sv2-allow-dirs-body" id="allowDirsList" style="margin-top:6px;padding:8px 10px;background:var(--sv-surface-2);border-radius:var(--sv-radius-sm);">
-                    <div class="sv-text-xs sv-text-muted"><span class="sv-spinner sv-spinner-sm"></span> {{ '加载中...' if t('restore.allow_dirs_loading') == 'restore.allow_dirs_loading' else t('restore.allow_dirs_loading') }}</div>
+                    <div class="sv-text-xs sv-text-muted"><span class="sv-spinner sv-spinner-sm"></span> {{ t('restore.allow_dirs_loading') }}</div>
                 </div>
             </details>
             <div id="folderScanResults" class="sv2-scan-results"></div>
+            <!-- 未扫描时的引导空态：#folderScanResults 为空时由 CSS 显示，一旦有结果自动让位 -->
+            <div class="sv2-batch-empty" aria-live="polite">
+                <div class="sv2-batch-empty-icon"><i class="bi bi-folder2-open"></i></div>
+                <div class="sv2-batch-empty-title">{{ t('restore.please_scan_folder') }}</div>
+                <div class="sv2-batch-empty-desc">{{ t('restore.batch_tip') }}</div>
+            </div>
             <div class="sv2-batch-progress" id="batchProgressCard" style="display:none;">
                 <div class="sv2-batch-progress-head">
                     <span id="batchProgressTitle">{{ t('video.batch_progress') }}</span>
@@ -224,7 +230,7 @@
         </div>
         
         <!-- 默认设置按钮组 -->
-        <div class="sv2-presets sv-mt-3" style="border-top: 1px solid #ddd; padding-top: 12px;">
+        <div class="sv2-presets sv2-presets-defaults">
             <button type="button" class="sv-btn sv-btn-secondary sv-btn-sm sv-w-100" id="btnSaveAsDefault" title="将当前所有参数保存为默认设置（下次打开页面自动加载）">
                 <i class="bi bi-save"></i> 保存为默认设置
             </button>
@@ -233,7 +239,7 @@
             </button>
         </div>
 
-        <div class="sv-param-section-title">{{ t('restore.basic_params') or '基础参数' }}</div>
+        <div class="sv-param-section-title">{{ t('restore.basic_params') }}</div>
 
         <div class="sv-param-group">
             <label class="sv-param-label" for="ditModel">{{ t('video.model') }}
@@ -259,19 +265,19 @@
         <div class="sv-param-group">
             <label class="sv-param-label" for="resolution">{{ t('restore.resolution') }}
                 <span class="sv-param-help" data-tooltip="{{ t('restore.tip_resolution') }}"><i class="bi bi-info-circle"></i></span>
-                <label class="sv-res-auto-toggle" title="{{ '开启后上传图片或视频自动按短边×2设置分辨率' if t('restore.double_res_tip') == 'restore.double_res_tip' else t('restore.double_res_tip') }}">
+                <label class="sv-res-auto-toggle" title="{{ t('status.double_res_tip') }}">
                     <input type="checkbox" id="doubleResToggle" name="double_res" value="true" checked>
                     <span class="sv-res-auto-track"><span class="sv-res-auto-thumb"></span></span>
-                    <span class="sv-res-auto-label">{{ '两倍模式' if t('restore.double_res') == 'restore.double_res' else t('restore.double_res') }}</span>
+                    <span class="sv-res-auto-label">{{ t('status.double_res') }}</span>
                 </label>
             </label>
             <input type="number" class="sv-param-input" id="resolution" name="resolution" value="960" min="1">
-            <div class="sv-res-hint" id="resolutionHint">{{ '自动按短边×2 计算，手动修改将自动退出两倍模式' if t('restore.double_res_hint_default') == 'restore.double_res_hint_default' else t('restore.double_res_hint_default') }}</div>
+            <div class="sv-res-hint" id="resolutionHint">{{ t('status.double_res_hint_default') }}</div>
         </div>
         <div class="sv-param-group">
             <label class="sv-param-label" for="outputFormat">
-                {{ t('restore.output_format') or '输出格式' }}
-                <span class="sv-param-help" data-tooltip="{{ t('restore.tip_output_format') or ('选择修复完成后输出文件的格式。\n默认：自动匹配输入图片格式（PNG 输入→PNG 输出）\nPNG(推荐)：无损压缩，保留透明通道\nJPG：有损压缩，文件更小，适合照片\nWebP：现代格式，兼顾质量和大小\nBMP：无压缩，文件最大\nTIFF：无损，适合专业用途') }}">
+                {{ t('video.output_format') }}
+                <span class="sv-param-help" data-tooltip="{{ t('restore.tip_output_format') }}">
                     <i class="bi bi-info-circle"></i>
                 </span>
             </label>
@@ -338,7 +344,7 @@
                         <label class="sv-param-check" data-tooltip="启用后,模型权重会按需在显存与内存之间交换,可显著降低峰值显存占用,换取少量速度损失。显存小于模型体积时强烈建议保持开启。">
                             <input type="checkbox" name="swap_io_components" checked disabled>
                             <input type="hidden" name="swap_io_components" value="true">
-                            <span>{{ t('video.swap_io_components') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ '点击解锁，可手动修改' if t('restore.lock_hint_lock') == 'restore.lock_hint_lock' else t('restore.lock_hint_lock') }}"></i></span>
+                            <span>{{ t('video.swap_io_components') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
                         </label>
                     </div>
                     <input type="hidden" name="dit_cache_model" value="true">
@@ -369,17 +375,17 @@
                         <label class="sv-param-check" data-tooltip="开启分块编码:把大图切成小块再编码,避免单次显存占用过高。保持开启即可;仅在大分辨率且显存充裕时关闭可能略快。">
                             <input type="checkbox" name="encode_tiled" checked disabled>
                             <input type="hidden" name="encode_tiled" value="true">
-                            <span>{{ t('video.encode_tiled') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ '点击解锁，可手动修改' if t('restore.lock_hint_lock') == 'restore.lock_hint_lock' else t('restore.lock_hint_lock') }}"></i></span>
+                            <span>{{ t('video.encode_tiled') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
                         </label>
                         <label class="sv-param-check" data-tooltip="开启分块解码:解码同样分块进行,降低显存峰值。保持开启。">
                             <input type="checkbox" name="decode_tiled" checked disabled>
                             <input type="hidden" name="decode_tiled" value="true">
-                            <span>{{ t('video.decode_tiled') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ '点击解锁，可手动修改' if t('restore.lock_hint_lock') == 'restore.lock_hint_lock' else t('restore.lock_hint_lock') }}"></i></span>
+                            <span>{{ t('video.decode_tiled') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
                         </label>
                         <label class="sv-param-check" data-tooltip="调试用:输出时叠加显示分块边界,便于观察接缝位置与块大小是否合适。正常使用请关闭。">
                             <input type="checkbox" name="tile_debug" value="true" disabled>
                             <input type="hidden" name="tile_debug" value="false">
-                            <span>{{ t('video.tile_debug') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ '点击解锁，可手动修改' if t('restore.lock_hint_lock') == 'restore.lock_hint_lock' else t('restore.lock_hint_lock') }}"></i></span>
+                            <span>{{ t('video.tile_debug') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
                         </label>
                     </div>
                     <div class="sv-param-group">
@@ -396,7 +402,7 @@
                         <label class="sv-param-check" data-tooltip="视频修复时各帧使用统一的批大小,避免显存随帧内容波动导致 OOM。对图片任务无影响。保持开启。">
                             <input type="checkbox" name="uniform_batch_size" checked disabled>
                             <input type="hidden" name="uniform_batch_size" value="true">
-                            <span>{{ t('video.uniform_batch_size') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ '点击解锁，可手动修改' if t('restore.lock_hint_lock') == 'restore.lock_hint_lock' else t('restore.lock_hint_lock') }}"></i></span>
+                            <span>{{ t('video.uniform_batch_size') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
                         </label>
                     </div>
                 </div>
@@ -416,7 +422,7 @@
                     <label class="sv-param-check" data-tooltip="调试模式:输出中间过程的调试信息与日志,用于排查问题。日常使用请关闭。">
                         <input type="checkbox" name="enable_debug" disabled>
                         <input type="hidden" name="enable_debug" value="false">
-                        <span>{{ t('video.debug_mode') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ '点击解锁，可手动修改' if t('restore.lock_hint_lock') == 'restore.lock_hint_lock' else t('restore.lock_hint_lock') }}"></i></span>
+                        <span>{{ t('video.debug_mode') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
                     </label>
                 </div>
             </div>
@@ -473,51 +479,51 @@
     <button class="sv-float-help__toggle" id="helpToggle" type="button" aria-label="打开帮助" aria-expanded="false">?</button>
     <div class="sv-float-help__panel">
         <div class="sv-float-help__panel-header">
-            <span class="sv-float-help__panel-title">快速帮助</span>
-            <button class="sv-float-help__panel-close" id="helpClose" type="button" aria-label="关闭帮助">&#x2715;</button>
+            <span class="sv-float-help__panel-title">{{ t('restore.help_title', default='快速帮助') }}</span>
+            <button class="sv-float-help__panel-close" id="helpClose" type="button" aria-label="{{ t('common.close') }}">&#x2715;</button>
         </div>
         <div class="sv-float-help__step">
             <span class="sv-float-help__step-num">1</span>
-            <span>拖拽或点击画布中央区域上传文件</span>
+            <span>{{ t('restore.onboarding_step1') }}</span>
         </div>
         <div class="sv-float-help__step">
             <span class="sv-float-help__step-num">2</span>
-            <span>在右侧面板调整模型、分辨率等参数</span>
+            <span>{{ t('restore.onboarding_step2') }}</span>
         </div>
         <div class="sv-float-help__step">
             <span class="sv-float-help__step-num">3</span>
-            <span>点击「开始修复」，结果直接显示在画布上</span>
+            <span>{{ t('restore.onboarding_step3') }}</span>
         </div>
         <div class="sv-float-help__shortcut">
-            <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 开始修复 &nbsp;·&nbsp; <kbd>Esc</kbd> 取消
+            {{ t('restore.onboarding_shortcut') }}
         </div>
     </div>
 </div>
 
 <!-- 首次引导模态框 -->
 <div class="sv-modal-overlay" id="onboardingModal" style="display:none;">
-    <div class="sv-modal" style="max-width:460px;width:90%;padding:28px;">
-        <h2 style="font-family:var(--sv-font-display);font-size:22px;margin-bottom:6px;">欢迎使用修复工作台</h2>
-        <p style="font-size:13px;color:var(--sv-fg-secondary);margin-bottom:20px;">画布式工作流 — 文件即见即修，参数随调随用</p>
-        <ul style="list-style:none;margin-bottom:20px;">
-            <li style="display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--sv-border-light);font-size:13px;">
-                <span style="width:26px;height:26px;background:var(--sv-primary-light);color:var(--sv-primary-text);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">1</span>
-                <span>拖拽文件到画布中央，或点击上传区域选择文件</span>
+    <div class="sv-modal sv-onb-modal">
+        <h2 class="sv-onb-title">{{ t('restore.onboarding_title') }}</h2>
+        <p class="sv-onb-desc">{{ t('restore.onboarding_desc') }}</p>
+        <ul class="sv-onb-list">
+            <li class="sv-onb-item">
+                <span class="sv-onb-num">1</span>
+                <span>{{ t('restore.onboarding_step1') }}</span>
             </li>
-            <li style="display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--sv-border-light);font-size:13px;">
-                <span style="width:26px;height:26px;background:var(--sv-primary-light);color:var(--sv-primary-text);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">2</span>
-                <span>文件上传后直接显示在画布上，右侧面板配置参数</span>
+            <li class="sv-onb-item">
+                <span class="sv-onb-num">2</span>
+                <span>{{ t('restore.onboarding_step2') }}</span>
             </li>
-            <li style="display:flex;gap:12px;padding:12px 0;font-size:13px;">
-                <span style="width:26px;height:26px;background:var(--sv-primary-light);color:var(--sv-primary-text);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">3</span>
-                <span>点击「开始修复」，AI 处理完成后结果替换画布内容</span>
+            <li class="sv-onb-item">
+                <span class="sv-onb-num">3</span>
+                <span>{{ t('restore.onboarding_step3') }}</span>
             </li>
         </ul>
-        <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--sv-surface-2);border-radius:var(--sv-radius-sm);font-size:12px;color:var(--sv-fg-secondary);margin-bottom:20px;">
-            <kbd style="padding:2px 7px;background:var(--sv-surface-1);border:1px solid var(--sv-border);border-radius:4px;font-size:11px;">Ctrl</kbd>+<kbd style="padding:2px 7px;background:var(--sv-surface-1);border:1px solid var(--sv-border);border-radius:4px;font-size:11px;">Enter</kbd> 开始修复，<kbd style="padding:2px 7px;background:var(--sv-surface-1);border:1px solid var(--sv-border);border-radius:4px;font-size:11px;">Esc</kbd> 取消
-        </div>
-        <div style="display:flex;justify-content:flex-end;">
-            <button id="onboardingClose" type="button" style="padding:12px 22px;min-height:44px;background:var(--sv-primary);color:#fff;border:none;border-radius:var(--sv-radius-sm);font-size:13px;font-weight:600;cursor:pointer;">知道了，开始使用</button>
+        <div class="sv-onb-shortcut">{{ t('restore.onboarding_shortcut') }}</div>
+        <div class="sv-onb-actions">
+            <button id="onboardingClose" type="button" class="sv-btn sv-btn-primary sv-onb-close">
+                {{ t('restore.onboarding_ack', default='知道了，开始使用') }}
+            </button>
         </div>
     </div>
 </div>
@@ -572,6 +578,8 @@ document.addEventListener('DOMContentLoaded', () => {
     var currentTaskId = null;
     let gpuAvailable = null;
     let batchStartTime = null;
+    // 当前工作台模式（single / batch）——驱动侧栏主按钮的标签与动作分派
+    let workMode = 'single';
 
     // 同步 window.currentTaskId（由 app.js 设置）
     Object.defineProperty(window, 'currentTaskId', {
@@ -609,17 +617,17 @@ document.addEventListener('DOMContentLoaded', () => {
             const target = shortEdge * 2;
             hint.classList.add('is-auto');
             hint.textContent =
-                (I['restore.double_res_applied'] || '已根据尺寸 {w}×{h} 的短边 {s} 自动设置为 {v}（手动修改将自动退出两倍模式）')
+                (I['status.double_res_applied'] || '已根据尺寸 {w}×{h} 的短边 {s} 自动设置为 {v}（手动修改将自动退出两倍模式）')
                     .replace('{w}', String(meta.width))
                     .replace('{h}', String(meta.height))
                     .replace('{s}', String(shortEdge))
                     .replace('{v}', String(target));
         } else if (autoOn) {
             hint.classList.add('is-auto');
-            hint.textContent = I['restore.double_res_hint_default'] || '自动按短边×2 计算，手动修改将自动退出两倍模式';
+            hint.textContent = I['status.double_res_hint_default'] || '自动按短边×2 计算，手动修改将自动退出两倍模式';
         } else {
             hint.classList.remove('is-auto');
-            hint.textContent = I['manual_res_hint'] || '自定义模式：可手动输入任意分辨率';
+            hint.textContent = I['status.manual_res_hint'] || '自定义模式：可手动输入任意分辨率';
         }
     }
 
@@ -885,11 +893,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!btn) return;
 
         const hasFile = els.fileInput.files.length > 0;
+        const isBatch = workMode === 'batch';
 
         btn.classList.remove('is-disabled');
         btn.removeAttribute('disabled');
-        btn.title = hasFile ? '' : (I['restore.please_select_file'] || '请先选择要修复的文件');
-        btn.innerHTML = '<i class="bi bi-play-fill"></i> ' + (I['restore.upload_and_restore'] || '上传并修复');
+        btn.title = isBatch
+            ? (scannedFiles.length > 0 ? '' : (I['restore.please_scan_folder'] || '请先扫描并选择要批量处理的文件夹'))
+            : (hasFile ? '' : (I['restore.please_select_file'] || '请先选择要修复的文件'));
+        btn.innerHTML = isBatch
+            ? '<i class="bi bi-collection"></i> ' + (I['restore.batch_from_folder'] || '从文件夹批量处理')
+            : '<i class="bi bi-play-fill"></i> ' + (I['restore.upload_and_restore'] || '上传并修复');
         btn.classList.add('sv-btn-primary');
 
         if (batchBtn) {
@@ -1743,10 +1756,19 @@ document.addEventListener('DOMContentLoaded', () => {
             const open = els.advParams.classList.toggle('open');
             els.advToggle.classList.toggle('open', open);
             els.advToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            // 展开后把入口滚到侧栏可视区顶部，否则新增内容全在折叠线以下、看起来像没反应
+            if (open) {
+                requestAnimationFrame(() => {
+                    els.advToggle.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                });
+            }
         });
     }
 
-    els.btnStartRestore.addEventListener('click', startRestore);
+    els.btnStartRestore.addEventListener('click', () => {
+        // 主按钮语义随模式切换：批量模式复用同一套 startBatch 流程，避免两套入口
+        if (workMode === 'batch') { startBatch(); } else { startRestore(); }
+    });
     els.btnStartBatch.addEventListener('click', startBatch);
     if (document.getElementById('batchSize')) {
         document.getElementById('batchSize').addEventListener('change', normalizeBatchSize);
@@ -1793,7 +1815,7 @@ document.addEventListener('DOMContentLoaded', () => {
             _resolutionLastAutoValue = null;
             syncResolutionUI({});
             SeedVR2.toast(
-                I['restore.switched_to_manual'] || '已切换到手动模式，分辨率以输入值为准',
+                I['status.switched_to_manual'] || '已切换到手动模式，分辨率以输入值为准',
                 'info'
             );
         });
@@ -1878,7 +1900,7 @@ document.addEventListener('DOMContentLoaded', () => {
             tg.checked = false;
             syncResolutionUI({});
             SeedVR2.toast?.(
-                I['restore.switched_by_vram_rec'] || '检测到应用推荐参数，已切换至自定义模式',
+                I['status.switched_by_vram_rec'] || '检测到应用推荐参数，已切换至自定义模式',
                 'info'
             );
         })();
@@ -1949,8 +1971,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     iEl.classList.remove('bi-lock-fill');
                     iEl.classList.add('bi-unlock-fill');
                     const fb = '点击重新锁定（恢复系统推荐值）';
-                    iEl.title = (I['restore.lock_hint_unlock'] && I['restore.lock_hint_unlock'] !== 'restore.lock_hint_unlock')
-                        ? I['restore.lock_hint_unlock'] : fb;
+                    iEl.title = I['status.lock_hint_unlock'] || fb;
                 } else {
                     visCb.disabled = true;
                     visCb.checked = true; // 回到系统推荐的勾选状态
@@ -1958,14 +1979,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     iEl.classList.remove('bi-unlock-fill');
                     iEl.classList.add('bi-lock-fill');
                     const fb = '点击解锁，允许手动修改优化参数';
-                    iEl.title = (I['restore.lock_hint_lock'] && I['restore.lock_hint_lock'] !== 'restore.lock_hint_lock')
-                        ? I['restore.lock_hint_lock'] : fb;
+                    iEl.title = I['status.lock_hint_lock'] || fb;
                 }
             });
             SeedVR2.toast?.(
                 willUnlock
-                    ? (I['restore.optim_unlocked'] || '已解锁本组优化参数，可手动调整')
-                    : (I['restore.optim_locked'] || '已重新锁定本组优化参数，恢复系统推荐值'),
+                    ? (I['status.optim_unlocked'] || '已解锁本组优化参数，可手动调整')
+                    : (I['status.optim_locked'] || '已重新锁定本组优化参数，恢复系统推荐值'),
                 'info'
             );
         });
@@ -2067,19 +2087,19 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (unlocked) {
                             ic.classList.remove('bi-lock-fill');
                             ic.classList.add('bi-unlock-fill');
-                            ic.title = I['lock_hint_unlock'] || '点击锁回系统推荐值';
+                            ic.title = I['status.lock_hint_unlock'] || '点击锁回系统推荐值';
                         } else {
                             ic.classList.remove('bi-unlock-fill');
                             ic.classList.add('bi-lock-fill');
-                            ic.title = I['lock_hint_lock'] || '点击解锁，可手动修改';
+                            ic.title = I['status.lock_hint_lock'] || '点击解锁，可手动修改';
                         }
                     });
                     // 解锁状态变更 → 触发一次增量保存
                     _queueSaveRestorePrefs(null, { [groupKey]: unlocked });
                     // 视觉提示
                     SeedVR2.toast(unlocked
-                        ? (I['optim_unlocked'] || '已解锁本组优化参数，可手动调整')
-                        : (I['optim_locked'] || '已锁定系统推荐值'), 'info');
+                        ? (I['status.optim_unlocked'] || '已解锁本组优化参数，可手动调整')
+                        : (I['status.optim_locked'] || '已锁定系统推荐值'), 'info');
                 });
             });
         });
@@ -2337,6 +2357,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 模式切换标签（单文件/批量）+ URL hash 同步（重构：顶部工具条 + sv-mode-tab-pane）
     function switchMode(mode) {
+        workMode = mode === 'batch' ? 'batch' : 'single';
+
         // 切换 mode-tab 的 active 状态
         document.querySelectorAll('.sv-mode-tab').forEach(function(tab) {
             tab.classList.toggle('active', tab.dataset.mode === mode);
@@ -2351,6 +2373,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // 批量路径行工具条（内嵌主区顶部）
         var batchToolbar = document.getElementById('batchToolbar');
         if (batchToolbar) batchToolbar.style.display = mode === 'batch' ? 'flex' : 'none';
+
+        // 画布工具条只服务于单文件画布：批量模式下清除/对比/缩放/下载均为死控件，
+        // 且「未上传」徽标语义错误，直接隐藏整行减少噪声
+        var canvasToolbar = document.getElementById('canvasToolbar');
+        if (canvasToolbar) canvasToolbar.style.display = mode === 'batch' ? 'none' : 'flex';
+
+        // 侧栏主按钮的标签与提示随模式重算
+        if (typeof updateStartButton === 'function') updateStartButton();
 
         // 更新 URL hash
         history.replaceState(null, '', '#' + mode);

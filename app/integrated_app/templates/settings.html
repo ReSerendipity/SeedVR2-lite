@@ -74,7 +74,7 @@
                 </div>
                 <div>
                     <div class="sv-about-metadata-label">{{ t('settings.version') }}</div>
-                    <div class="sv-about-metadata-value">v1.0.0</div>
+                    <div class="sv-about-metadata-value">v{{ app_version | default('?') }}</div>
                 </div>
                 <div>
                     <div class="sv-about-metadata-label">{{ t('settings.license') }}</div>
@@ -87,54 +87,67 @@
                     <i class="bi bi-github"></i> {{ t('settings.github_button') }}
                 </a>
                 <a href="https://www.xiaohongshu.com/user/profile/6a606c140000000010000801" target="_blank" rel="noopener noreferrer"
-                   class="sv-btn sv-btn-outline sv-btn-sm sv-about-github-btn" title="{{ t('settings.social_xiaohongshu') }}">
+                   class="sv-btn sv-btn-outline sv-btn-sm sv-about-github-btn" title="{{ t('settings.social_xiaohongshu') }}" aria-label="{{ t('settings.social_xiaohongshu') }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.5 14h-9a.5.5 0 0 1-.5-.5v-7a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5z"/></svg>
                 </a>
                 <a href="https://www.douyin.com/user/MS4wLjABAAAAcEdOoxVlfk3Ulx_usqR-3PHW4xxp6wYzRmsuRI_-fHBigPETTKLsv4fknIpFq6sP" target="_blank" rel="noopener noreferrer"
-                   class="sv-btn sv-btn-outline sv-btn-sm sv-about-github-btn" title="{{ t('settings.social_douyin') }}">
+                   class="sv-btn sv-btn-outline sv-btn-sm sv-about-github-btn" title="{{ t('settings.social_douyin') }}" aria-label="{{ t('settings.social_douyin') }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1v-3.5a6.37 6.37 0 0 0-.79-.05A6.34 6.34 0 0 0 3.15 15.2a6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.34-6.34V8.56a8.27 8.27 0 0 0 4.76 1.5v-3.4a4.85 4.85 0 0 1-1-.17z"/></svg>
                 </a>
                 <a href="https://www.kuaishou.com/profile/3x2sk6hj48i2mhs" target="_blank" rel="noopener noreferrer"
-                   class="sv-btn sv-btn-outline sv-btn-sm sv-about-github-btn" title="{{ t('settings.social_kuaishou') }}">
+                   class="sv-btn sv-btn-outline sv-btn-sm sv-about-github-btn" title="{{ t('settings.social_kuaishou') }}" aria-label="{{ t('settings.social_kuaishou') }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l7 4.5-7 4.5z"/></svg>
                 </a>
                 <a href="https://space.bilibili.com/499527473" target="_blank" rel="noopener noreferrer"
-                   class="sv-btn sv-btn-outline sv-btn-sm sv-about-github-btn" title="{{ t('settings.social_bilibili') }}">
+                   class="sv-btn sv-btn-outline sv-btn-sm sv-about-github-btn" title="{{ t('settings.social_bilibili') }}" aria-label="{{ t('settings.social_bilibili') }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.813 4.653h.854c1.51.054 2.769.578 3.773 1.574 1.004.995 1.524 2.249 1.56 3.76v7.36c-.036 1.51-.556 2.769-1.56 3.773s-2.262 1.524-3.773 1.56H5.333c-1.51-.036-2.769-.556-3.773-1.56S.036 18.858 0 17.347v-7.36c.036-1.511.556-2.765 1.56-3.76 1.004-.996 2.262-1.52 3.773-1.574h.774l-1.174-1.12a1.234 1.234 0 0 1-.373-.906c0-.356.124-.658.373-.907l.027-.027c.267-.249.573-.373.92-.373.347 0 .653.124.92.373L9.653 4.44c.071.071.134.142.187.213h4.267a.836.836 0 0 1 .16-.213l2.853-2.747c.267-.249.573-.373.92-.373.347 0 .662.124.929.373.249.249.373.551.373.907 0 .355-.124.657-.373.906L17.813 4.653zM5.333 7.24c-.746.018-1.373.276-1.88.773-.506.498-.769 1.13-.786 1.894v7.52c.017.764.28 1.395.786 1.893.507.498 1.134.756 1.88.773h13.334c.746-.017 1.373-.275 1.88-.773.506-.498.769-1.129.786-1.893v-7.52c-.017-.765-.28-1.396-.786-1.894-.507-.497-1.134-.755-1.88-.773H5.333zM8 11.107c.373 0 .684.124.933.373.25.249.383.569.4.96v1.173c-.017.391-.15.711-.4.96-.249.25-.56.374-.933.374s-.684-.125-.933-.374c-.25-.249-.383-.569-.4-.96V12.44c0-.373.129-.689.386-.947.258-.257.574-.386.947-.386zm8 0c.373 0 .684.124.933.373.25.249.383.569.4.96v1.173c-.017.391-.15.711-.4.96-.249.25-.56.374-.933.374s-.684-.125-.933-.374c-.25-.249-.383-.569-.4-.96V12.44c.017-.391.15-.711.4-.96.249-.249.56-.373.933-.373z"/></svg>
                 </a>
             </div>
         </div>
     </div>
 
-    <!-- 技术特性 -->
+    <!-- 相关链接 -->
     <div class="sv-about-section-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-        {{ t('settings.features_title') }}
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        {{ t('settings.links_title') }}
     </div>
-    <div class="sv-about-features">
-        {% set features = [
-            ("bi-lightning-charge", t('settings.features.one_step'), t('settings.features.one_step_desc')),
-            ("bi-box-seam", t('settings.features.standalone'), t('settings.features.standalone_desc')),
-            ("bi-layers", t('settings.features.mult_model'), t('settings.features.mult_model_desc')),
-            ("bi-cpu", t('settings.features.dit'), t('settings.features.dit_desc')),
-            ("bi-film", t('settings.features.vae'), t('settings.features.vae_desc')),
-            ("bi-arrow-left-right", t('settings.features.blockswap'), t('settings.features.blockswap_desc')),
-            ("bi-collection", t('settings.features.batch'), t('settings.features.batch_desc')),
-            ("bi-translate", t('settings.features.language'), t('settings.features.language_desc')),
-            ("bi-activity", t('settings.features.monitor'), t('settings.features.monitor_desc'))
-        ] %}
-        {% for icon, title, desc in features %}
-        <div class="sv-about-feature-card">
-            <div class="sv-about-feature-icon">
-                <i class="bi {{ icon }}"></i>
-                <span>{{ title }}</span>
-            </div>
-            <div class="sv-about-feature-desc">{{ desc }}</div>
+    <div class="sv-card">
+        <div class="sv-card-body">
+            <ul class="sv-about-links">
+                <li>
+                    <a href="{{ t('settings.github_url') }}" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-github"></i> SeedVR2 GitHub
+                    </a>
+                </li>
+                <li>
+                    <a href="{{ t('settings.github_url') }}/releases" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-box-arrow-up-right"></i> {{ t('settings.releases') }}
+                    </a>
+                </li>
+                <li>
+                    <a href="{{ t('settings.github_url') }}/issues" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-bug"></i> {{ t('settings.issues') }}
+                    </a>
+                </li>
+            </ul>
         </div>
-        {% endfor %}
     </div>
 
-    </div><!-- /左侧关于（项目信息 + 技术特性） -->
+    <!-- 版权信息 -->
+    <div class="sv-about-section-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M14.83 14.83a4 4 0 1 1 0-5.66"/></svg>
+        {{ t('settings.copyright_title') }}
+    </div>
+    <div class="sv-card">
+        <div class="sv-card-body">
+            <p class="sv-about-note">{{ t('settings.copyright_desc') }}</p>
+            <p class="sv-about-note">{{ t('settings.copyright_notice') }}</p>
+            <p class="sv-about-note">{{ t('settings.copyright_license') }}</p>
+            <p class="sv-about-note sv-about-note-lead">{{ t('settings.third_party_notice') }}</p>
+        </div>
+    </div>
+
+    </div><!-- /sv-about（左：设置 + 项目信息 + 链接 + 版权） -->
 
   </div><!-- /sv-settings-col 左 -->
 
@@ -204,10 +217,6 @@
                     <code>start.bat</code>
                 </div>
                 <div class="sv-about-setup-row">
-                    <span class="sv-about-setup-label">{{ t('settings.quickstart.models_dir') }}:</span>
-                    <code>{{ t('settings.quickstart.model_dir_value') }}</code>
-                </div>
-                <div class="sv-about-setup-row">
                     <span class="sv-about-setup-label">{{ t('settings.quickstart.output_dir') }}:</span>
                     <code>{{ t('settings.quickstart.output_dir_value') }}</code>
                 </div>
@@ -270,49 +279,40 @@
         </div>
     </div>
 
-    <!-- 相关链接 -->
-    <div class="sv-about-section-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-        {{ t('settings.links_title') }}
-    </div>
-    <div class="sv-card">
-        <div class="sv-card-body">
-            <ul class="sv-about-links">
-                <li>
-                    <a href="{{ t('settings.github_url') }}" target="_blank" rel="noopener noreferrer">
-                        <i class="bi bi-github"></i> SeedVR2 GitHub
-                    </a>
-                </li>
-                <li>
-                    <a href="{{ t('settings.github_url') }}/releases" target="_blank" rel="noopener noreferrer">
-                        <i class="bi bi-box-arrow-up-right"></i> {{ t('settings.releases') }}
-                    </a>
-                </li>
-                <li>
-                    <a href="{{ t('settings.github_url') }}/issues" target="_blank" rel="noopener noreferrer">
-                        <i class="bi bi-bug"></i> {{ t('settings.issues') }}
-                    </a>
-                </li>
-            </ul>
-        </div>
-    </div>
-
-    <!-- 版权信息 -->
-    <div class="sv-about-section-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M14.83 14.83a4 4 0 1 1 0-5.66"/></svg>
-        {{ t('settings.copyright_title') }}
-    </div>
-    <div class="sv-card">
-        <div class="sv-card-body">
-            <p style="font-size:12px;color:var(--sv-text-muted);line-height:1.6;margin-bottom:8px">{{ t('settings.copyright_desc') }}</p>
-            <p style="font-size:12px;color:var(--sv-text-muted);line-height:1.6;margin-bottom:4px">{{ t('settings.copyright_notice') }}</p>
-            <p style="font-size:12px;color:var(--sv-text-muted);line-height:1.6;margin-bottom:0">{{ t('settings.copyright_license') }}</p>
-            <p style="font-size:12px;color:var(--sv-text-muted);line-height:1.6;margin-bottom:0;margin-top:8px;border-top:1px solid var(--sv-border);padding-top:8px">{{ t('settings.third_party_notice') }}</p>
-        </div>
-    </div>
+    <!-- 相关链接 / 版权信息 已移至左栏（平衡两栏高度，消除左栏底部大片空白） -->
     </div><!-- /右侧关于 -->
   </div><!-- /sv-settings-col 右 -->
 </div><!-- /sv-settings-layout -->
+
+<!-- 技术特性：整宽区（从左侧分栏移出，9 张卡获得正常宽度，同时消除左列底部留白） -->
+<div class="sv-about-features-band">
+    <div class="sv-about-section-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        {{ t('settings.features_title') }}
+    </div>
+    <div class="sv-about-features">
+        {% set features = [
+            ("bi-lightning-charge", t('settings.features.one_step'), t('settings.features.one_step_desc')),
+            ("bi-box-seam", t('settings.features.standalone'), t('settings.features.standalone_desc')),
+            ("bi-layers", t('settings.features.mult_model'), t('settings.features.mult_model_desc')),
+            ("bi-cpu", t('settings.features.dit'), t('settings.features.dit_desc')),
+            ("bi-film", t('settings.features.vae'), t('settings.features.vae_desc')),
+            ("bi-arrow-left-right", t('settings.features.blockswap'), t('settings.features.blockswap_desc')),
+            ("bi-collection", t('settings.features.batch'), t('settings.features.batch_desc')),
+            ("bi-translate", t('settings.features.language'), t('settings.features.language_desc')),
+            ("bi-activity", t('settings.features.monitor'), t('settings.features.monitor_desc'))
+        ] %}
+        {% for icon, title, desc in features %}
+        <div class="sv-about-feature-card">
+            <div class="sv-about-feature-icon">
+                <i class="bi {{ icon }}"></i>
+                <span>{{ title }}</span>
+            </div>
+            <div class="sv-about-feature-desc">{{ desc }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
 
 <style>
 .sv-about-faq-item[open] .sv-about-faq-chevron {
@@ -322,10 +322,10 @@
     display: none;
 }
 
-/* 设置面板（分栏重构：左设置，右关于） */
+/* 设置面板（分栏重构：左设置+项目信息，右技术栈/快速开始/显存/FAQ；技术特性移至整宽区） */
 .sv-settings-layout {
     display: grid;
-    grid-template-columns: 1.55fr 1fr;
+    grid-template-columns: 1fr 1.2fr;
     gap: 24px;
     align-items: start;
 }

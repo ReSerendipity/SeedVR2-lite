@@ -72,7 +72,8 @@
     "browse_folder": "Browse folder",
     "open_explorer": "Open in explorer",
     "select_folder": "Select folder",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "clear": "Clear"
   },
   "video": {
     "title": "Video Restoration",
@@ -311,7 +312,29 @@
     "cancel_batch_task": "Cancel Batch Task",
     "cancel_batch_confirm": "Are you sure you want to cancel the current batch restoration task? Processed progress will be lost.",
     "batch_task_cancelled": "Batch task cancelled",
-    "no_files_found": "No processable files found"
+    "no_files_found": "No processable files found",
+    "replace": "Replace",
+    "allow_dirs_title": "Allowed Directories",
+    "allow_dirs_loading": "Loading allowed directories…",
+    "tip_output_format": "Format of the restored output file.\nDefault: match the input image format (PNG in → PNG out)\nPNG (recommended): lossless, keeps the alpha channel\nJPG: lossy, much smaller, best for photos\nWebP: modern format balancing quality and size\nBMP: uncompressed, largest files\nTIFF: lossless, for professional workflows",
+    "help_title": "Quick Help",
+    "onboarding_ack": "Got it, let's start",
+    "allow_dirs_empty": "Default directories only (outputs/, data/uploads/)",
+    "allow_dirs_load_failed": "Failed to load allowed directories",
+    "allow_dir_add_scan": "Add to allowlist and rescan",
+    "allow_dir_adding": "Adding…",
+    "allow_dir_added": "Directory added to allowlist, rescanning…",
+    "allow_dir_add_failed": "Failed to add directory to allowlist",
+    "allow_dir_delete": "Delete",
+    "allow_dir_delete_title": "Remove allowed directory",
+    "allow_dir_delete_default_warn": "This directory will no longer be scannable",
+    "allow_dir_removed": "Removed from allowlist",
+    "allow_dir_remove_failed": "Failed to remove allowed directory",
+    "dir_not_allowed": "This directory is not in the allowlist",
+    "dir_not_allowed_desc": "Add it to the allowlist to rescan",
+    "batch_tip": "Click \"Batch from Folder\" to process every file in the folder above",
+    "magnifier_tip": "Loupe: show a magnified area under the pointer",
+    "zoom_reset": "Click to return to 1:1 zoom"
   },
   "history": {
     "title": "History",
@@ -353,10 +376,12 @@
     "next_page": "Next",
     "open_output_dir": "Open output directory",
     "more_actions": "More actions",
-    "stat_total_records": "Completed Tasks",
+    "stat_total_records": "Total Records",
     "stat_total_time": "Total Restore Time",
     "stat_total_output": "Total Output Size",
-    "stat_avg_time": "Avg Time per Task"
+    "stat_avg_time": "Avg Time per Task",
+    "clear_include_completed": "Also clear completed records",
+    "records": "records"
   },
   "system": {
     "title": "System Status",
@@ -512,7 +537,8 @@
     "social_xiaohongshu": "Xiaohongshu (RedNote)",
     "social_douyin": "Douyin (TikTok)",
     "social_kuaishou": "Kuaishou",
-    "social_bilibili": "Bilibili"
+    "social_bilibili": "Bilibili",
+    "model_management": "Model"
   },
   "status": {
     "gpu_detecting": "Detecting GPU...",
@@ -541,6 +567,7 @@
     "double_res": "Auto 2× Mode",
     "double_res_tip": "When on, resolution and tile parameters are auto-set to short-edge × 2 after upload; manual input is ignored",
     "double_res_hint_default": "After uploading an image or video, resolution will be auto-computed as short-edge × 2 (manual edit disabled in this mode)",
-    "double_res_applied": "Resolution and tile parameters auto-filled at short-edge × 2"
+    "double_res_applied": "Resolution and tile parameters auto-filled at short-edge × 2",
+    "initializing": "Initializing"
   }
 }

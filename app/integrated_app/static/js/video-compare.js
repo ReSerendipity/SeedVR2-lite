@@ -191,7 +191,7 @@
             } else {
                 this.container.classList.remove('vertical');
                 const icon = this.slider.querySelector('i');
-                if (icon) icon.className = 'bi bi-arrows-expand-horizontal';
+                if (icon) icon.className = 'bi bi-arrows';
             }
             this._updateSliderUI(this.position);
         }

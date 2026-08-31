@@ -19,6 +19,8 @@
     --sv-primary-900: #334030;
     --sv-primary-dim: rgba(148, 184, 143, 0.18);
     --sv-primary-soft: color-mix(in srgb, var(--sv-primary) 16%, var(--sv-bg-surface));
+    /* 浅色主色底：用于工具条激活态与拖拽落区反馈（半透明，可叠加在任意表面上） */
+    --sv-primary-light: rgba(148, 184, 143, 0.16);
     --sv-primary-glow: rgba(148, 184, 143, 0.32);
     --sv-primary-glow-strong: rgba(148, 184, 143, 0.50);
 
@@ -161,6 +163,8 @@
     --sv-primary-900: #2b3828;
     --sv-primary-dim: rgba(69, 99, 63, 0.08);
     --sv-primary-soft: color-mix(in srgb, var(--sv-primary) 12%, var(--sv-bg-surface));
+    /* 浅色主色底：用于工具条激活态与拖拽落区反馈（半透明，可叠加在任意表面上） */
+    --sv-primary-light: rgba(69, 99, 63, 0.10);
     --sv-primary-glow: rgba(69, 99, 63, 0.15);
     --sv-primary-glow-strong: rgba(69, 99, 63, 0.28);
 
@@ -291,6 +295,8 @@
     --sv-easing-out: cubic-bezier(0.25, 0.46, 0.45, 0.94);
     --sv-transition: 0.2s var(--sv-easing-standard);
     --sv-transition-slow: 0.35s var(--sv-easing-standard);
+    /* 快速过渡档（多处 transition 直接引用，缺失会让整条声明失效丢动画） */
+    --sv-transition-fast: 0.15s var(--sv-easing-standard);
 
     /* 动画时长分级（借鉴 Linear） */
     --sv-duration-instant: 100ms;
@@ -299,6 +305,8 @@
     --sv-duration-slow: 400ms;
     --sv-navbar-height: 56px;
     --sv-statusbar-height: 32px;
+    /* 进度条轨道色（在使用处解析，自动跟随主题的 surface 阶梯） */
+    --sv-progress-track: var(--sv-surface-3);
 
     /* 间距令牌（4px 基数） */
     --sv-space-1: 4px;
@@ -306,6 +314,7 @@
     --sv-space-2: 8px;
     --sv-space-2-5: 10px;
     --sv-space-3: 12px;
+    --sv-space-3-5: 14px;
     --sv-space-4: 16px;
     --sv-space-5: 20px;
     --sv-space-6: 24px;
@@ -9138,4 +9147,429 @@ select,
 a,
 [role="button"] {
     scroll-margin-top: calc(var(--sv-navbar-height, 56px) + 12px);
+}
+
+/* ============================================================
+   UI 精修 Stage A（2026-08-31）：遗留规则泄漏治理 + 控件主题化
+   ============================================================ */
+
+/* ① 模式分段器：切断两处旧 .sv-mode-tab 规则漏进来的 flex:1 /
+      flex-direction:column / min-height:44px / margin-bottom，
+      否则胶囊会竖排、文字折行、并额外撑出 16px 底边距 */
+.sv2-mode-seg {
+    margin: 0;
+}
+.sv2-mode-seg .sv-mode-tab {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    min-height: 44px; /* 触控目标下限（uiux-compatibility.spec 强制 0 违规）；
+                         此前撑成竖排大胶囊的真凶是 flex-direction:column 与 flex:1，不是高度 */
+    margin: 0;
+    white-space: nowrap;
+    font-family: inherit;
+    line-height: 1.2;
+}
+.sv2-mode-seg .sv-mode-tab i { font-size: 13px; }
+
+/* ② 参数方案预设：原生 select 在暗色下是白底黑字，补齐主题外观 */
+.sv2-preset-select {
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: var(--sv-surface-2);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    border: 1px solid var(--sv-border);
+    border-radius: var(--sv-radius-sm);
+    color: var(--sv-text-primary);
+    font-family: inherit;
+    padding: 0 28px 0 10px;
+    transition: border-color var(--sv-transition-fast), background-color var(--sv-transition-fast);
+}
+.sv2-preset-select:hover { border-color: var(--sv-border-hover); }
+.sv2-preset-select:focus {
+    outline: none;
+    border-color: var(--sv-primary);
+    box-shadow: 0 0 0 3px var(--sv-primary-dim);
+    background-color: var(--sv-surface-1);
+}
+.sv2-preset-select option {
+    background-color: var(--sv-bg-elevated);
+    color: var(--sv-text-primary);
+}
+
+/* ③ 默认设置按钮组：主题感知的发丝分隔线 + 纵向排布（原先是内联 #ddd，
+      暗色下变成刺眼浅灰线；两个长标签按钮横排在 324px 侧栏里互相挤压） */
+.sv2-presets-defaults {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sv-space-2);
+    margin-top: var(--sv-space-3);
+    padding-top: var(--sv-space-3);
+    border-top: 1px solid var(--sv-border-light);
+}
+.sv2-presets-defaults .sv-btn { width: 100%; }
+.sv2-presets-defaults .sv-mt-2 { margin-top: 0; }
+
+/* ④ 首次引导模态框：由内联样式改为类承载，随主题取色 */
+.sv-onb-modal {
+    max-width: 460px;
+    width: 90%;
+    padding: 28px;
+}
+.sv-onb-title {
+    font-family: var(--sv-font-display);
+    font-size: 22px;
+    margin: 0 0 6px;
+    color: var(--sv-text-primary);
+}
+.sv-onb-desc {
+    font-size: 13px;
+    color: var(--sv-text-secondary);
+    margin: 0 0 20px;
+}
+.sv-onb-list {
+    list-style: none;
+    margin: 0 0 20px;
+    padding: 0;
+}
+.sv-onb-item {
+    display: flex;
+    gap: var(--sv-space-3);
+    align-items: flex-start;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--sv-border-light);
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--sv-text-primary);
+}
+.sv-onb-item:last-child { border-bottom: none; }
+.sv-onb-num {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    background: var(--sv-primary-light);
+    color: var(--sv-primary);
+}
+.sv-onb-shortcut {
+    display: flex;
+    align-items: center;
+    gap: var(--sv-space-2);
+    padding: 10px 14px;
+    margin-bottom: 20px;
+    background: var(--sv-surface-2);
+    border: 1px solid var(--sv-border-light);
+    border-radius: var(--sv-radius-sm);
+    font-size: 12px;
+    color: var(--sv-text-secondary);
+}
+.sv-onb-shortcut kbd {
+    padding: 2px 7px;
+    background: var(--sv-surface-1);
+    border: 1px solid var(--sv-border);
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: var(--sv-font-mono);
+}
+.sv-onb-actions { display: flex; justify-content: flex-end; }
+.sv-onb-close {
+    padding: 12px 22px;
+    min-height: 44px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+/* ============================================================
+   UI 精修 Stage B（2026-08-31）：页面级布局失衡治理
+   ============================================================ */
+
+/* ① 系统状态页：VRAM 预检从「4+1 落单卡」改为独立整宽工具面板。
+      输入项横向排布，结果区自适应网格，消除第二行右侧的大片留白。 */
+.sv-vram-panel {
+    margin-top: var(--sv-space-5);
+}
+.sv-vram-panel > .sv-card-body {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--sv-space-4) var(--sv-space-6);
+}
+.sv-vram-panel > .sv-card-body > .sv-stat-item {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 0;
+    border-bottom: none;
+}
+.sv-vram-panel #vramEstimateResults {
+    flex: 1 1 100%;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+    gap: var(--sv-space-4);
+    margin-top: 0 !important;
+    padding-top: var(--sv-space-4);
+    border-top: 1px solid var(--sv-border-light);
+}
+.sv-vram-panel #vramEstimateResults .sv-stat-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 0;
+    border-bottom: none;
+}
+.sv-vram-panel #vramRecWarning { grid-column: 1 / -1; }
+@media (max-width: 768px) {
+    .sv-vram-panel > .sv-card-body > .sv-stat-item { flex: 1 1 100%; }
+}
+
+/* ② 关于 / 设置页：分栏内的 .sv-about 不该再套 920px 居中约束
+      （分栏比例 grid-template-columns 的权威定义在 settings.html 页面内联样式，
+        文档顺序更靠后会覆盖此处，不要在这里重复声明以免形成两处事实来源） */
+.sv-settings-layout .sv-about {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+}
+/* 技术特性整宽区：9 张卡按可用宽度自动排布，不再挤成窄栏 3×3 */
+.sv-about-features-band {
+    margin-top: var(--sv-space-6);
+    padding-top: var(--sv-space-5);
+    border-top: 1px solid var(--sv-border-light);
+}
+.sv-about-features {
+    grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+}
+
+/* ③ 历史记录卡片视图：固定 4 列在记录少时右侧整列空白、
+      单卡被拉到 ~450px 过宽；改为按宽度自动填充、卡宽稳定 */
+.sv-history-cards {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+/* 空态必须横跨全部轨道，否则会被塞进第一个 240px 轨道、贴左显示 */
+.sv-history-cards > .sv-empty-state {
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: 100%;
+    padding: var(--sv-space-6) 0;
+}
+@media (max-width: 768px) {
+    .sv-history-cards {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    }
+}
+
+/* ④ 系统状态页：四张只读监控卡由 4 列窄卡改为宽屏 2×2。
+      GPU 卡有 10 行 + 环形图 + 趋势线，模型/运行卡只有 4~5 行，
+      等高轨道把内容密度差放大成卡片中部的大片空洞；
+      2×2 让每卡宽度翻倍、行高下降，密度差被摊平。 */
+@media (min-width: 1101px) {
+    .sv-status-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: start;
+    }
+    .sv-status-grid .sv-card {
+        min-height: 0;
+    }
+    /* DOM 顺序是 1=GPU信息(高) 2=模型状态(矮) 3=系统内存(高) 4=运行信息(矮)，
+       默认两行都是高矮配对，等高轨道会把矮卡拉伸出空洞。
+       重排为 1,3,2,4 → 第一行两张高卡、第二行两张矮卡 */
+    .sv-status-grid > .sv-card:nth-child(3) { order: 1; }
+    .sv-status-grid > .sv-card:nth-child(2) { order: 2; }
+    .sv-status-grid > .sv-card:nth-child(4) { order: 3; }
+}
+
+/* ⑤ 版权信息段落：从四段内联 style 收敛为类 */
+.sv-about-note {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--sv-text-muted);
+    margin: 0 0 8px;
+}
+.sv-about-note:last-child { margin-bottom: 0; }
+.sv-about-note-lead {
+    margin-top: var(--sv-space-2);
+    margin-bottom: 0;
+    padding-top: var(--sv-space-2);
+    border-top: 1px solid var(--sv-border);
+}
+
+/* ============================================================
+   UI 精修 Stage C（2026-08-31）：质感与可发现性
+   ============================================================ */
+
+/* ① 折叠态系统状态小部件：原本只有一个 8px 绿点，读不出「可点击」 */
+.sv-sys-widget.collapsed {
+    /* 尺寸对齐内部 toggle 的 44px 触控区：此前 32px 圆 + 44px toggle
+       会造成内容溢出（uiux-compatibility overflow 检查报出），且可见区小于触控区 */
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--sv-border);
+    background: var(--sv-bg-glass-strong);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+    opacity: 0.9;
+}
+.sv-sys-widget.collapsed:hover {
+    border-color: var(--sv-border-hover);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.36);
+}
+.sv-sys-widget.collapsed:hover .sv-sys-widget-toggle {
+    opacity: 0.85;
+}
+.sv-sys-widget.collapsed:hover .sv-sys-widget-toggle i {
+    display: block;
+    font-size: 11px;
+    color: var(--sv-text-secondary);
+}
+.sv-sys-widget.collapsed:hover::after {
+    display: none;
+}
+
+/* ② 主 CTA 去塑料感：暗色下真正显「塑料」的是拿最浅档苔绿做大块填充。
+      取 --sv-primary-800（#4a5e47）做底 + 恒亮文字 #f2f5f0 = 6.40:1 过 WCAG AA，
+      且与亮色主题 --sv-primary(#45633f)+白字(6.75:1) 视觉同档，两主题观感一致。
+      ⚠️ 暗色主题的色阶方向与亮色相反（dark: 600=#7aa375 比 700=#5e7d5a 更亮），
+      选档必须实测对比度：700 配亮字只有 4.19:1、600 只有 2.61:1，均被
+      wcag-contrast.spec 拦下。hover 走更深一档 --sv-primary-900（9.96:1）。 */
+[data-theme="dark"] .sv-btn-primary {
+    --sv-btn-primary-text: #f2f5f0;
+    background-color: var(--sv-primary-800);
+    background-image: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--sv-primary-800) 96%, #ffffff) 0%,
+        var(--sv-primary-800) 52%,
+        color-mix(in srgb, var(--sv-primary-800) 96%, #000000) 100%
+    );
+    border-color: color-mix(in srgb, var(--sv-primary-800) 74%, #000000);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.12),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+        0 1px 2px rgba(0, 0, 0, 0.42),
+        0 3px 10px rgba(0, 0, 0, 0.3);
+}
+[data-theme="dark"] .sv-btn-primary:hover:not(:disabled) {
+    background-color: var(--sv-primary-900);
+    background-image: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--sv-primary-900) 96%, #ffffff) 0%,
+        var(--sv-primary-900) 52%,
+        color-mix(in srgb, var(--sv-primary-900) 96%, #000000) 100%
+    );
+    border-color: color-mix(in srgb, var(--sv-primary-900) 74%, #000000);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.1),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.26),
+        0 2px 4px rgba(0, 0, 0, 0.46),
+        0 6px 16px rgba(0, 0, 0, 0.34);
+    transform: translateY(-1px);
+}
+[data-theme="dark"] .sv2-tb-btn.sv2-primary {
+    background-color: var(--sv-primary-800);
+    background-image: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--sv-primary-800) 96%, #ffffff) 0%,
+        var(--sv-primary-800) 100%
+    );
+    border-color: color-mix(in srgb, var(--sv-primary-800) 74%, #000000);
+    color: #f2f5f0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 3px rgba(0, 0, 0, 0.36);
+}
+
+/* ③ 修复工作台空态：落区放大到接近整块画布，舞台加极淡中心提亮，
+      不再是「巨大黑洞里浮着一块小虚线框」 */
+.sv2-stage {
+    background:
+        radial-gradient(
+            ellipse 62% 52% at 50% 46%,
+            color-mix(in srgb, var(--sv-surface-2) 55%, transparent) 0%,
+            transparent 100%
+        ),
+        var(--sv-surface-0);
+}
+.sv2-pane#workflowGuide { padding: 26px; }
+.sv2-stage .sv-dropzone {
+    max-width: min(720px, 86%);
+    min-height: min(58%, 400px);
+    gap: 12px;
+    padding: 40px 32px;
+}
+.sv2-stage .sv-dropzone-icon i { font-size: 2.6rem; }
+.sv2-stage .sv-dropzone-title { font-size: 17px; }
+.sv2-stage .sv-dropzone-hint { font-size: 13px; }
+
+/* ④ 导航栏「图标 + 文本」变体按钮（语言切换显示当前语言短码）。
+      基类 .sv-nav-icon-btn 是 44×44 圆形触控区，此处只允许宽度向上伸展，
+      不得把 min-width 归零（否则违反 44px 触控目标门禁） */
+.sv-nav-icon-btn--labeled {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    width: auto;
+    min-width: 44px;
+    height: 44px;
+    padding: 0 11px;
+    border-radius: 22px;
+}
+.sv-nav-icon-btn--labeled .sv-locale-code {
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    line-height: 1;
+}
+
+/* ⑤ 信息色徽标：模板里在用（批量面板「文件夹模式」），样式表从未定义过，
+      导致徽标退化成一行无底无框的孤立文字，看起来像坏掉的 tab */
+.sv-badge-info {
+    background: var(--sv-info-soft, color-mix(in srgb, var(--sv-info) 12%, transparent));
+    color: var(--sv-info);
+    border: 1px solid var(--sv-info-border, color-mix(in srgb, var(--sv-info) 30%, transparent));
+}
+
+/* ⑥ 批量面板头部：让标题 + 徽标读起来是一个区块头，而非散落文本 */
+.sv2-batch-head {
+    padding-bottom: var(--sv-space-3);
+    border-bottom: 1px solid var(--sv-border-light);
+}
+
+/* ⑦ 批量面板未扫描时的引导空态：仅在扫描结果容器为空时显示，
+      占满剩余高度，避免整块面板是一大片黑洞 */
+.sv2-batch-empty {
+    display: none;
+    flex: 1;
+    min-height: 220px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    text-align: center;
+    padding: 32px 24px;
+    border: 1.6px dashed var(--sv-border-hover);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--sv-surface-1) 55%, transparent);
+}
+.sv2-scan-results:empty + .sv2-batch-empty { display: flex; }
+.sv2-batch-empty-icon i {
+    font-size: 2.2rem;
+    color: var(--sv-primary);
+    opacity: 0.75;
+}
+.sv2-batch-empty-title {
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--sv-text-primary);
+}
+.sv2-batch-empty-desc {
+    font-size: 12.5px;
+    color: var(--sv-text-muted);
+    max-width: 420px;
+    line-height: 1.6;
 }

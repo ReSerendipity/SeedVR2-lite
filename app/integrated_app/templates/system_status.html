@@ -5,8 +5,8 @@
 {% block content %}
 <div class="sv-page-head sv-flex sv-items-start sv-justify-between">
     <div>
-        <span class="sv-eyebrow sv-anim-rise">{{ t('system.subtitle') or '系统监控' }}</span>
-        <h1 class="sv-serif-title sv-anim-rise sv-anim-d1">{{ t('system.title') or '系统状态' }}</h1>
+        <span class="sv-eyebrow sv-anim-rise">{{ t('system.subtitle') }}</span>
+        <h1 class="sv-serif-title sv-anim-rise sv-anim-d1">{{ t('system.title') }}</h1>
     </div>
     <button class="sv-btn sv-btn-secondary sv-anim-rise sv-anim-d2" id="btnRefreshStatus" aria-label="{{ t('common.refresh') }}">
         <i class="bi bi-arrow-clockwise" id="refreshIcon"></i> {{ t('common.refresh') }}
@@ -174,8 +174,11 @@
         </div>
     </div>
 
-    <!-- VRAM 预检 & 参数推荐卡片 -->
-    <div class="sv-card">
+    </div>
+    <!-- /sv-status-grid -->
+
+    <!-- VRAM 预检 & 参数推荐：独立整宽工具面板（有输入有动作，与上方只读监控卡不同类） -->
+    <div class="sv-card sv-vram-panel">
         <div class="sv-card-header">
             <h3><i class="bi bi-speedometer2 sv-text-primary"></i> VRAM 预检 & 参数推荐</h3>
             <span class="sv-badge sv-badge-secondary" id="vramEstimateBadge">--</span>
@@ -235,7 +238,6 @@
             </div>
         </div>
     </div>
-</div>
 {% endblock %}
 
 {% block scripts %}

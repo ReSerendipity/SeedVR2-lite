@@ -72,7 +72,8 @@
     "browse_folder": "浏览文件夹",
     "open_explorer": "在资源管理器中打开",
     "select_folder": "选择文件夹",
-    "collapse": "收起"
+    "collapse": "收起",
+    "clear": "清除"
   },
   "video": {
     "title": "视频修复",
@@ -311,7 +312,29 @@
     "cancel_batch_task": "取消批量任务",
     "cancel_batch_confirm": "确定要取消当前批量修复任务吗？已处理进度将丢失。",
     "batch_task_cancelled": "批量任务已取消",
-    "no_files_found": "未找到可处理文件"
+    "no_files_found": "未找到可处理文件",
+    "replace": "替换",
+    "allow_dirs_title": "允许目录管理",
+    "allow_dirs_loading": "正在加载允许目录…",
+    "tip_output_format": "选择修复完成后输出文件的格式。\n默认：自动匹配输入图片格式（PNG 输入→PNG 输出）\nPNG（推荐）：无损压缩，保留透明通道\nJPG：有损压缩，文件更小，适合照片\nWebP：现代格式，兼顾质量和大小\nBMP：无压缩，文件最大\nTIFF：无损，适合专业用途",
+    "help_title": "快速帮助",
+    "onboarding_ack": "知道了，开始使用",
+    "allow_dirs_empty": "仅默认目录（outputs/、data/uploads/）",
+    "allow_dirs_load_failed": "加载允许目录失败",
+    "allow_dir_add_scan": "加入允许目录并重新扫描",
+    "allow_dir_adding": "添加中…",
+    "allow_dir_added": "目录已加入允许列表，正在重新扫描",
+    "allow_dir_add_failed": "加入允许目录失败",
+    "allow_dir_delete": "删除",
+    "allow_dir_delete_title": "删除允许目录",
+    "allow_dir_delete_default_warn": "删除后该目录将无法扫描",
+    "allow_dir_removed": "已从允许列表移除",
+    "allow_dir_remove_failed": "删除允许目录失败",
+    "dir_not_allowed": "该目录不在允许扫描列表",
+    "dir_not_allowed_desc": "加入允许目录后即可重新扫描",
+    "batch_tip": "点击「从文件夹批量处理」将处理上述文件夹中的所有文件",
+    "magnifier_tip": "放大镜：在指针位置显示局部放大",
+    "zoom_reset": "点击回到 1:1 缩放"
   },
   "history": {
     "title": "历史记录",
@@ -353,10 +376,12 @@
     "next_page": "下一页",
     "open_output_dir": "打开输出目录",
     "more_actions": "更多操作",
-    "stat_total_records": "完成任务总数",
+    "stat_total_records": "记录总数",
     "stat_total_time": "累计修复耗时",
     "stat_total_output": "累计输出体积",
-    "stat_avg_time": "平均单任务耗时"
+    "stat_avg_time": "平均单任务耗时",
+    "clear_include_completed": "同时清除已完成记录",
+    "records": "条记录"
   },
   "system": {
     "title": "系统状态",
@@ -512,7 +537,8 @@
     "social_xiaohongshu": "小红书",
     "social_douyin": "抖音",
     "social_kuaishou": "快手",
-    "social_bilibili": "B站"
+    "social_bilibili": "B站",
+    "model_management": "模型管理"
   },
   "status": {
     "gpu_detecting": "正在检测 GPU...",
@@ -541,6 +567,7 @@
     "double_res": "两倍模式",
     "double_res_tip": "开启后上传图片或视频自动按短边×2设置分辨率，手动输入无效",
     "double_res_hint_default": "上传图片或视频后将按短边×2自动计算（两倍模式下不可手动修改）",
-    "double_res_applied": "已按短边×2自动填充分辨率和分块参数"
+    "double_res_applied": "已按短边×2自动填充分辨率和分块参数",
+    "initializing": "初始化中"
   }
 }

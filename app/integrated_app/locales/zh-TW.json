@@ -72,7 +72,8 @@
     "browse_folder": "瀏覽資料夾",
     "open_explorer": "在檔案總管中開啟",
     "select_folder": "選擇資料夾",
-    "collapse": "收起"
+    "collapse": "收起",
+    "clear": "清除"
   },
   "video": {
     "title": "影片修復",
@@ -183,7 +184,8 @@
     "detail_natural": "自然級",
     "current_frame": "當前幀",
     "total_frames": "總幀數",
-    "result_preview": "結果預覽"
+    "result_preview": "結果預覽",
+    "force_reload_dit": "強制依參數重載模型"
   },
   "restore": {
     "title": "修復工作台",
@@ -309,7 +311,30 @@
     "cancel_batch_task": "取消批次任務",
     "cancel_batch_confirm": "確定要取消當前批次修復任務嗎？已處理進度將遺失。",
     "batch_task_cancelled": "批次任務已取消",
-    "no_files_found": "未找到可處理檔案"
+    "no_files_found": "未找到可處理檔案",
+    "replace": "取代",
+    "allow_dirs_title": "允許目錄管理",
+    "allow_dirs_loading": "正在載入允許目錄…",
+    "tip_output_format": "選擇修復完成後輸出檔案的格式。\n預設：自動匹配輸入圖片格式（PNG 輸入→PNG 輸出）\nPNG（建議）：無損壓縮，保留透明通道\nJPG：有損壓縮，檔案較小，適合照片\nWebP：現代格式，兼顧品質與大小\nBMP：無壓縮，檔案最大\nTIFF：無損，適合專業用途",
+    "tip_force_reload": "預設關閉：有快取模型時直接重用（較快）。開啟後：即使已有快取，仍會依目前『區塊交換數量/批次大小』等參數重新載入 DiT，確保參數生效；代價是每次任務需重新載入模型（約 15-25 秒）。",
+    "help_title": "快速說明",
+    "onboarding_ack": "明白了，開始使用",
+    "allow_dirs_empty": "僅預設目錄（outputs/、data/uploads/）",
+    "allow_dirs_load_failed": "載入允許目錄失敗",
+    "allow_dir_add_scan": "加入允許目錄並重新掃描",
+    "allow_dir_adding": "新增中…",
+    "allow_dir_added": "目錄已加入允許清單，正在重新掃描",
+    "allow_dir_add_failed": "加入允許目錄失敗",
+    "allow_dir_delete": "刪除",
+    "allow_dir_delete_title": "刪除允許目錄",
+    "allow_dir_delete_default_warn": "刪除後該目錄將無法掃描",
+    "allow_dir_removed": "已從允許清單移除",
+    "allow_dir_remove_failed": "刪除允許目錄失敗",
+    "dir_not_allowed": "該目錄不在允許掃描清單",
+    "dir_not_allowed_desc": "加入允許目錄後即可重新掃描",
+    "batch_tip": "點擊「從資料夾批次處理」將處理上述資料夾中的所有檔案",
+    "magnifier_tip": "放大鏡：在指標位置顯示局部放大",
+    "zoom_reset": "點擊回到 1:1 縮放"
   },
   "history": {
     "title": "歷史記錄",
@@ -351,10 +376,12 @@
     "next_page": "下一頁",
     "open_output_dir": "開啟輸出目錄",
     "more_actions": "更多操作",
-    "stat_total_records": "完成任務總數",
+    "stat_total_records": "記錄總數",
     "stat_total_time": "累計修復耗時",
     "stat_total_output": "累計輸出體積",
-    "stat_avg_time": "平均單任務耗時"
+    "stat_avg_time": "平均單任務耗時",
+    "clear_include_completed": "同時清除已完成記錄",
+    "records": "則記錄"
   },
   "system": {
     "title": "系統狀態",
@@ -510,7 +537,8 @@
     "social_xiaohongshu": "小紅書",
     "social_douyin": "抖音",
     "social_kuaishou": "快手",
-    "social_bilibili": "B站"
+    "social_bilibili": "B站",
+    "model_management": "模型管理"
   },
   "status": {
     "gpu_detecting": "正在偵測 GPU...",
@@ -539,6 +567,7 @@
     "double_res": "兩倍模式",
     "double_res_tip": "開啟後上傳圖片或影片自動按短邊×2設定解析度，手動輸入無效",
     "double_res_hint_default": "上傳圖片或影片後將按短邊×2自動計算（兩倍模式下不可手動修改）",
-    "double_res_applied": "已按短邊×2自動填入解析度和分塊參數"
+    "double_res_applied": "已按短邊×2自動填入解析度和分塊參數",
+    "initializing": "初始化中"
   }
 }

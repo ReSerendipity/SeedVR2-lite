@@ -712,13 +712,13 @@ class SeedVR2Engine(
             _check_memory()
 
         # Comfy-Org 量化包（int8_convrot / mxfp8 / nvfp4）：按 comfy_quant 元数据
-        # 加载期整图反量化为 float32，随后统一走下面的 dtype 转换。
+        # 加载期逐层反量化并立即转 dit_dtype（bf16），避免全量 float32 累积导致 RAM 峰值。
         # 必须在 dtype 转换循环之前执行：int8/uint8 权重若先被 .to(bf16) 会得到错误数值。
         if precision in ("int8_convrot", "mxfp8", "nvfp4"):
             from app.integrated_app.engines.quant_dequant import dequantize_state_dict
 
-            logger.info(f"{precision} 权重加载期反量化...")
-            count = dequantize_state_dict(state_dict)
+            logger.info(f"{precision} 权重加载期反量化 (dtype={dit_dtype})...")
+            count = dequantize_state_dict(state_dict, dtype=dit_dtype)
             if count == 0:
                 raise ValueError(
                     f"精度 {precision} 要求 Comfy-Org 量化包（state_dict 应含 *.comfy_quant 元数据），"

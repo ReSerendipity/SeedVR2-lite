@@ -72,7 +72,8 @@
     "browse_folder": "フォルダを参照",
     "open_explorer": "エクスプローラーで開く",
     "select_folder": "フォルダを選択",
-    "collapse": "折りたたむ"
+    "collapse": "折りたたむ",
+    "clear": "クリア"
   },
   "video": {
     "title": "動画修復",
@@ -183,7 +184,8 @@
     "detail_natural": "ナチュラル",
     "current_frame": "現在のフレーム",
     "total_frames": "総フレーム数",
-    "result_preview": "結果プレビュー"
+    "result_preview": "結果プレビュー",
+    "force_reload_dit": "パラメータでモデルを強制再読み込み"
   },
   "restore": {
     "title": "修復ワークベンチ",
@@ -309,7 +311,30 @@
     "cancel_batch_task": "一括タスクをキャンセル",
     "cancel_batch_confirm": "現在の一括修復タスクをキャンセルしてもよろしいですか？処理済みの進捗は失われます。",
     "batch_task_cancelled": "一括タスクはキャンセルされました",
-    "no_files_found": "処理可能なファイルが見つかりません"
+    "no_files_found": "処理可能なファイルが見つかりません",
+    "replace": "差し替え",
+    "allow_dirs_title": "許可ディレクトリの管理",
+    "allow_dirs_loading": "許可ディレクトリを読み込み中…",
+    "tip_output_format": "修復完了後の出力ファイル形式を選択します。\n既定：入力画像の形式に自動対応（PNG 入力→PNG 出力）\nPNG（推奨）：可逆圧縮、アルファチャネルを保持\nJPG：非可逆圧縮、ファイルが小さく写真向き\nWebP：品質とサイズのバランスに優れた現代的形式\nBMP：非圧縮、ファイルが最大\nTIFF：可逆、専門用途向き",
+    "tip_force_reload": "既定はオフ：キャッシュ済みモデルを再利用します（高速）。オンにすると、キャッシュがあっても現在の『ブロック交換数/バッチサイズ』で DiT を再読み込みし、パラメータの反映を確実にします。代償はタスク毎の再読み込み（約 15〜25 秒）。",
+    "help_title": "クイックヘルプ",
+    "onboarding_ack": "了解、開始する",
+    "allow_dirs_empty": "既定ディレクトリのみ（outputs/、data/uploads/）",
+    "allow_dirs_load_failed": "許可ディレクトリの読み込みに失敗しました",
+    "allow_dir_add_scan": "許可ディレクトリに追加して再スキャン",
+    "allow_dir_adding": "追加中…",
+    "allow_dir_added": "ディレクトリを許可リストに追加しました。再スキャン中…",
+    "allow_dir_add_failed": "許可ディレクトリの追加に失敗しました",
+    "allow_dir_delete": "削除",
+    "allow_dir_delete_title": "許可ディレクトリを削除",
+    "allow_dir_delete_default_warn": "削除するとこのディレクトリはスキャンできません",
+    "allow_dir_removed": "許可リストから削除しました",
+    "allow_dir_remove_failed": "許可ディレクトリの削除に失敗しました",
+    "dir_not_allowed": "このディレクトリは許可リストに含まれていません",
+    "dir_not_allowed_desc": "許可ディレクトリに追加すると再スキャンできます",
+    "batch_tip": "「フォルダから一括処理」をクリックすると、上記フォルダ内の全ファイルを処理します",
+    "magnifier_tip": "ルーペ：ポインター位置を拡大表示",
+    "zoom_reset": "クリックして 1:1 ズームに戻す"
   },
   "history": {
     "title": "履歴",
@@ -351,10 +376,12 @@
     "next_page": "次へ",
     "open_output_dir": "出力ディレクトリを開く",
     "more_actions": "その他の操作",
-    "stat_total_records": "完了タスク数",
+    "stat_total_records": "記録総数",
     "stat_total_time": "累計修復時間",
     "stat_total_output": "累計出力サイズ",
-    "stat_avg_time": "平均タスク時間"
+    "stat_avg_time": "平均タスク時間",
+    "clear_include_completed": "完了レコードも一緒に消去",
+    "records": "件"
   },
   "system": {
     "title": "システム状態",
@@ -510,7 +537,8 @@
     "social_xiaohongshu": "Xiaohongshu（小紅書）",
     "social_douyin": "Douyin（TikTok）",
     "social_kuaishou": "Kuaishou（快手）",
-    "social_bilibili": "Bilibili"
+    "social_bilibili": "Bilibili",
+    "model_management": "モデル"
   },
   "status": {
     "gpu_detecting": "GPU を検出中...",
@@ -539,6 +567,7 @@
     "double_res": "自動2×モード",
     "double_res_tip": "オン時はアップロード後、解像度とタイルパラメータを短辺×2で自動設定します。手動入力は無視されます",
     "double_res_hint_default": "画像または動画アップロード後、解像度は短辺×2で自動計算されます（このモードでは手動編集無効）",
-    "double_res_applied": "解像度とタイルパラメータを短辺×2で自動設定しました"
+    "double_res_applied": "解像度とタイルパラメータを短辺×2で自動設定しました",
+    "initializing": "初期化中"
   }
 }

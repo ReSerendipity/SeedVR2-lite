@@ -157,15 +157,22 @@ test.describe('Settings page (about + settings two-column layout)', () => {
   // ============================================================
 
   test.describe('About section', () => {
-    test('about hero shows project name, tagline and metadata', async () => {
+    test('about hero shows project name, tagline and metadata', async ({ request }) => {
       await expect(settingsPage.aboutHero).toBeVisible();
       await expect(settingsPage.aboutHeroName).toHaveText('SeedVR2');
       await expect(settingsPage.aboutHeroSubtitle).toBeVisible();
 
       const metadata = (await settingsPage.aboutMetadata.textContent()) || '';
       expect(metadata).toContain('ReSerendipity');
-      expect(metadata).toContain('v1.0.0');
       expect(metadata).toContain('Apache');
+
+      // 版本号不得硬编码在断言里（那等于把「页面版本与 pyproject 漂移」固化成期望值）。
+      // 关于页必须展示与运行时同一个版本 —— 版本单一事实来源见 app/integrated_app/version.py。
+      const ping = await request.get('/api/system/ping');
+      expect(ping.ok()).toBeTruthy();
+      const { version } = (await ping.json()) as { version: string };
+      expect(version).toMatch(/^\d+\.\d+\.\d+/);
+      expect(metadata).toContain(`v${version}`);
     });
 
     test('github button links to the repository', async () => {

@@ -2183,7 +2183,7 @@ const SeedVR2 = (() => {
             } else {
                 this.container.classList.remove('vertical');
                 const icon = this.slider.querySelector('i');
-                if (icon) { icon.className = 'bi bi-arrows-expand-horizontal'; }
+                if (icon) { icon.className = 'bi bi-arrows'; }
             }
             this._updateSliderUI(this.position);
             saveViewPrefs({ dir: mode });
@@ -2834,7 +2834,8 @@ const SeedVR2 = (() => {
             if (pin !== undefined) sysPinned = pin;
             sysBody.classList.toggle('collapsed', !expanded);
             sysWidget.classList.toggle('collapsed', !expanded);
-            const icon = sysToggle.querySelector('i');
+            if (sysToggle) sysToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            const icon = sysToggle ? sysToggle.querySelector('i') : null;
             if (icon) icon.className = expanded ? 'bi bi-chevron-down' : 'bi bi-chevron-up';
         }
 
