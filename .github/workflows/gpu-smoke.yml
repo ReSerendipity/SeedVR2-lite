@@ -108,7 +108,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path bundle -Force | Out-Null
           $tag = "${{ steps.tag.outputs.tag }}"
-          $assets = gh release view $tag --json assets -q '.assets[].name' | ConvertFrom-Json
+          $assets = @(gh release view $tag --json assets -q '.assets[].name')
           $direct = "https://github.com/${{ github.repository }}/releases/download/$tag"
           $mirror = "https://gh-proxy.com/https://github.com/${{ github.repository }}/releases/download/$tag"
           foreach ($name in $assets) {
