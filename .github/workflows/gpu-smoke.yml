@@ -62,7 +62,7 @@ jobs:
     needs: runner-precheck
     if: needs.runner-precheck.outputs.available == 'true'
     runs-on: [self-hosted, gpu]
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - name: Fetch workflow scripts via codeload source archive
         shell: pwsh
@@ -97,13 +97,35 @@ jobs:
           Write-Host "smoking release: $t"
           "tag=$t" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
-      - name: Download release assets
+      - name: Download release assets (resumable, official-first with mirror fallback)
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # 大资产下载对本机网络波动敏感（实测同一通道 0.2MB/s 与 5MB/s 交替出现）。
+          # 逐文件 curl：-C - 断点续传、指数退避重试，官方通道失败后回退公共镜像；
+          # 无论来源，解包步骤都按 manifest/SHA256SUMS 逐卷强制校验，篡改与损坏必被发现。
+          $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path bundle -Force | Out-Null
-          gh release download "${{ steps.tag.outputs.tag }}" --dir bundle
+          $tag = "${{ steps.tag.outputs.tag }}"
+          $assets = gh release view $tag --json assets -q '.assets[].name' | ConvertFrom-Json
+          $direct = "https://github.com/${{ github.repository }}/releases/download/$tag"
+          $mirror = "https://gh-proxy.com/https://github.com/${{ github.repository }}/releases/download/$tag"
+          foreach ($name in $assets) {
+            $out = Join-Path bundle $name
+            $done = $false
+            foreach ($base in @($direct, $mirror)) {
+              for ($try = 1; $try -le 3 -and -not $done; $try++) {
+                Write-Host "GET $name (attempt $try via $($base.Split('/')[2]))"
+                curl.exe -sSL --ssl-no-revoke -C - --retry 3 --retry-delay 10 -o $out "$base/$name"
+                # 33 = range not satisfiable(416)：文件已完整，视为成功；哈希/大小由解包步骤强制验证
+                if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 33) { $done = $true } else { Start-Sleep -Seconds (10 * $try) }
+              }
+              if ($done) { break }
+            }
+            if (-not $done) { throw "failed to download asset: $name" }
+            Write-Host ("  ok  {0}  {1:N1} MB" -f $name, ((Get-Item $out).Length / 1MB))
+          }
           Get-ChildItem bundle |
             Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}} |
             Format-Table -AutoSize
