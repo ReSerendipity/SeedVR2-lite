@@ -21,7 +21,7 @@ python-multipart==0.0.32
 # Deep Learning
 
 # Model & Inference
-transformers==5.15.0
+transformers==5.16.1
 safetensors==0.8.0
 huggingface_hub==1.28.0
 einops==0.8.2
