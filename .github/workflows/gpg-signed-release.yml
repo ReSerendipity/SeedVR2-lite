@@ -49,6 +49,8 @@ jobs:
     timeout-minutes: 10
     env:
       GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+      # 本 job 无 checkout，gh CLI 需显式仓库上下文（否则 "failed to run git: not a git repository"）
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Skip when GPG secrets are not configured
         if: env.GPG_PRIVATE_KEY == ''
