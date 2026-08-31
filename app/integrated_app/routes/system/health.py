@@ -17,6 +17,7 @@ import time
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.integrated_app.dependencies import get_gpu_backend, get_model_manager
 from app.integrated_app.gpu_backend import GPUBackendManager
@@ -24,12 +25,22 @@ from app.integrated_app.model_manager import ModelManager
 from app.integrated_app.version import get_app_version
 
 logger = logging.getLogger(__name__)
+
+
+class PingResponse(BaseModel):
+    """GET /api/system/ping 响应模型（P2-9：核心端点 OpenAPI 契约化）。"""
+
+    status: str
+    version: str
+    gpu_available: bool
+
+
 router = APIRouter(prefix="/api/system", tags=["系统状态"])
 
 _start_time = time.time()
 
 
-@router.get("/ping")
+@router.get("/ping", response_model=PingResponse)
 async def api_health_check(
     request: Request,
     gpu_backend: GPUBackendManager = Depends(get_gpu_backend),
