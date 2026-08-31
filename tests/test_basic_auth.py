@@ -87,6 +87,10 @@ class TestBasicAuthMiddleware:
             assert response.status_code == 401
             assert "WWW-Authenticate" in response.headers
             assert 'realm="TestRealm"' in response.headers["WWW-Authenticate"]
+            # P0-1：认证失败错误体并入统一信封
+            body = response.json()
+            assert body["success"] is False
+            assert body["error"]["code"] == "UNAUTHORIZED"
 
     def test_missing_authorization_header(self):
         """缺失 Authorization 头应返回 401"""
@@ -305,8 +309,10 @@ class TestBruteForceBanIntegration:
             resp = client.get("/", headers={"Authorization": f"Basic {good}"})
             assert resp.status_code == 429
             assert "Retry-After" in resp.headers
-
-    def test_success_within_limit_not_banned(self):
+            # P0-1：封禁错误体并入统一信封（detail 携带剩余秒数）
+            body = resp.json()
+            assert body["success"] is False
+            assert body["error"]["code"] == "AUTH_BANNED"
         """少量失败后成功认证应放行且不封禁"""
         app = self._make_app(max_auth_failures=3, auth_failure_window_seconds=300, auth_ban_seconds=600)
         with TestClient(app) as client:

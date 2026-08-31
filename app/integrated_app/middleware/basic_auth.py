@@ -30,7 +30,8 @@ from collections import deque
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+
+from app.integrated_app.utils.response import respond_error
 
 logger = logging.getLogger(__name__)
 
@@ -208,15 +209,15 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
             from app.integrated_app.security.audit import audit_event
 
             audit_event("AUTH_BAN", request=request, client_ip=client_ip, retry_after=retry_after)
-            return Response(
-                content="429 Too Many Requests\n\nToo many authentication failures.",
-                status_code=429,
-                headers={
-                    "Retry-After": str(retry_after),
-                    "WWW-Authenticate": f'Basic realm="{self._realm}"',
-                },
-                media_type="text/plain",
+            response = respond_error(
+                code="AUTH_BANNED",
+                message="认证失败次数过多，已被临时封禁",
+                status=429,
+                detail={"retry_after_seconds": retry_after},
             )
+            response.headers["Retry-After"] = str(retry_after)
+            response.headers["WWW-Authenticate"] = f'Basic realm="{self._realm}"'
+            return response
 
         # 提取 Authorization 头
         auth_header = request.headers.get("Authorization", "")
@@ -235,12 +236,13 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         from app.integrated_app.security.audit import audit_event
 
         audit_event("AUTH_FAILURE", request=request, client_ip=client_ip)
-        return Response(
-            content="401 Unauthorized\n\nSeedVR2 requires authentication.",
-            status_code=401,
-            headers={"WWW-Authenticate": f'Basic realm="{self._realm}"'},
-            media_type="text/plain",
+        response = respond_error(
+            code="UNAUTHORIZED",
+            message="SeedVR2 requires authentication.",
+            status=401,
         )
+        response.headers["WWW-Authenticate"] = f'Basic realm="{self._realm}"'
+        return response
 
 
 def should_enable_auth(config: dict) -> bool:
