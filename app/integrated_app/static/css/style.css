@@ -9574,3 +9574,12 @@ a,
     max-width: 420px;
     line-height: 1.6;
 }
+
+/* ===== Toast 指针事件豁免（webkit E2E 修复）=====
+   toast 是纯通知，不允许拦截页面交互：SSE 重连 toast 曾在 webkit 下
+   盖住模式切换按钮，导致 Playwright 点击 30s 超时（E2E 失败）。
+   .sv-toast 自身的 pointer-events:auto（hover 位移装饰）在此被压制。 */
+.sv-toast-container,
+.sv-toast-container * {
+    pointer-events: none !important;
+}
