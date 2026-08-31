@@ -64,7 +64,21 @@ jobs:
     runs-on: [self-hosted, gpu]
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - name: Fetch workflow scripts via codeload source archive
+        shell: pwsh
+        run: |
+          # 本 runner 网络下 git smart-HTTP 长连接不稳（checkout@v4 实测 20+ 分钟零推进），
+          # codeload 源码包通道实测 1s 内返回；只取三个脚本文件，整包也仅数 MB。
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $ref = "${{ github.ref_name }}"
+          Invoke-WebRequest "https://codeload.github.com/${{ github.repository }}/tar.gz/refs/heads/$ref" -OutFile src.tgz -UseBasicParsing
+          New-Item -ItemType Directory -Path src -Force | Out-Null
+          tar -xzf src.tgz -C src --strip-components=1
+          New-Item -ItemType Directory -Path scripts -Force | Out-Null
+          Copy-Item src\scripts\unpack_portable_bundle.ps1, src\scripts\portable_bundle_lib.ps1, src\scripts\smoke_portable_bundle.py scripts\
+          Remove-Item src, src.tgz -Recurse -Force
+          Get-ChildItem scripts | Select-Object Name, Length
 
       - name: Resolve target release tag
         id: tag
