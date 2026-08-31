@@ -34,15 +34,20 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read   # 读取 self-hosted runner 在线状态（/actions/runners）
     outputs:
       available: ${{ steps.check.outputs.available }}
     steps:
       - name: Check for an online self-hosted GPU runner
         id: check
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::REPO_ADMIN_TOKEN secret not configured - cannot query runner status, skipping smoke"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # runners 列表 API 需要管理员级 token（GITHUB_TOKEN 即使 actions:read 也 403）
           COUNT=$(gh api "repos/${{ github.repository }}/actions/runners" \
             --jq '[.runners[] | select(.status == "online") | select(any(.labels[]; .name == "gpu"))] | length')
           echo "online gpu-labelled runners: ${COUNT}"
