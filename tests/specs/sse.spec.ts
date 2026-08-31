@@ -408,36 +408,27 @@ test.describe('Server-Sent Events', () => {
 
     await videoRestorePage.goto();
 
-    // Wait until the SSE events have actually been processed: the last mocked
-    // progress event (100%) must be rendered. Polling merely for a non-empty
-    // value was racy — progressPct renders "0%" on initial page load, so the
-    // poll could resolve before the route handler fired (observed
-    // eventsProcessed === 0 on webkit-desktop in CI).
-    await expect
-      .poll(
-        () =>
-          page.evaluate(() => {
-            const el = document.getElementById('progressPct');
-            return el?.textContent?.trim() ?? '';
-          }),
-        { timeout: 10000 },
-      )
-      .toBe('100%');
+    // Deterministically wait for the page's EventSource to actually hit the
+    // mocked route. The original implementation polled progressPct for a
+    // non-empty value, which was racy: (a) the element renders "0%" on initial
+    // page load so the poll resolved immediately, and (b) the page-level SSE
+    // bus 'progress' handler is intentionally a channel-only no-op (each page
+    // drives its own progress card), so the mocked bus events never update
+    // progressPct at all. On webkit the EventSource request could still be in
+    // flight when the assertion ran (eventsProcessed === 0).
+    const sseResponse = await page.waitForResponse(
+      (resp) => resp.url().includes('/api/sse/events'),
+      { timeout: 10000 },
+    );
 
-    // Verify all events were included in the mock response
+    // The route handler must have fired (it sets this counter synchronously)
     expect(eventsProcessed).toBe(12);
 
-    // Verify the last progress value (100%) was processed
-    // by checking the progress bar state
-    const finalProgress = await page.evaluate(() => {
-      const pctEl = document.getElementById('progressPct');
-      return pctEl?.textContent?.trim() || '';
-    });
-
-    // The progress text should contain a numeric value (the last event was 100%)
-    expect(finalProgress, 'Progress text should not be empty after receiving 12 SSE events').not.toBe('');
-    // Verify the text contains at least one digit (progress percentage)
-    expect(/\d/.test(finalProgress), `Progress text "${finalProgress}" should contain a digit after SSE events`).toBe(true);
+    // The mock response body must contain all 12 framed events, ending with
+    // the terminal progress event
+    const body = await sseResponse.text();
+    expect(body).toContain('"progress":100');
+    expect((body.match(/event: /g) || []).length).toBe(12);
   });
 
   // ----------------------------------------------------------
