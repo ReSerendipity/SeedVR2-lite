@@ -97,33 +97,37 @@ jobs:
           Write-Host "smoking release: $t"
           "tag=$t" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
-      - name: Download release assets (resumable, official-first with mirror fallback)
+      - name: Download release assets (resumable, stall-aware, official-first with mirror fallback)
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 大资产下载对本机网络波动敏感（实测同一通道 0.2MB/s 与 5MB/s 交替出现）。
-          # 逐文件 curl：-C - 断点续传、指数退避重试，官方通道失败后回退公共镜像；
-          # 无论来源，解包步骤都按 manifest/SHA256SUMS 逐卷强制校验，篡改与损坏必被发现。
+          # 本机到 GitHub CDN 的带宽按数十分钟尺度剧烈波动（实测 5MB/s ↔ 4KB/s 互切，
+          # 单连接还可能 TCP 挂死）。对策：curl --speed-limit 61440 --speed-time 60 令
+          # 停滞连接 60s 内主动断开（exit 28），外层按文件做多轮 resume 循环
+          # （-C - 续传），在 150+ 分钟窗口内自动骑上网络恢复的波段；
+          # 官方通道与公共镜像逐轮交替。无论来源，解包步骤按 manifest/SHA256SUMS
+          # 逐卷强制 SHA256，损坏与篡改必被发现。
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path bundle -Force | Out-Null
           $tag = "${{ steps.tag.outputs.tag }}"
           $assets = @(gh release view $tag --json assets -q '.assets[].name')
           $direct = "https://github.com/${{ github.repository }}/releases/download/$tag"
           $mirror = "https://gh-proxy.com/https://github.com/${{ github.repository }}/releases/download/$tag"
+          $curlBase = @('-sSL', '--ssl-no-revoke', '-C', '-', '--speed-limit', '61440', '--speed-time', '60')
           foreach ($name in $assets) {
             $out = Join-Path bundle $name
             $done = $false
-            foreach ($base in @($direct, $mirror)) {
-              for ($try = 1; $try -le 3 -and -not $done; $try++) {
-                Write-Host "GET $name (attempt $try via $($base.Split('/')[2]))"
-                curl.exe -sSL --ssl-no-revoke -C - --retry 3 --retry-delay 10 -o $out "$base/$name"
-                # 33 = range not satisfiable(416)：文件已完整，视为成功；哈希/大小由解包步骤强制验证
-                if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 33) { $done = $true } else { Start-Sleep -Seconds (10 * $try) }
-              }
-              if ($done) { break }
+            for ($round = 1; $round -le 8 -and -not $done; $round++) {
+              $base = if ($round % 2) { $direct } else { $mirror }
+              Write-Host "GET $name round $round via $($base.Split('/')[2])"
+              curl.exe @curlBase -o $out "$base/$name"
+              # 0=完整 33=range 416(已完整) → 成功；28=停滞/超时 → 下一轮续传
+              if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 33) { $done = $true }
+              elseif ($LASTEXITCODE -eq 28) { Write-Host "  stalled, resuming next round ($([int]((Get-Item $out -ErrorAction SilentlyContinue).Length/1MB)) MB so far)"; Start-Sleep -Seconds 15 }
+              else { Write-Host "  curl exit $LASTEXITCODE, next round"; Start-Sleep -Seconds 20 }
             }
-            if (-not $done) { throw "failed to download asset: $name" }
+            if (-not $done) { throw "failed to download asset after 8 rounds: $name" }
             Write-Host ("  ok  {0}  {1:N1} MB" -f $name, ((Get-Item $out).Length / 1MB))
           }
           Get-ChildItem bundle |
