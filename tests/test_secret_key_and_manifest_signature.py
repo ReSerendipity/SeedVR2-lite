@@ -133,7 +133,14 @@ class TestSelfCheckIntegration:
         assert result["total"] == 0
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX 权限断言")
-    def test_generated_key_file_mode(self, tmp_path):
+    def test_generated_key_file_mode(self, tmp_path, monkeypatch):
+        # 全量套件中前序测试（清单签名 / 启动自检等路径）会填充模块级
+        # _cached_key 单例，使本用例的 get_secret_key(key_file=...) 直接
+        # 命中缓存而不创建文件（ubuntu CI 实测 FileNotFoundError；win32 下
+        # 本用例被 skipif 掩盖）。重置缓存以断言"生成并持久化 + 收紧 0600"
+        # 的真实路径。⚠️ 缓存忽略 key_file 参数本身是 secret_key 的设计
+        # 隐患（不同路径会串密钥），属 security 禁区，已另行上报维护者。
+        monkeypatch.setattr("app.integrated_app.security.secret_key._cached_key", None)
         key_file = tmp_path / "gen.key"
         key = get_secret_key(key_file=key_file)
         assert key

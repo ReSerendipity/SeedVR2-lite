@@ -17,9 +17,16 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
+
+# Windows runner 缺省 cp1252 stdout 下中文 print 抛 UnicodeEncodeError
+# （KNOWN_ISSUES #25 同型，portable-release 首跑踩过）——统一重配为 UTF-8
+for _stream in (sys.stdout, sys.stderr):
+    with contextlib.suppress(AttributeError, OSError):  # 非标准流时跳过
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 # 保证从任意 cwd 执行都能导入 app 包
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
