@@ -18,6 +18,7 @@ from app.integrated_app.security.secret_key import (
     SIGNATURE_SUFFIX,
     get_secret_key,
     harden_secret_file_permissions,
+    reset_cached_key,
     sign_bytes,
     sign_file,
     signature_path_for,
@@ -133,16 +134,37 @@ class TestSelfCheckIntegration:
         assert result["total"] == 0
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX 权限断言")
-    def test_generated_key_file_mode(self, tmp_path, monkeypatch):
-        # 全量套件中前序测试（清单签名 / 启动自检等路径）会填充模块级
-        # _cached_key 单例，使本用例的 get_secret_key(key_file=...) 直接
-        # 命中缓存而不创建文件（ubuntu CI 实测 FileNotFoundError；win32 下
-        # 本用例被 skipif 掩盖）。重置缓存以断言"生成并持久化 + 收紧 0600"
-        # 的真实路径。⚠️ 缓存忽略 key_file 参数本身是 secret_key 的设计
-        # 隐患（不同路径会串密钥），属 security 禁区，已另行上报维护者。
-        monkeypatch.setattr("app.integrated_app.security.secret_key._cached_key", None)
+    def test_generated_key_file_mode(self, tmp_path):
+        # 缓存已按 key_file 路径分键（secret_key 修复），不同路径互不串用；
+        # 仍先清空缓存以断言"生成并持久化 + 收紧 0600"的真实路径。
+        reset_cached_key()
         key_file = tmp_path / "gen.key"
         key = get_secret_key(key_file=key_file)
         assert key
         mode = stat.S_IMODE(os.stat(key_file).st_mode)
         assert mode == 0o600
+
+
+class TestPerPathCache:
+    """缓存按 key_file 分键的回归测试（历史缺陷：单例缓存忽略 key_file，
+    不同路径串用同一密钥；ubuntu 全量套件曾以 FileNotFoundError 暴露）。"""
+
+    def test_different_paths_do_not_share_keys(self, tmp_path):
+        reset_cached_key()
+        file_a = tmp_path / "a" / "key_a"
+        file_b = tmp_path / "b" / "key_b"
+        key_a = get_secret_key(key_file=file_a)
+        key_b = get_secret_key(key_file=file_b)
+        assert key_a != key_b, "不同密钥文件路径不得串用同一密钥"
+        assert file_a.exists() and file_b.exists()
+
+    def test_same_path_cached_across_calls(self, tmp_path):
+        reset_cached_key()
+        key_file = tmp_path / "stable.key"
+        key1 = get_secret_key(key_file=key_file)
+        key2 = get_secret_key(key_file=key_file)
+        assert key1 == key2
+        # 缓存命中不应重写文件（mtime 不变）
+        mtime = key_file.stat().st_mtime_ns
+        get_secret_key(key_file=key_file)
+        assert key_file.stat().st_mtime_ns == mtime

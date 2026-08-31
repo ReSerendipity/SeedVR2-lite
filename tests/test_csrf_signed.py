@@ -80,19 +80,17 @@ class TestCSRFSignedToken:
         """无分隔符的 token 被拒绝。"""
         assert CSRFMiddleware._verify_signed_token("abc123") is False
 
-    def test_different_secret_rejected(self):
-        """不同密钥生成的 token 被拒绝。"""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            key_file1 = os.path.join(tmpdir, ".secret1")
-            key_file2 = os.path.join(tmpdir, ".secret2")
+    def test_different_secret_rejected(self, monkeypatch):
+        """不同密钥生成的 token 被拒绝。
 
-            reset_cached_key()
-            get_secret_key(key_file1)
-            token = CSRFMiddleware._generate_signed_token()
-
-            reset_cached_key()
-            get_secret_key(key_file2)
-            assert CSRFMiddleware._verify_signed_token(token) is False
+        旧实现依赖"单例缓存忽略 key_file"的串用缺陷让 _generate_signed_token()
+        （内部走默认路径）间接用上 key_file1 的密钥；缓存按路径分键修复后，
+        改用 SEEDVR2_SECRET_KEY 环境变量直接切换有效密钥，语义等价且无缓存耦合。
+        """
+        monkeypatch.setenv("SEEDVR2_SECRET_KEY", "aa" * 32)
+        token = CSRFMiddleware._generate_signed_token()
+        monkeypatch.setenv("SEEDVR2_SECRET_KEY", "bb" * 32)
+        assert CSRFMiddleware._verify_signed_token(token) is False
 
     def test_token_survives_restart(self):
         """token 在密钥持久化后跨"重启"仍可验证。"""

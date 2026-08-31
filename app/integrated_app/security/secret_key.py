@@ -31,6 +31,7 @@ import logging
 import os
 import secrets
 import stat
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -47,15 +48,26 @@ _SECRET_KEY_ENV = "SEEDVR2_SECRET_KEY"
 # 签名文件后缀（manifest.json → manifest.json.sig）
 SIGNATURE_SUFFIX = ".sig"
 
-# 单例缓存
-_cached_key: bytes | None = None
+# 按密钥文件路径分键的缓存：不同 key_file 各自独立，绝不串用同一密钥。
+# （历史缺陷：单例 _cached_key 忽略 key_file 参数，第二个不同路径的调用会
+# 拿到第一个路径的密钥——ubuntu 全量套件曾以 FileNotFoundError 暴露。）
+# 锁保护"读文件/生成持久化"临界区，兑现模块文档的线程安全承诺。
+_cache_lock = threading.Lock()
+_cached_keys: dict[Path, bytes] = {}
+
+
+def _default_key_file() -> Path:
+    """默认密钥文件路径（项目根 data/.seedvr2_secret）。"""
+    project_root = Path(__file__).resolve().parents[3]
+    return project_root / _DEFAULT_KEY_FILE
 
 
 def get_secret_key(key_file: str | os.PathLike | None = None) -> bytes:
     """获取服务端持久化密钥。
 
     优先级：环境变量 SEEDVR2_SECRET_KEY → 密钥文件 → 生成并持久化。
-    首次调用后缓存（线程安全单例），重复调用返回同一密钥。
+    按密钥文件路径分键缓存（线程安全），同一文件路径重复调用返回同一密钥；
+    不同路径互不影响。
 
     Args:
         key_file: 密钥文件路径，为 None 时使用默认路径 data/.seedvr2_secret。
@@ -66,41 +78,40 @@ def get_secret_key(key_file: str | os.PathLike | None = None) -> bytes:
     Raises:
         RuntimeError: 所有密钥来源均不可用时抛出（不应静默降级为弱密钥）。
     """
-    global _cached_key
-
     env_key = os.environ.get(_SECRET_KEY_ENV, "").strip()
     if env_key:
-        # 环境变量不进缓存：避免同一进程内环境变量变更被单例掩盖
+        # 环境变量不进缓存：避免同一进程内环境变量变更被缓存掩盖
         try:
             return bytes.fromhex(env_key)
         except ValueError:
             return env_key.encode("utf-8")
 
-    if _cached_key is not None:
-        return _cached_key
+    resolved = _default_key_file() if key_file is None else Path(key_file)
+    cache_key = resolved.resolve()
 
-    if key_file is None:
-        project_root = Path(__file__).resolve().parents[3]
-        key_file = project_root / _DEFAULT_KEY_FILE
-    else:
-        key_file = Path(key_file)
+    with _cache_lock:
+        cached = _cached_keys.get(cache_key)
+        if cached is not None:
+            return cached
 
-    if key_file.exists():
-        try:
-            hex_str = key_file.read_text(encoding="utf-8").strip()
-            _cached_key = bytes.fromhex(hex_str)
-            if len(_cached_key) != _KEY_BYTES:
-                logger.warning("密钥文件内容长度异常，重新生成密钥")
-                _cached_key = _generate_and_persist(key_file)
-            # P3-3：读取时自愈历史部署的过宽权限（最佳实践-effort）
-            harden_secret_file_permissions(key_file)
-            logger.debug("从持久化文件加载服务端密钥")
-            return _cached_key
-        except Exception as e:
-            logger.warning(f"读取密钥文件失败，重新生成: {e}")
+        if resolved.exists():
+            try:
+                hex_str = resolved.read_text(encoding="utf-8").strip()
+                key = bytes.fromhex(hex_str)
+                if len(key) != _KEY_BYTES:
+                    logger.warning("密钥文件内容长度异常，重新生成密钥")
+                    key = _generate_and_persist(resolved)
+                # P3-3：读取时自愈历史部署的过宽权限（最佳实践-effort）
+                harden_secret_file_permissions(resolved)
+                logger.debug("从持久化文件加载服务端密钥")
+                _cached_keys[cache_key] = key
+                return key
+            except Exception as e:
+                logger.warning(f"读取密钥文件失败，重新生成: {e}")
 
-    _cached_key = _generate_and_persist(key_file)
-    return _cached_key
+        key = _generate_and_persist(resolved)
+        _cached_keys[cache_key] = key
+        return key
 
 
 def _generate_and_persist(key_file: Path) -> bytes:
@@ -125,12 +136,12 @@ def _generate_and_persist(key_file: Path) -> bytes:
 
 
 def reset_cached_key() -> None:
-    """重置密钥缓存（仅用于测试）。
+    """清空全部密钥缓存（仅用于测试）。
 
     下次调用 get_secret_key 时会重新从文件读取或生成。
     """
-    global _cached_key
-    _cached_key = None
+    with _cache_lock:
+        _cached_keys.clear()
 
 
 # ---------------------------------------------------------------------------
