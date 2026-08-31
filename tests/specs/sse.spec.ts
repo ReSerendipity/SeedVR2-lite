@@ -408,8 +408,11 @@ test.describe('Server-Sent Events', () => {
 
     await videoRestorePage.goto();
 
-    // Wait until the SSE events have actually been processed: the progress
-    // percentage element must be populated by the event handler.
+    // Wait until the SSE events have actually been processed: the last mocked
+    // progress event (100%) must be rendered. Polling merely for a non-empty
+    // value was racy — progressPct renders "0%" on initial page load, so the
+    // poll could resolve before the route handler fired (observed
+    // eventsProcessed === 0 on webkit-desktop in CI).
     await expect
       .poll(
         () =>
@@ -419,7 +422,7 @@ test.describe('Server-Sent Events', () => {
           }),
         { timeout: 10000 },
       )
-      .not.toBe('');
+      .toBe('100%');
 
     // Verify all events were included in the mock response
     expect(eventsProcessed).toBe(12);
