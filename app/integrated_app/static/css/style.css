@@ -7330,6 +7330,7 @@ input[type="number"].sv-form-control::-webkit-outer-spin-button {
     display: flex;
     flex-direction: column;
     gap: var(--sv-space-2);
+    pointer-events: none;
 }
 
 .sv-toast {
