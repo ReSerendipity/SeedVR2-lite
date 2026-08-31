@@ -63,3 +63,15 @@ powershell -ExecutionPolicy Bypass -File .\unpack_portable_bundle.ps1 -VerifyOnl
 ```powershell
 Get-FileHash .\SeedVR2-Portable-v*-model-fp8.zip.001 -Algorithm SHA256   # 与 SHA256SUMS.txt 比对
 ```
+
+解包脚本本身会在解压前强制逐卷校验 SHA256，校验不通过会拒绝继续。
+
+进阶验证（确认清单本身可信，Git Bash / WSL / Linux）：
+
+```bash
+sha256sum -c SHA256SUMS.txt
+gpg --import release-signing-key.asc   # 公钥：仓库 website/docs/guide/release-signing-key.asc
+gpg --verify SHA256SUMS.gpg SHA256SUMS.txt
+```
+
+`SHA256SUMS.gpg` 为发布链路自动生成的 GPG 分离签名（自配置签名密钥后的版本起提供）。

@@ -52,3 +52,13 @@ Get-Content SHA256SUMS.txt | ForEach-Object {
 ```
 
 解包脚本本身也会在解压前强制逐卷校验——校验不通过会拒绝继续。
+
+部分 Release 另带 GPG 分离签名 `SHA256SUMS.gpg`（自签名密钥配置后起），可进一步确认校验清单本身可信（Git Bash / WSL / Linux）：
+
+```bash
+sha256sum -c SHA256SUMS.txt
+gpg --import release-signing-key.asc   # 公钥：<https://github.com/ReSerendipity/SeedVR2-lite/raw/main/website/docs/guide/release-signing-key.asc>
+gpg --verify SHA256SUMS.gpg SHA256SUMS.txt
+```
+
+`gpg` 输出 `Good signature from "SeedVR2 Release Signing"` 且指纹与公钥文件一致即通过（信任网警告可忽略，公钥来源以本仓库为准）。
