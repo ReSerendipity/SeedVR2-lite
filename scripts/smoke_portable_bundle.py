@@ -373,9 +373,7 @@ except Exception as exc:
     print(json.dumps({"error": repr(exc)}))
     sys.exit(3)
 """
-    tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115 - 用完即删
-        suffix=".py", delete=False, dir=str(app_dir)
-    )
+    tmp = tempfile.NamedTemporaryFile(suffix=".py", delete=False, dir=str(app_dir))  # noqa: SIM115 - 用完即删
     tmp.write(snippet.encode("utf-8"))
     tmp.close()
     try:
@@ -398,9 +396,7 @@ except Exception as exc:
             os.unlink(tmp.name)
 
 
-def passes_quality_gate(
-    metrics: dict[str, float], min_psnr: float, min_ssim: float
-) -> tuple[bool, str]:
+def passes_quality_gate(metrics: dict[str, float], min_psnr: float, min_ssim: float) -> tuple[bool, str]:
     """判定真实推理输出是否满足质量门禁。
 
     Args:
@@ -534,7 +530,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="真实推理后校验输出保真度（PSNR/SSIM 不低于阈值），仅在有真实输出时生效",
     )
-    parser.add_argument("--min-psnr", type=float, default=15.0, help="质量门禁 PSNR 下限(dB)，默认 15（拦截黑屏/冻结/NaN）")
+    parser.add_argument(
+        "--min-psnr", type=float, default=15.0, help="质量门禁 PSNR 下限(dB)，默认 15（拦截黑屏/冻结/NaN）"
+    )
     parser.add_argument("--min-ssim", type=float, default=0.5, help="质量门禁 SSIM 下限，默认 0.5")
     parser.add_argument("--keep-log", action="store_true", help="结束时打印日志路径")
     return parser.parse_args(argv)
