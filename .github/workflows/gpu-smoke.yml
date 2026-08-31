@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      administration: read   # 读取 self-hosted runner 在线状态需管理类 API（否则 403）
+      actions: read   # 读取 self-hosted runner 在线状态（/actions/runners）
     outputs:
       available: ${{ steps.check.outputs.available }}
     steps:
