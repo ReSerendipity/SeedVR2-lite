@@ -109,7 +109,8 @@
 > **模型格式：`.safetensors`**（非 GGUF、非 PTH）。SeedVR2 官方与社区仓库均以
 > HuggingFace `safetensors` 格式分发，本项目仅兼容该格式。
 > 精度支持 **FP16（全精度，画质最佳）** 与 **FP8（E4M3FN 量化，省显存）** 两种；
-> **不兼容 GGUF / INT4 / INT8 等其他量化**（这些格式在修复类扩散模型中会明显损伤画质）。
+> **不兼容 GGUF / INT4 / INT8** 等其他量化（这些格式在修复类扩散模型中会明显损伤画质）。
+> 📌 仓库 `model/` 内另存有实验性量化文件（`seedvr2_3b_int8_convrot.safetensors`、`seedvr2_3b_nvfp4.safetensors`、`seedvr2_3b_mxfp8.safetensors`），属研发实验产物，**非 README 推荐档位**，评测/生产请使用上表 FP16/FP8 档位。
 
 各模型/精度组合的资源占用与效果对比：
 
@@ -184,6 +185,8 @@ model:
 - 支持扁平键优先查找（含点号的键不会被误判为嵌套结构）
 
 ### 🚀 快速上手：从零开始（新手保姆式教程，约 5 分钟）
+
+> 💡 项目根目录已就绪一份 `.venv`（系统 Python 3.12.10 @ `C:\Python312` 创建），依赖与 CUDA torch 均已装入其中。走命令行时请先 `.venv\Scripts\activate`；或直接双击 `start.bat` / `install.bat`（脚本会自行检测并复用该环境）。
 
 > 目标：一台 Windows 电脑，从空白到打开网页完成第一次修复。全程跟着做即可，
 > 不需要任何编程基础。
