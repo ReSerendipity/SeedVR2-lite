@@ -321,11 +321,21 @@ def verify_output(data: dict[str, Any], app_dir: Path) -> Path:
     return candidate
 
 
-def compute_quality(python_exe: str, app_dir: Path, input_path: Path, output_path: Path) -> dict[str, float]:
+def compute_quality(
+    python_exe: str,
+    app_dir: Path,
+    input_path: Path,
+    output_path: Path,
+    metrics_file: str = "",
+) -> dict[str, float]:
     """用便携解释器（含 numpy/PIL）计算修复输出相对原始输入的 PSNR/SSIM。
 
     复用应用内置的 ``app.integrated_app.utils.image_metrics``（与 CI 期 golden
     质量门禁同一套口径），保证「冒烟质量门禁」与「开发期质量门禁」指标一致。
+
+    v1.5.0 等历史便携包的 core 组件不含该模块（诞生于 6160cd5）：届时
+    自动回退到 ``metrics_file`` 指定的外部 checkout 副本（gpu-smoke 工作流
+    用 codeload 源码包提供），两者皆无则明确报错而非崩溃。
 
     输出会被缩放到输入尺寸后再比较（修复常伴随上采样），只衡量内容保真度，
     用于拦截灾难性失败（黑屏 / 冻结模型 / NaN / 内容错乱）。
@@ -335,6 +345,7 @@ def compute_quality(python_exe: str, app_dir: Path, input_path: Path, output_pat
         app_dir: 解包目录（其下 ``app/`` 含 integrated_app 包）。
         input_path: 原始输入图路径。
         output_path: 修复输出图路径。
+        metrics_file: 包内无 image_metrics.py 时的回退模块路径（可选）。
 
     Returns:
         ``{"psnr_db": float, "ssim": float}``；图像无法解码或依赖缺失时返回
@@ -351,6 +362,12 @@ output_path = sys.argv[3]
 # 直接按文件路径加载 image_metrics，避免触发 integrated_app.utils 包 __init__
 # 的潜在重导入（与 CI golden 门禁同一套 PSNR/SSIM 实现）
 img_mod = os.path.join(app_dir, 'app', 'integrated_app', 'utils', 'image_metrics.py')
+if not os.path.isfile(img_mod):
+    img_mod = sys.argv[4] if len(sys.argv) > 4 else ''
+if not img_mod or not os.path.isfile(img_mod):
+    print(json.dumps({'error': 'image_metrics.py not found (老版本便携包无此模块，请用 --metrics-module 指定外部 checkout 副本)'}))
+    sys.exit(2)
+spec = importlib.util.spec_from_file_location("seedvr2_image_metrics", img_mod)
 spec = importlib.util.spec_from_file_location("seedvr2_image_metrics", img_mod)
 metrics_mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(metrics_mod)
@@ -377,8 +394,11 @@ except Exception as exc:
     tmp.write(snippet.encode("utf-8"))
     tmp.close()
     try:
+        argv = [python_exe, tmp.name, str(app_dir), str(input_path), str(output_path)]
+        if metrics_file:
+            argv.append(str(metrics_file))
         proc = subprocess.run(  # noqa: S603
-            [python_exe, tmp.name, str(app_dir), str(input_path), str(output_path)],
+            argv,
             cwd=str(app_dir),
             capture_output=True,
             text=True,
@@ -484,7 +504,7 @@ def run(args: argparse.Namespace) -> int:
                 input_path = app_dir / "logs" / "smoke_input.png"
                 input_path.parent.mkdir(parents=True, exist_ok=True)
                 input_path.write_bytes(png)
-                metrics = compute_quality(python_exe, app_dir, input_path, output_path)
+                metrics = compute_quality(python_exe, app_dir, input_path, output_path, args.metrics_module)
                 ok, why = passes_quality_gate(metrics, args.min_psnr, args.min_ssim)
                 if not ok:
                     raise SmokeError(f"GPU 真实推理质量门禁未通过：{why}")
@@ -534,6 +554,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--min-psnr", type=float, default=15.0, help="质量门禁 PSNR 下限(dB)，默认 15（拦截黑屏/冻结/NaN）"
     )
     parser.add_argument("--min-ssim", type=float, default=0.5, help="质量门禁 SSIM 下限，默认 0.5")
+    parser.add_argument(
+        "--metrics-module",
+        default="",
+        help="image_metrics.py 回退路径（v1.5.0 等历史便携包不含该模块；由外部 checkout 提供）",
+    )
     parser.add_argument("--keep-log", action="store_true", help="结束时打印日志路径")
     return parser.parse_args(argv)
 

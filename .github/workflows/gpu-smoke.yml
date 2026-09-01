@@ -77,7 +77,8 @@ jobs:
           tar -xzf src.tgz -C src --strip-components=1
           New-Item -ItemType Directory -Path scripts -Force | Out-Null
           Copy-Item src\scripts\unpack_portable_bundle.ps1, src\scripts\portable_bundle_lib.ps1, src\scripts\smoke_portable_bundle.py scripts\
-          Remove-Item src, src.tgz -Recurse -Force
+          Remove-Item src.tgz -Force
+          Write-Host "src/ 保留：image_metrics.py 作为质量门对历史便携包的模块回退"
           Get-ChildItem scripts | Select-Object Name, Length
 
       - name: Resolve target release tag
@@ -152,5 +153,6 @@ jobs:
           python .\scripts\smoke_portable_bundle.py `
             --app-dir (Join-Path $PWD 'target\SeedVR2-Portable') `
             --require-inference --quality-gate --min-psnr 15 --min-ssim 0.5 `
+            --metrics-module (Join-Path $PWD 'src\app\integrated_app\utils\image_metrics.py') `
             --boot-timeout 900 --task-timeout 1800 --resolution 512
           if ($LASTEXITCODE -ne 0) { throw "GPU smoke failed" }
