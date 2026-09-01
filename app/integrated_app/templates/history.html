@@ -361,6 +361,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>`;
                 }).join('');
 
+                // 产物被清理时缩略图会 404 显示破图，降级为类型图标
+                SeedVR2.guardBrokenThumbs(cardsEl, 'bi-image');
+
                 // 让 HTMX 处理动态生成的取消按钮
                 if (typeof htmx !== 'undefined') {
                     htmx.process(cardsEl);

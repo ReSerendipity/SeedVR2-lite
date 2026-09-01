@@ -180,12 +180,12 @@
     <!-- VRAM 预检 & 参数推荐：独立整宽工具面板（有输入有动作，与上方只读监控卡不同类） -->
     <div class="sv-card sv-vram-panel">
         <div class="sv-card-header">
-            <h3><i class="bi bi-speedometer2 sv-text-primary"></i> VRAM 预检 & 参数推荐</h3>
+            <h3><i class="bi bi-speedometer2 sv-text-primary" aria-hidden="true"></i> {{ t('system.vram_tool_title') }}</h3>
             <span class="sv-badge sv-badge-secondary" id="vramEstimateBadge">--</span>
         </div>
         <div class="sv-card-body" id="vramEstimateBody">
             <div class="sv-stat-item">
-                <span class="stat-label">模型</span>
+                <span class="stat-label">{{ t('system.vram_model') }}</span>
                 <select id="vramModelSelect" class="sv-form-control sv-form-control-sm" style="max-width:160px;display:inline-block;">
                     <option value="3b">SeedVR2-3B</option>
                     <option value="7b">SeedVR2-7B</option>
@@ -193,7 +193,7 @@
                 </select>
             </div>
             <div class="sv-stat-item">
-                <span class="stat-label">分辨率 (W×H)</span>
+                <span class="stat-label">{{ t('system.vram_resolution') }}</span>
                 <div class="sv-flex sv-gap-2 sv-items-center">
                     <input type="number" id="vramWidth" value="1920" min="64" max="7680" class="sv-form-control sv-form-control-sm" style="max-width:80px;">
                     <span>×</span>
@@ -201,15 +201,15 @@
                 </div>
             </div>
             <div class="sv-stat-item">
-                <span class="stat-label">帧数 (图像=1)</span>
+                <span class="stat-label">{{ t('system.vram_frames') }}</span>
                 <input type="number" id="vramFrames" value="1" min="1" max="10000" class="sv-form-control sv-form-control-sm" style="max-width:80px;">
             </div>
             <button type="button" class="sv-btn sv-btn-primary sv-btn-sm sv-mt-2" id="btnVramEstimate">
-                <i class="bi bi-calculator"></i> 估算 & 推荐
+                <i class="bi bi-calculator" aria-hidden="true"></i> {{ t('system.vram_estimate_btn') }}
             </button>
             <div id="vramEstimateResults" style="display:none;" class="sv-mt-3">
                 <div class="sv-stat-item">
-                    <span class="stat-label">推荐精度</span>
+                    <span class="stat-label">{{ t('restore.rec_precision') }}</span>
                     <span class="stat-value"><span class="sv-badge sv-badge-completed" id="vramRecPrecision">--</span></span>
                 </div>
                 <div class="sv-stat-item">
@@ -217,19 +217,19 @@
                     <span class="stat-value" id="vramRecBlockswap">--</span>
                 </div>
                 <div class="sv-stat-item">
-                    <span class="stat-label">估算显存</span>
+                    <span class="stat-label">{{ t('restore.rec_estimated') }}</span>
                     <span class="stat-value" id="vramRecEstimated">--</span>
                 </div>
                 <div class="sv-stat-item">
-                    <span class="stat-label">可用显存</span>
+                    <span class="stat-label">{{ t('system.vram_available') }}</span>
                     <span class="stat-value" id="vramRecAvailable">--</span>
                 </div>
                 <div class="sv-stat-item">
-                    <span class="stat-label">Tile 大小</span>
+                    <span class="stat-label">{{ t('system.vram_tile_size') }}</span>
                     <span class="stat-value" id="vramRecTileSize">--</span>
                 </div>
                 <div class="sv-stat-item">
-                    <span class="stat-label">OOM 风险</span>
+                    <span class="stat-label">{{ t('restore.rec_risk') }}</span>
                     <span class="stat-value" id="vramRecRisk">--</span>
                 </div>
                 <div id="vramRecWarning" class="sv-alert sv-alert-warning sv-mt-2" style="display:none;">
@@ -392,7 +392,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             btn.disabled = true;
-            btn.innerHTML = '<i class="bi bi-hourglass-split"></i> 估算中...';
+            btn.innerHTML = '<i class="bi bi-hourglass-split"></i> ' + (I['system.vram_estimating'] || '估算中...');
 
             const url = `/api/system/gpu/recommend-params?model_name=${encodeURIComponent(model)}&width=${width}&height=${height}&num_frames=${frames}`;
             const resp = await SeedVR2.api.get(url);

@@ -5,6 +5,7 @@ i18n_flat / app_version 需要重启才会生效）。这里用同一套源码�
 并把历史库指到临时文件，避免与生产实例争用 data/history.db。
 """
 
+import os
 import socket
 import sys
 import tempfile
@@ -29,7 +30,12 @@ def _free_port(preferred: int) -> int:
 
 def main() -> None:
     config = load_config()
-    config.setdefault("history", {})["db_path"] = str(Path(tempfile.mkdtemp(prefix="sv2-ui-")) / "history.db")
+    # 默认指到临时空库，避免与生产实例争用 data/history.db；
+    # 要看真实记录渲染效果时设 SV2_UI_DB=<history.db 的只读副本>
+    db_override = os.environ.get("SV2_UI_DB")
+    config.setdefault("history", {})["db_path"] = db_override or str(
+        Path(tempfile.mkdtemp(prefix="sv2-ui-")) / "history.db"
+    )
     config.setdefault("model", {})["auto_load"] = False
     config.setdefault("server", {})["auto_open_browser"] = False
 

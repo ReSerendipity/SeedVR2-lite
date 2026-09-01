@@ -70,14 +70,25 @@
         <div class="sv2-stage sv-mode-tab-pane active" id="previewArea" data-mode-pane="single">
             <!-- 上传空态 -->
             <div class="sv2-pane" id="workflowGuide" data-auto-hide="true">
-                <div class="sv-dropzone" id="restoreUploadZone">
-                    <div class="sv-dropzone-icon"><i class="bi bi-cloud-arrow-up"></i></div>
-                    <div class="sv-dropzone-title">{{ t('restore.upload_hint') }}</div>
-                    <div class="sv-dropzone-hint">{{ t('restore.upload_single_hint') }}</div>
-                    <div class="sv-dropzone-formats">{{ t('restore.supported_formats') }}</div>
-                    <div class="sv-dropzone-fileinfo" id="restoreFileInfo" style="display:none;"></div>
-                    <input type="file" id="restoreFileInput" style="display:none;"
-                           accept="image/png,image/jpeg,image/jpg,image/bmp,image/webp,video/mp4,video/avi,video/quicktime,video/x-matroska,video/webm,video/x-flv">
+                <div class="sv2-guide-inner">
+                    <div class="sv-dropzone" id="restoreUploadZone">
+                        <div class="sv-dropzone-icon"><i class="bi bi-cloud-arrow-up"></i></div>
+                        <div class="sv-dropzone-title">{{ t('restore.upload_hint') }}</div>
+                        <div class="sv-dropzone-hint">{{ t('restore.upload_single_hint') }}</div>
+                        <div class="sv-dropzone-formats">{{ t('restore.supported_formats') }}</div>
+                        <div class="sv-dropzone-fileinfo" id="restoreFileInfo" style="display:none;"></div>
+                        <input type="file" id="restoreFileInput" style="display:none;"
+                               accept="image/png,image/jpeg,image/jpg,image/bmp,image/webp,video/mp4,video/avi,video/quicktime,video/x-matroska,video/webm,video/x-flv">
+                    </div>
+                    <!-- 最近任务：复用首页 home.recent_tasks 文案与 /api/system/history 接口，
+                         拉到记录后才显示（零历史用户看到的仍是干净落区） -->
+                    <div class="sv2-recent" id="canvasRecentTasks" hidden>
+                        <div class="sv2-recent-head">
+                            <span class="sv2-recent-title">{{ t('home.recent_tasks') }}</span>
+                            <a class="sv2-recent-all" href="/history">{{ t('home.view_all') }} <i class="bi bi-arrow-right" aria-hidden="true"></i></a>
+                        </div>
+                        <div class="sv2-recent-grid" id="canvasRecentGrid"></div>
+                    </div>
                 </div>
             </div>
 
@@ -86,7 +97,7 @@
                 <div class="sv2-preview-stage" id="previewStage">
                     <div class="sv2-preview-img" id="previewImgWrap"><img id="imagePreview" alt="{{ t('restore.before') }}"></div>
                     <span class="sv2-hud" id="previewHud">—</span>
-                    <span class="sv2-hint"><kbd>滚轮</kbd> 缩放 · <kbd>左键</kbd> 拖动平移 · <kbd>双击</kbd> 适配</span>
+                    <span class="sv2-hint"><kbd>{{ t('common.kbd_wheel') }}</kbd> {{ t('restore.act_zoom') }} · <kbd>{{ t('common.kbd_left_click') }}</kbd> {{ t('restore.act_pan') }} · <kbd>{{ t('common.kbd_double_click') }}</kbd> {{ t('restore.act_fit') }}</span>
                     <div class="sv2-magnifier" id="previewMagnifier" hidden>
                         <div class="mg-layer mg-before"></div>
                         <div class="mg-layer mg-after" style="display:none"></div>
@@ -121,9 +132,9 @@
                 <!-- 失败错误卡 -->
                 <div class="sv2-error-card" id="errorCard" style="display:none;">
                     <div class="sv2-error-icon"><i class="bi bi-exclamation-triangle"></i></div>
-                    <div class="sv2-error-title">修复失败</div>
+                    <div class="sv2-error-title">{{ t('restore.failed_title') }}</div>
                     <div class="sv2-error-msg" id="errorMsg"></div>
-                    <button type="button" class="sv2-tb-btn sv2-primary" id="btnRetry" style="height:38px;padding:0 18px"><i class="bi bi-arrow-counterclockwise"></i> 重试</button>
+                    <button type="button" class="sv2-tb-btn sv2-primary" id="btnRetry" style="height:38px;padding:0 18px"><i class="bi bi-arrow-counterclockwise"></i> {{ t('common.retry') }}</button>
                 </div>
                 <!-- 视频单图查看器 -->
                 <div id="videoPlainViewer" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;">
@@ -144,7 +155,7 @@
                             <div class="sv-compare-slider" id="compareSlider"><i class="bi bi-arrows"></i></div>
                         </div>
                         <span class="sv2-hud" id="compareHud">—</span>
-                        <span class="sv2-hint"><kbd>滚轮</kbd> 缩放 · <kbd>左键</kbd> 分割线/平移 · <kbd>双击</kbd> 适配/1:1</span>
+                        <span class="sv2-hint"><kbd>{{ t('common.kbd_wheel') }}</kbd> {{ t('restore.act_zoom') }} · <kbd>{{ t('common.kbd_left_click') }}</kbd> {{ t('restore.act_divider_pan') }} · <kbd>{{ t('common.kbd_double_click') }}</kbd> {{ t('restore.act_fit_one_to_one') }}</span>
                         <div class="sv2-magnifier" id="compareMagnifier" hidden>
                             <div class="mg-layer mg-before"></div>
                             <div class="mg-layer mg-after"></div>
@@ -164,7 +175,7 @@
                             <div class="sv-compare-slider" id="videoCompareSlider"><i class="bi bi-arrows"></i></div>
                         </div>
                         <span class="sv2-hud" id="videoCompareHud">—</span>
-                        <span class="sv2-hint"><kbd>滚轮</kbd> 缩放 · <kbd>左键</kbd> 分割线/平移 · <kbd>双击</kbd> 适配/1:1 · <kbd>空格</kbd> 播放/暂停</span>
+                        <span class="sv2-hint"><kbd>{{ t('common.kbd_wheel') }}</kbd> {{ t('restore.act_zoom') }} · <kbd>{{ t('common.kbd_left_click') }}</kbd> {{ t('restore.act_divider_pan') }} · <kbd>{{ t('common.kbd_double_click') }}</kbd> {{ t('restore.act_fit_one_to_one') }} · <kbd>{{ t('common.kbd_space') }}</kbd> {{ t('restore.act_play_pause') }}</span>
                     </div>
                 </div>
             </div>
@@ -202,8 +213,8 @@
                 <div id="batchCurrentFile" class="sv2-batch-cur" style="display:none;"><i class="bi bi-file-earmark-play"></i> <span></span></div>
                 <div class="sv2-batch-stats">
                     <span id="batchProgressText">--</span>
-                    <span class="sv2-batch-ok">完成 <span id="batchCompleted">0</span></span>
-                    <span class="sv2-batch-fail">失败 <span id="batchFailed">0</span></span>
+                    <span class="sv2-batch-ok">{{ t('restore.batch_success') }} <span id="batchCompleted">0</span></span>
+                    <span class="sv2-batch-fail">{{ t('restore.batch_failed') }} <span id="batchFailed">0</span></span>
                     <span id="batchEta" class="sv2-batch-eta"></span>
                 </div>
             </div>
@@ -222,19 +233,19 @@
 
         <!-- 参数方案预设：保存/切换/删除整套参数 -->
         <div class="sv2-presets">
-            <select class="select sv2-preset-select" id="presetSelect" aria-label="参数方案预设">
-                <option value="">方案预设</option>
+            <select class="select sv2-preset-select" id="presetSelect" aria-label="{{ t('restore.preset_aria') }}">
+                <option value="">{{ t('restore.preset_placeholder') }}</option>
             </select>
-            <button type="button" class="sv2-tb-btn sv2-ico" id="btnPresetSave" title="将当前参数保存为方案"><i class="bi bi-plus-lg"></i></button>
-            <button type="button" class="sv2-tb-btn sv2-ico" id="btnPresetDelete" title="删除选中方案" disabled><i class="bi bi-trash"></i></button>
+            <button type="button" class="sv2-tb-btn sv2-ico" id="btnPresetSave" title="{{ t('restore.preset_save_tip') }}"><i class="bi bi-plus-lg"></i></button>
+            <button type="button" class="sv2-tb-btn sv2-ico" id="btnPresetDelete" title="{{ t('restore.preset_delete_tip') }}" disabled><i class="bi bi-trash"></i></button>
         </div>
         
         <!-- 默认设置按钮组 -->
         <div class="sv2-presets sv2-presets-defaults">
-            <button type="button" class="sv-btn sv-btn-secondary sv-btn-sm sv-w-100" id="btnSaveAsDefault" title="将当前所有参数保存为默认设置（下次打开页面自动加载）">
+            <button type="button" class="sv-btn sv-btn-secondary sv-btn-sm sv-w-100" id="btnSaveAsDefault" title="{{ t('restore.save_default_tip') }}">
                 <i class="bi bi-save"></i> 保存为默认设置
             </button>
-            <button type="button" class="sv-btn sv-btn-outline sv-btn-sm sv-w-100 sv-mt-2" id="btnResetToDefault" title="重置所有参数为系统默认值">
+            <button type="button" class="sv-btn sv-btn-outline sv-btn-sm sv-w-100 sv-mt-2" id="btnResetToDefault" title="{{ t('restore.reset_default_tip') }}">
                 <i class="bi bi-arrow-counterclockwise"></i> 重置为默认值
             </button>
         </div>
@@ -282,12 +293,12 @@
                 </span>
             </label>
             <select class="sv-param-select" id="outputFormat" name="output_format">
-                <option value="" selected>默认 (自动匹配输入格式)</option>
-                <option value="png">PNG (无损，保留透明)</option>
-                <option value="jpg">JPG (有损，文件小)</option>
-                <option value="webp">WebP (现代格式)</option>
-                <option value="bmp">BMP (无压缩)</option>
-                <option value="tiff">TIFF (无损专业)</option>
+                <option value="" selected>{{ t('restore.fmt_default') }}</option>
+                <option value="png">{{ t('restore.fmt_png') }}</option>
+                <option value="jpg">{{ t('restore.fmt_jpg') }}</option>
+                <option value="webp">{{ t('restore.fmt_webp') }}</option>
+                <option value="bmp">{{ t('restore.fmt_bmp') }}</option>
+                <option value="tiff">{{ t('restore.fmt_tiff') }}</option>
             </select>
         </div>
         <div class="sv-param-group">
@@ -317,17 +328,17 @@
         </button>
 
         <div class="sv-advanced-params" id="advParams">
-            <div class="sv-adv-intro">所有参数均可悬停 <i class="bi bi-info-circle"></i> 查看详细说明;带 <i class="bi bi-lock-fill"></i> 的为系统优化参数,点击锁图标解锁后可手动修改;其余隐藏参数(时域重叠、前置帧、噪声尺度、设备分配)由系统按显存自动优化,保持默认即可。</div>
+            <div class="sv-adv-intro">{{ t('restore.adv_intro') }}</div>
             <div class="sv-adv-section">
                 <div class="sv-adv-section-title">{{ t('video.node_dit') }}</div>
                 <input type="hidden" name="attention_mode" value="sdpa">
                 <div class="sv-param-group">
-                    <label class="sv-param-label" for="maxResolution">{{ t('restore.max_resolution') }} (0=∞) <span class="sv-param-help" data-tooltip="单张图片或单帧视频的最大边长限制(像素)。输入超过该值时模型会自动分块处理,防止大图 OOM。设为 0 表示不限制,由显存自动决定。显存紧张(如 12GB)时建议设 1024~1536。"><i class="bi bi-info-circle"></i></span></label>
+                    <label class="sv-param-label" for="maxResolution">{{ t('restore.max_resolution') }} (0=∞) <span class="sv-param-help" data-tooltip="{{ t('restore.tip_max_resolution') }}"<i class="bi bi-info-circle"></i></span></label>
                     <input type="number" class="sv-param-input" id="maxResolution" name="max_resolution" value="0" min="0">
                 </div>
                 <div class="sv-param-group">
                     <label class="sv-param-label" for="colorCorrection">{{ t('video.color_correction') }}
-                        <span class="sv-param-help" data-tooltip="修复完成后是否做色彩校正。LAB(推荐):在 LAB 色彩空间进行颜色匹配,尽量保留原图的色调、白平衡与饱和度;无:不做校正,直接输出模型原始色彩,色调可能与原图有偏差。"><i class="bi bi-info-circle"></i></span>
+                        <span class="sv-param-help" data-tooltip="{{ t('restore.tip_color_correction') }}"<i class="bi bi-info-circle"></i></span>
                     </label>
                     <select class="sv-param-select" id="colorCorrection" name="color_correction">
                         <option value="lab" selected>LAB</option>
@@ -335,13 +346,13 @@
                     </select>
                 </div>
                 <div class="sv-param-group">
-                    <label class="sv-param-label" for="batchSize">{{ t('video.batch_size') }} <span class="sv-param-help" data-tooltip="每次送入模型的图像块数量,取值必须为 4n+1(1、5、9、13…),这是 DiT 模型对批大小的硬性要求。批越大吞吐越高,但显存占用越大;遇到 OOM 时请调小。默认 5。"><i class="bi bi-info-circle"></i></span></label>
+                    <label class="sv-param-label" for="batchSize">{{ t('video.batch_size') }} <span class="sv-param-help" data-tooltip="{{ t('restore.tip_batch_size') }}"<i class="bi bi-info-circle"></i></span></label>
                     <input type="number" class="sv-param-input" id="batchSize" name="batch_size" value="5" min="1" step="4" data-rule-4n1>
                 </div>
                 <div class="sv-adv-locked-group">
                     <div class="sv-adv-locked-header">{{ t('restore.optimized_params') }}</div>
                     <div class="sv-param-group">
-                        <label class="sv-param-check" data-tooltip="启用后,模型权重会按需在显存与内存之间交换,可显著降低峰值显存占用,换取少量速度损失。显存小于模型体积时强烈建议保持开启。">
+                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_swap_io') }}"
                             <input type="checkbox" name="swap_io_components" checked disabled>
                             <input type="hidden" name="swap_io_components" value="true">
                             <span>{{ t('video.swap_io_components') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
@@ -354,35 +365,35 @@
             <div class="sv-adv-section">
                 <div class="sv-adv-section-title">{{ t('video.node_vae') }}</div>
                 <div class="sv-param-group">
-                    <label class="sv-param-label" for="encodeTileSize">{{ t('video.encode_tile_size') }} <span class="sv-param-help" data-tooltip="VAE 编码阶段的分块边长(像素)。输入会被切成该尺寸的块分别编码。块越小单次显存占用越低,但块间拼接可能出现接缝伪影。1024 是显存与质量的平衡点;OOM 时可降到 512。"><i class="bi bi-info-circle"></i></span></label>
+                    <label class="sv-param-label" for="encodeTileSize">{{ t('video.encode_tile_size') }} <span class="sv-param-help" data-tooltip="{{ t('restore.tip_encode_tile_size') }}"<i class="bi bi-info-circle"></i></span></label>
                     <input type="number" class="sv-param-input" id="encodeTileSize" name="encode_tile_size" value="1024" min="64">
                 </div>
                 <div class="sv-param-group">
-                    <label class="sv-param-label" for="encodeTileOverlap">{{ t('video.encode_tile_overlap') }} <span class="sv-param-help" data-tooltip="相邻编码块之间的重叠像素。重叠让块边界共享更多信息,减少接缝与条纹伪影。通常取 Tile 尺寸的一半(如 1024 对应 512)。设为 0 可省显存但可能出现接缝。"><i class="bi bi-info-circle"></i></span></label>
+                    <label class="sv-param-label" for="encodeTileOverlap">{{ t('video.encode_tile_overlap') }} <span class="sv-param-help" data-tooltip="{{ t('restore.tip_encode_tile_overlap') }}"<i class="bi bi-info-circle"></i></span></label>
                     <input type="number" class="sv-param-input" id="encodeTileOverlap" name="encode_tile_overlap" value="512" min="0">
                 </div>
                 <div class="sv-param-group">
-                    <label class="sv-param-label" for="decodeTileSize">{{ t('video.decode_tile_size') }} <span class="sv-param-help" data-tooltip="VAE 解码阶段的分块边长。规则与编码 Tile 相同:块越小越省显存,拼接伪影风险越高。默认 1024。"><i class="bi bi-info-circle"></i></span></label>
+                    <label class="sv-param-label" for="decodeTileSize">{{ t('video.decode_tile_size') }} <span class="sv-param-help" data-tooltip="{{ t('restore.tip_decode_tile_size') }}"<i class="bi bi-info-circle"></i></span></label>
                     <input type="number" class="sv-param-input" id="decodeTileSize" name="decode_tile_size" value="1024" min="64">
                 </div>
                 <div class="sv-param-group">
-                    <label class="sv-param-label" for="decodeTileOverlap">{{ t('video.decode_tile_overlap') }} <span class="sv-param-help" data-tooltip="相邻解码块之间的重叠像素,作用同编码重叠。默认取解码 Tile 的一半(512)。"><i class="bi bi-info-circle"></i></span></label>
+                    <label class="sv-param-label" for="decodeTileOverlap">{{ t('video.decode_tile_overlap') }} <span class="sv-param-help" data-tooltip="{{ t('restore.tip_decode_tile_overlap') }}"<i class="bi bi-info-circle"></i></span></label>
                     <input type="number" class="sv-param-input" id="decodeTileOverlap" name="decode_tile_overlap" value="512" min="0">
                 </div>
                 <div class="sv-adv-locked-group">
                     <div class="sv-adv-locked-header">{{ t('restore.optimized_params') }}</div>
                     <div class="sv-param-group sv-param-checks-row">
-                        <label class="sv-param-check" data-tooltip="开启分块编码:把大图切成小块再编码,避免单次显存占用过高。保持开启即可;仅在大分辨率且显存充裕时关闭可能略快。">
+                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_tiled_encode') }}"
                             <input type="checkbox" name="encode_tiled" checked disabled>
                             <input type="hidden" name="encode_tiled" value="true">
                             <span>{{ t('video.encode_tiled') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
                         </label>
-                        <label class="sv-param-check" data-tooltip="开启分块解码:解码同样分块进行,降低显存峰值。保持开启。">
+                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_tiled_decode') }}"
                             <input type="checkbox" name="decode_tiled" checked disabled>
                             <input type="hidden" name="decode_tiled" value="true">
                             <span>{{ t('video.decode_tiled') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
                         </label>
-                        <label class="sv-param-check" data-tooltip="调试用:输出时叠加显示分块边界,便于观察接缝位置与块大小是否合适。正常使用请关闭。">
+                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_tile_debug') }}"
                             <input type="checkbox" name="tile_debug" value="true" disabled>
                             <input type="hidden" name="tile_debug" value="false">
                             <span>{{ t('video.tile_debug') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
@@ -399,7 +410,7 @@
                 <div class="sv-adv-locked-group">
                     <div class="sv-adv-locked-header">{{ t('restore.optimized_params') }}</div>
                     <div class="sv-param-group">
-                        <label class="sv-param-check" data-tooltip="视频修复时各帧使用统一的批大小,避免显存随帧内容波动导致 OOM。对图片任务无影响。保持开启。">
+                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_uniform_batch') }}"
                             <input type="checkbox" name="uniform_batch_size" checked disabled>
                             <input type="hidden" name="uniform_batch_size" value="true">
                             <span>{{ t('video.uniform_batch_size') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
@@ -419,7 +430,7 @@
                     <input type="hidden" name="latent_noise_scale" value="0.0">
                 </div>
                 <div class="sv-param-group">
-                    <label class="sv-param-check" data-tooltip="调试模式:输出中间过程的调试信息与日志,用于排查问题。日常使用请关闭。">
+                    <label class="sv-param-check" data-tooltip="{{ t('restore.tip_debug_mode') }}"
                         <input type="checkbox" name="enable_debug" disabled>
                         <input type="hidden" name="enable_debug" value="false">
                         <span>{{ t('video.debug_mode') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
@@ -437,19 +448,19 @@
         <!-- VRAM 预检 & 参数推荐 -->
         <div class="sv-param-group sv-vram-recommend" id="vramRecommendBox">
             <button type="button" class="sv-btn sv-btn-outline sv-btn-sm sv-w-100" id="btnVramRecommend">
-                <i class="bi bi-speedometer2"></i> VRAM 预检 & 推荐参数
+                <i class="bi bi-speedometer2" aria-hidden="true"></i> {{ t('system.vram_tool_title') }}
             </button>
             <div id="vramRecommendResult" style="display:none;" class="sv-mt-2">
                 <div class="sv-vram-rec-item">
-                    <span class="sv-text-xs sv-text-muted">推荐精度</span>
+                    <span class="sv-text-xs sv-text-muted">{{ t('restore.rec_precision') }}</span>
                     <span class="sv-badge sv-badge-completed sv-text-xs" id="restoreRecPrecision">--</span>
                 </div>
                 <div class="sv-vram-rec-item">
-                    <span class="sv-text-xs sv-text-muted">估算显存</span>
+                    <span class="sv-text-xs sv-text-muted">{{ t('restore.rec_estimated') }}</span>
                     <span class="sv-text-xs" id="restoreRecEstimated">--</span>
                 </div>
                 <div class="sv-vram-rec-item">
-                    <span class="sv-text-xs sv-text-muted">OOM 风险</span>
+                    <span class="sv-text-xs sv-text-muted">{{ t('restore.rec_risk') }}</span>
                     <span class="sv-badge sv-text-xs" id="restoreRecRisk">--</span>
                 </div>
                 <button type="button" class="sv-btn sv-btn-primary sv-btn-xs sv-w-100 sv-mt-1" id="btnApplyRecommend">
@@ -471,12 +482,15 @@
             </button>
         </div>
     </aside>
+    <!-- 参数抽屉遮罩（≤1100px 生效，点击关闭；桌面端 CSS 隐藏） -->
+    <button type="button" class="sv2-sb-backdrop" id="paramsBackdrop"
+            aria-label="{{ t('common.close') }}" tabindex="-1"></button>
     </div>
 </div>
 
 <!-- 浮动帮助 -->
 <div class="sv-float-help" id="floatHelp">
-    <button class="sv-float-help__toggle" id="helpToggle" type="button" aria-label="打开帮助" aria-expanded="false">?</button>
+    <button class="sv-float-help__toggle" id="helpToggle" type="button" aria-label="{{ t('restore.open_help') }}" aria-expanded="false">?</button>
     <div class="sv-float-help__panel">
         <div class="sv-float-help__panel-header">
             <span class="sv-float-help__panel-title">{{ t('restore.help_title', default='快速帮助') }}</span>
@@ -529,7 +543,7 @@
 </div>
 
 
-<button type="button" class="sv2-sb-restore" id="btnRestoreSidebar" style="display:none;" title="展开参数面板"><i class="bi bi-sliders"></i> 参数</button>
+<button type="button" class="sv2-sb-restore" id="btnRestoreSidebar" style="display:none;" title="{{ t('restore.expand_params_tip') }}"><i class="bi bi-sliders" aria-hidden="true"></i> {{ t('restore.params_short') }}</button>
 {% endblock %}
 
 {% block scripts %}
@@ -1873,7 +1887,8 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('VRAM recommend failed:', err);
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-speedometer2"></i> VRAM 预检 & 推荐参数';
+            btn.innerHTML = '<i class="bi bi-speedometer2"></i> '
+                + (I['system.vram_tool_title'] || 'VRAM 预检 & 参数推荐');
         }
     });
 
@@ -2386,11 +2401,20 @@ document.addEventListener('DOMContentLoaded', () => {
         history.replaceState(null, '', '#' + mode);
     }
 
-    // 参数面板折叠（桌面端）：折叠后保留右侧「参数」恢复入口，操作可逆
+    // 参数面板：桌面为内联侧栏，≤1100px 为右侧覆盖式抽屉。
+    // 两种形态共用同一套状态类（sv2-sb-collapsed）与同一个恢复入口（#btnRestoreSidebar），
+    // 不新建第二套开关。
     var btnToggleParams = document.getElementById('btnToggleParams');
     var paramsSidebarEl = document.getElementById('paramsSidebar');
     var sv2BodyEl = document.getElementById('sv2Body');
     var sbRestoreBtn = document.getElementById('btnRestoreSidebar');
+    var paramsBackdrop = document.getElementById('paramsBackdrop');
+    var drawerQuery = window.matchMedia('(max-width: 1100px)');
+
+    function isDrawerMode() {
+        return drawerQuery.matches;
+    }
+
     function setParamsCollapsed(collapsed) {
         if (sv2BodyEl) sv2BodyEl.classList.toggle('sv2-sb-collapsed', collapsed);
         if (paramsSidebarEl) paramsSidebarEl.classList.toggle('collapsed', collapsed);
@@ -2398,10 +2422,26 @@ document.addEventListener('DOMContentLoaded', () => {
         var label = collapsed
             ? (I['restore.expand_params'] || 'Expand params')
             : (I['restore.collapse_params'] || 'Collapse params');
-        if (btnToggleParams) { btnToggleParams.setAttribute('aria-label', label); btnToggleParams.setAttribute('title', label); }
+        if (btnToggleParams) {
+            btnToggleParams.setAttribute('aria-label', label);
+            btnToggleParams.setAttribute('title', label);
+            btnToggleParams.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        }
         var icon = document.getElementById('paramCollapseIcon');
         if (icon) icon.className = collapsed ? 'bi bi-chevron-double-right' : 'bi bi-chevron-double-left';
+
+        // 抽屉形态：遮罩跟随显隐，收起时侧栏移出可访问性树并把焦点交还 FAB
+        if (paramsBackdrop) {
+            paramsBackdrop.classList.toggle('visible', isDrawerMode() && !collapsed);
+        }
+        if (paramsSidebarEl) {
+            paramsSidebarEl.setAttribute('aria-hidden', (isDrawerMode() && collapsed) ? 'true' : 'false');
+        }
+        if (isDrawerMode() && collapsed && sbRestoreBtn && document.activeElement === paramsSidebarEl) {
+            sbRestoreBtn.focus();
+        }
     }
+
     if (btnToggleParams && paramsSidebarEl) {
         btnToggleParams.addEventListener('click', function () {
             setParamsCollapsed(!(sv2BodyEl ? sv2BodyEl.classList.contains('sv2-sb-collapsed') : paramsSidebarEl.classList.contains('collapsed')));
@@ -2409,6 +2449,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (sbRestoreBtn) {
         sbRestoreBtn.addEventListener('click', function () { setParamsCollapsed(false); });
+    }
+    if (paramsBackdrop) {
+        paramsBackdrop.addEventListener('click', function () { setParamsCollapsed(true); });
+    }
+    // Esc 关闭抽屉（仅抽屉形态且当前展开时拦截，否则交给既有的模态/帮助面板处理链）
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape' || !isDrawerMode()) return;
+        if (!sv2BodyEl || sv2BodyEl.classList.contains('sv2-sb-collapsed')) return;
+        setParamsCollapsed(true);
+        e.stopPropagation();
+    });
+    // 初始形态：窄屏默认收起，避免参数面板盖死画布；跨断点时重设
+    function applyViewportDefault() {
+        setParamsCollapsed(isDrawerMode());
+    }
+    applyViewportDefault();
+    if (typeof drawerQuery.addEventListener === 'function') {
+        drawerQuery.addEventListener('change', applyViewportDefault);
+    } else if (typeof drawerQuery.addListener === 'function') {
+        drawerQuery.addListener(applyViewportDefault); // Safari < 14 兼容
     }
 
     // 画布工具条：一体化操作（对比模式切换 / 清除 / 替换 / 下载兜底 / 文件名显示）
@@ -2588,6 +2648,82 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 从 URL hash 恢复模式，默认 single
     switchMode(location.hash === '#batch' ? 'batch' : 'single');
+
+    // ===== 画布空态的「最近任务」条 =====
+    // 全部复用既有能力：首页同一个 /api/system/history 接口、历史记录页同一套卡片视觉、
+    // 同闭包里已有的 _applyRestoreFormValues。此前后端每条记录都存了 parameters，
+    // 但前端从来没有「把上次参数载回工作台」的入口，这里补上这个入口而非新造一套。
+    (function initCanvasRecentTasks() {
+        const wrap = document.getElementById('canvasRecentTasks');
+        const grid = document.getElementById('canvasRecentGrid');
+        if (!wrap || !grid) return;
+
+        /** 解析历史记录里的 parameters（可能是 JSON 字符串，也可能已是对象） */
+        function parseRecordParams(raw) {
+            if (!raw) return null;
+            if (typeof raw === 'object') return raw;
+            try {
+                const parsed = JSON.parse(raw);
+                return parsed && typeof parsed === 'object' ? parsed : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function cardHtml(r) {
+            const isImage = r.task_type !== 'video';
+            const canApply = !!parseRecordParams(r.parameters);
+            const thumb = (isImage && r.status === 'completed' && r.output_file)
+                ? `<img src="/api/system/history/${encodeURIComponent(r.id)}/download" alt="" loading="lazy">`
+                : `<i class="bi ${isImage ? 'bi-image' : 'bi-camera-video'}" aria-hidden="true"></i>`;
+            const name = r.input_file ? SeedVR2.escapeHtml(String(r.input_file).split(/[\\/]/).pop()) : '--';
+            const statusText = (I['status.' + r.status] || r.status);
+            return `<button type="button" class="sv2-recent-card sv-history-card" data-id="${r.id}"
+                        ${canApply ? '' : 'disabled'}
+                        title="${canApply ? (I['restore.recent_params_apply'] || '载入这套参数') : (I['restore.recent_params_none'] || '该记录没有可载入的参数')}">
+                        <span class="sv-history-card-thumb sv2-recent-thumb">${thumb}</span>
+                        <span class="sv2-recent-body">
+                            <span class="sv2-recent-name" title="${name}">${name}</span>
+                            <span class="sv2-recent-meta">
+                                <span class="sv-badge sv-badge-${r.status === 'completed' ? 'completed' : (r.status === 'failed' ? 'failed' : 'pending')}">${SeedVR2.escapeHtml(statusText)}</span>
+                                <span class="sv2-recent-time">${SeedVR2.formatTimestamp(r.created_at)}</span>
+                            </span>
+                        </span>
+                    </button>`;
+        }
+
+        /** 首次加载时按 id 缓存记录，点击载入直接本地取（不再多打一次列表请求） */
+        const recordsById = new Map();
+
+        grid.addEventListener('click', (e) => {
+            const card = e.target.closest('.sv2-recent-card');
+            if (!card || card.disabled) return;
+            const rec = recordsById.get(card.dataset.id || '');
+            const values = rec && parseRecordParams(rec.parameters);
+            if (!values) {
+                SeedVR2.toast(I['restore.recent_params_none'] || '该记录没有可载入的参数', 'warning');
+                return;
+            }
+            _applyRestoreFormValues(values);
+            SeedVR2.toast(I['restore.recent_params_applied'] || '已载入该次修复的参数', 'success');
+        });
+
+        (async function load() {
+            try {
+                const data = await SeedVR2.api.get('/api/system/history?page=1&page_size=4');
+                const records = (data && data.records) || [];
+                if (!records.length) return;   // 零历史：整块保持 hidden，落区仍是唯一焦点
+                records.slice(0, 4).forEach((r) => recordsById.set(String(r.id), r));
+                grid.innerHTML = records.slice(0, 4).map(cardHtml).join('');
+                // 产物被清理时缩略图 404 会显示破图，降级为类型图标
+                SeedVR2.guardBrokenThumbs(grid, 'bi-image');
+                wrap.hidden = false;
+            } catch (e) {
+                // 服务未就绪或历史库不可用：静默保持隐藏，不给空态添噪
+                console.debug('画布最近任务加载跳过:', e);
+            }
+        })();
+    })();
 
     // ===== 浮动帮助交互（Canvas v3.1） =====
     (function() {

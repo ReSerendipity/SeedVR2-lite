@@ -114,6 +114,45 @@ def _render_template(request: Request, template_name: str, context: dict | None 
     return HTMLResponse(content=html)
 
 
+# 关于页显存表要展示的精度顺序（与修复页模型下拉保持一致）
+_VRAM_PRECISIONS: tuple[tuple[str, str], ...] = (
+    ("fp16", "FP16"),
+    ("fp8", "FP8"),
+    ("int8_convrot", "INT8-ConvRot"),
+    ("mxfp8", "MXFP8"),
+    ("nvfp4", "NVFP4"),
+)
+
+
+def _build_vram_matrix() -> list[dict[str, object]]:
+    """从 config.yaml 的模型条目生成关于页显存需求表的数据。
+
+    此前该表在模板里硬编码 FP16/FP8 两列，而项目已支持 5 种精度，
+    且 config.yaml 每个模型都有 min_vram_<precision>_gb 权威值 ——
+    再抄一份到模板里必然漂移，故改为读配置渲染。
+
+    Returns:
+        [{"label": "SeedVR2-3B", "vram": {"fp16": 16, ...}}, ...]；
+        配置不可用时返回空列表，模板据此隐藏整张表。
+    """
+    try:
+        from app.integrated_app.config import get_app_config
+
+        cfg = get_app_config()
+        models = cfg.model.models
+    except Exception:  # pragma: no cover - 配置缺失时页面仍应可渲染
+        logger.debug("关于页显存表读取配置失败，降级为空表", exc_info=True)
+        return []
+
+    rows: list[dict[str, object]] = []
+    for key, entry in models.items():
+        vram: dict[str, object] = {}
+        for precision, _ in _VRAM_PRECISIONS:
+            vram[precision] = getattr(entry, f"min_vram_{precision}_gb", None)
+        rows.append({"key": key, "label": f"SeedVR2-{key.upper()}".replace("_", "-"), "vram": vram})
+    return rows
+
+
 def render_page(request: Request, template_name: str, active_page: str = "", **ctx) -> HTMLResponse:
     """渲染页面模板，自动注入通用上下文变量。
 
@@ -211,7 +250,13 @@ def register_page_routes(app: FastAPI):
         Returns:
             渲染后的 settings.html 页面。
         """
-        return render_page(request, "settings.html", active_page="settings")
+        return render_page(
+            request,
+            "settings.html",
+            active_page="settings",
+            vram_matrix=_build_vram_matrix(),
+            vram_precisions=_VRAM_PRECISIONS,
+        )
 
     @app.get("/history", response_class=HTMLResponse)
     async def history_page(request: Request):

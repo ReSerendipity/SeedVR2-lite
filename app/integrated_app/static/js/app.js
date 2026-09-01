@@ -3486,6 +3486,33 @@ const SeedVR2 = (() => {
      * @param {string} str - 要转义的字符串
      * @returns {string} 转义后的HTML安全字符串
      */
+    /**
+     * 缩略图降级：产物文件被清理后 <img> 会 404 并显示浏览器破图占位符。
+     * 对历史卡片与修复页最近任务条同型适用，故收敛到一处。
+     * error 事件不冒泡，必须在插入 DOM 后逐个挂载；同时补判 already-failed
+     * （complete 且 naturalWidth===0 表示加载已结束且失败）。
+     * @param {ParentNode} root 包含 .sv-history-card-thumb img 的容器
+     * @param {string} [fallbackIcon] 降级后显示的 Bootstrap Icons 类名
+     * @returns {void}
+     */
+    function guardBrokenThumbs(root, fallbackIcon) {
+        if (!root || typeof root.querySelectorAll !== "function") return;
+        const icon = fallbackIcon || "bi-image";
+        /** @param {HTMLImageElement} img */
+        const degrade = (img) => {
+            const holder = img.closest(".sv-history-card-thumb");
+            if (!holder) return;
+            holder.innerHTML = `<i class="bi ${icon}" aria-hidden="true"></i>`;
+            holder.classList.add("is-fallback");
+        };
+        root.querySelectorAll(".sv-history-card-thumb img").forEach((node) => {
+            const img = /** @type {HTMLImageElement} */ (node);
+            img.addEventListener("error", () => degrade(img));
+            if (img.complete && img.naturalWidth === 0) degrade(img);
+        });
+    }
+
+
     function escapeHtml(str) {
         const div = document.createElement('div');
         div.textContent = str;
@@ -3706,6 +3733,8 @@ const SeedVR2 = (() => {
         initTheme,
         /** @type {Function} 应用主题 */
         applyTheme,
+        /** @type {Function} 缩略图降级（产物缺失时回退类型图标） */
+        guardBrokenThumbs,
         /** @type {Function} HTML转义 */
         escapeHtml,
         /** @type {Function} 初始化表单验证 */

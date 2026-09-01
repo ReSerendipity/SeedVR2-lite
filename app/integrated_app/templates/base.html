@@ -49,7 +49,7 @@
     <link rel="stylesheet" href="/static/fonts/fonts.css">
 
     <!-- 自定义样-->
-    <link rel="stylesheet" href="/static/css/style.css?v=3.12.4">
+    <link rel="stylesheet" href="/static/css/style.css?v=3.15.1">
 
     {% block head %}{% endblock %}
 </head>
@@ -106,7 +106,7 @@
         <div class="sv-navbar-actions">
             <!-- 标题字体切换下拉 -->
             <div class="sv-font-dropdown" id="fontDropdown">
-                <button class="sv-nav-icon-btn" id="btnFontSwitch" aria-label="切换标题字体" title="切换标题字体" aria-haspopup="true" aria-expanded="false">
+                <button class="sv-nav-icon-btn" id="btnFontSwitch" aria-label="{{ t('common.switch_font') }}" title="{{ t('common.switch_font') }}" aria-haspopup="true" aria-expanded="false">
                     <span style="font-weight:700;font-style:italic;font-size:15px">Aa</span>
                 </button>
                 <div class="sv-font-menu" id="fontMenu" role="menu"></div>

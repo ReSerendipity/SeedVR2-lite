@@ -28,8 +28,21 @@ PAGES = ["/", "/restore", "/history", "/system-status", "/settings"]
 
 # 模板里 t('namespace.key') 形式的调用
 T_CALL = re.compile(r"""\bt\(\s*['"]([A-Za-z0-9_.\-]+)['"]""")
-# JS 里 I['namespace.key'] / I["key"] 形式的取词
+# JS 里 I['namespace.key'] / I["key"] 形式的取词。
+# 负向预查排除 I['prefix.' + expr] 这类动态拼接取词：字面量前缀无法静态校验，
+# 由运行时的 || 兜底保证不崩。不排掉就会把 'status.' 当成键误报。
 JS_LOOKUP = re.compile(r"""\bI\[\s*['"]([A-Za-z0-9_.\-]+)['"]""")
+
+
+def _static_lookup_keys(source: str) -> set[str]:
+    r"""只保留静态字面量取词，剔除动态拼接的字面量前缀。
+
+    I['status.' + r.status] 这类写法会被正则抓出 'status.'，而合法的命名空间键
+    永远不会以 '.' 结尾，据此判定为动态取词并跳过（由运行时的 || 兜底保证不崩）。
+    注意别改用 \s*(?!\+) 排除：\s* 可回溯，匹配零个空格即可绕过 lookahead。"""
+    return {k for k in JS_LOOKUP.findall(source) if not k.endswith(".")}
+
+
 # 渲染结果中的裸键（命名空间.蛇形名），用于扫描可见文本
 BARE_KEY = re.compile(r"\b[a-z]{3,}(?:_[a-z0-9]+){0,2}\.[a-z][a-z0-9_]{2,}\b")
 # 可见文本里合法出现的花括号点号串（文件名/域名等），按需白名单
@@ -39,6 +52,7 @@ TEXT_ALLOWLIST = {
     "index.html",
     "style.css",
     "start.bat",
+    "install.bat",  # 关于页快速开始正当提及安装脚本文件名，非 i18n 泄漏
     "package.json",
     "python.exe",
     "requirements.txt",
@@ -110,7 +124,7 @@ def test_js_referenced_keys_are_injected(test_app) -> None:
 
     used: set[str] = set()
     for src in list(TEMPLATES_DIR.glob("*.html")) + list((TEMPLATES_DIR.parent / "static/js").glob("*.js")):
-        used |= set(JS_LOOKUP.findall(src.read_text(encoding="utf-8")))
+        used |= _static_lookup_keys(src.read_text(encoding="utf-8"))
 
     missing = sorted(k for k in used if k not in injected)
     assert not missing, f"JS 取词但 __I18N__ 未提供的键: {missing}"
@@ -126,6 +140,25 @@ def test_rendered_pages_have_no_bare_key_in_visible_text(test_app, page: str) ->
     text = re.sub(r"<[^>]+>", " ", body)
     leaks = sorted({m.group(0) for m in BARE_KEY.finditer(text)} - TEXT_ALLOWLIST)
     assert not leaks, f"{page} 可见文本泄漏裸键: {leaks}"
+
+
+def test_templates_have_balanced_attribute_quotes() -> None:
+    """模板每行的双引号必须成对——未闭合的属性值会吞掉后续标签。
+
+    浏览器解析器遇到 `title="系统状态>` 这类漏引号时不会报错，而是一路吞到
+    下一个 `"` 才闭合，导致中间的标签（图标 <i>/<svg> 等）被当成属性消失，
+    JS 的 querySelector 也永远拿不到它。控制台零输出，只能靠静态检查发现。
+    """
+    offenders: list[str] = []
+    for tpl in sorted(TEMPLATES_DIR.glob("*.html")):
+        for lineno, line in enumerate(tpl.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            # 注释行与 Jinja 控制行不参与属性解析，跳过避免误报
+            if not stripped or stripped.startswith("<!--") or stripped.startswith("{%"):
+                continue
+            if stripped.count('"') % 2 == 1:
+                offenders.append(f"{tpl.name}:{lineno}: {stripped[:100]}")
+    assert not offenders, "属性引号未闭合（会静默吞掉后续标签）:\n" + "\n".join(offenders)
 
 
 def test_page_version_follows_pyproject(test_app) -> None:

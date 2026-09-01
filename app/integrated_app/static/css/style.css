@@ -8919,7 +8919,10 @@ input[type="number"].sv-form-control::-webkit-outer-spin-button {
     z-index: 45;
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
+    /* 44px 触控下限：原先 12px 文字 + 11px 上下内边距实测只有 43px */
+    min-height: 44px;
     padding: 11px 9px 11px 12px;
     border: 0;
     border-radius: 12px 0 0 12px;
@@ -9413,14 +9416,19 @@ a,
        会造成内容溢出（uiux-compatibility overflow 检查报出），且可见区小于触控区 */
     width: 44px;
     height: 44px;
-    border: 1px solid var(--sv-border);
+    /* 用 inset 环代替 border：border 会把内容盒压到 42px，
+       而内部 toggle 是 44px 触控区，实测造成 2px 溢出被响应式门禁拦下 */
+    border: none;
     background: var(--sv-bg-glass-strong);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+    box-shadow:
+        inset 0 0 0 1px var(--sv-border),
+        0 2px 10px rgba(0, 0, 0, 0.28);
     opacity: 0.9;
 }
 .sv-sys-widget.collapsed:hover {
-    border-color: var(--sv-border-hover);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.36);
+    box-shadow:
+        inset 0 0 0 1px var(--sv-border-hover),
+        0 4px 16px rgba(0, 0, 0, 0.36);
 }
 .sv-sys-widget.collapsed:hover .sv-sys-widget-toggle {
     opacity: 0.85;
@@ -9485,8 +9493,10 @@ a,
 }
 
 /* ③ 修复工作台空态：落区放大到接近整块画布，舞台加极淡中心提亮，
-      不再是「巨大黑洞里浮着一块小虚线框」 */
-.sv2-stage {
+      不再是「巨大黑洞里浮着一块小虚线框」
+      ⚠️ 选择器必须写成 .sv2-stage.sv-mode-tab-pane (0,2,0)：8687 行那条复合规则
+         已声明 background / min-height:0，单类 .sv2-stage (0,1,0) 会被它整条吃掉 */
+.sv2-stage.sv-mode-tab-pane {
     background:
         radial-gradient(
             ellipse 62% 52% at 50% 46%,
@@ -9582,4 +9592,301 @@ a,
 .sv-toast-container,
 .sv-toast-container * {
     pointer-events: none !important;
+}
+
+/* ============================================================
+   UI 精修 Stage D（2026-09-01）：sv2 工作台响应式根治
+
+   根因：既有 @media 块（3653 / 3681 行）针对的是早已废弃的
+   .sv-restore-workspace / .sv-param-sidebar 类，而 v2 工作台用的是
+   .sv2-workbench / .sv2-body / .sv2-sidebar / .sv2-toolbar —— 整个 sv2
+   层从未有过一条响应式规则。因此：
+     · 平板 768：324px 固定侧栏 + 不换行的工具条 → 工具条压住「参数配置」标题
+     · 移动 375：工具条横向溢出被裁、模式胶囊压住页面标题、侧栏盖死画布且关不掉
+     · 工作台 height:calc(100vh-…) + overflow:hidden → 矮视口下画布被压成一条
+   ============================================================ */
+
+/* —— 平板 + 移动（≤1100px）—— */
+@media (max-width: 1100px) {
+    /* 工作台不再锁死视口高度，允许页面自然滚动 */
+    .sv2-workbench {
+        height: auto;
+        min-height: calc(100vh - var(--sv-navbar-height) - 80px);
+        overflow: visible;
+    }
+
+    /* 页头：标题与模式分段上下堆叠，模式切换占满整行（两个等宽按钮） */
+    .sv2-header {
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 12px;
+        padding-bottom: 12px;
+    }
+    .sv2-title-wrap { flex: 1 1 100%; }
+    .sv2-mode-seg {
+        flex: 1 1 100%;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 3px;
+    }
+    .sv2-mode-seg .sv-mode-tab { justify-content: center; }
+
+    /* 主体：单列，侧栏脱离文档流变成覆盖式抽屉 */
+    .sv2-body {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .sv2-main { padding-right: 0; }
+
+    .sv2-sidebar {
+        position: fixed;
+        top: var(--sv-navbar-height);
+        right: 0;
+        bottom: 0;
+        z-index: 210; /* 必须压过 .sv-float-help 的 200，否则「?」按钮浮在抽屉之上 */
+        width: min(360px, 88vw);
+        border-left: 1px solid var(--sv-border);
+        box-shadow: -12px 0 40px rgba(0, 0, 0, 0.38);
+        transform: translateX(0);
+        transition: transform 0.26s var(--sv-easing-standard),
+                    opacity 0.22s var(--sv-easing-standard),
+                    visibility 0s;
+    }
+    /* 抽屉形态仍复用桌面那套 sv2-sb-collapsed 语义（不新建第二套开关），
+       但桌面用 display:none 收起，抽屉必须保留元素才能播过渡，故覆盖回 flex。
+       ⚠️ 收起不能用 transform:translateX(100%)：fixed 元素被推出视口后，其盒子
+       仍计入文档可滚动溢出，实测让整页出现横向滚动（tablet scrollWidth=1488 /
+       mobile=702）。故改为淡出 + visibility 隐藏 + 16px 微位移。 */
+    .sv2-body.sv2-sb-collapsed .sv2-sidebar {
+        display: flex;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateX(16px);
+        box-shadow: none;
+        pointer-events: none;
+        transition: transform 0.26s var(--sv-easing-standard),
+                    opacity 0.22s var(--sv-easing-standard),
+                    visibility 0s linear 0.22s;
+    }
+
+    /* 抽屉遮罩：点击关闭；桌面端不显示 */
+    .sv2-sb-backdrop {
+        display: none;
+        position: fixed;
+        inset: var(--sv-navbar-height) 0 0 0;
+        z-index: 205; /* 同样要盖住 200 层的浮动帮助 */
+        background: rgba(12, 11, 10, 0.46);
+        backdrop-filter: blur(1.5px);
+        -webkit-backdrop-filter: blur(1.5px);
+        border: none;
+        padding: 0;
+        cursor: pointer;
+    }
+    .sv2-sb-backdrop.visible { display: block; }
+
+    /* 关闭态的恢复 FAB 提高层级，保证在遮罩之上可点 */
+    .sv2-sb-restore { z-index: 62; }
+
+    /* 工具条：允许换行，不再横向溢出被裁 */
+    .sv2-toolbar {
+        flex-wrap: wrap;
+        row-gap: 8px;
+        min-height: 0;
+    }
+    .sv2-toolbar .sv2-flex { display: none; }
+    .sv2-tb-group { flex-wrap: wrap; row-gap: 6px; }
+    .sv2-tb-sep { display: none; }
+
+    /* 批量路径工具条同样允许换行 */
+    .sv2-batch-toolbar { flex-wrap: wrap; row-gap: 8px; }
+    .sv2-batch-toolbar .sv-batch-input { flex: 1 1 100%; }
+
+    /* 画布给足最小高度，避免矮视口下被压成一条 */
+    .sv2-stage.sv-mode-tab-pane { min-height: 56vh; }
+    .sv2-batch-pane.sv-mode-tab-pane { min-height: 46vh; }
+
+    /* 浮动帮助按钮让位给右侧 FAB，避免两个圆钮叠在一起；
+       按钮移到左侧后，面板必须改成左对齐展开（基类是 right:0 + 300px 宽，
+       否则向左伸到 -240 造成横向溢出） */
+    .sv-float-help { right: auto; left: 16px; }
+    .sv-float-help__panel { right: auto; left: 0; }
+}
+
+/* —— 移动（≤768px）—— */
+@media (max-width: 768px) {
+    .sv2-workbench { min-height: calc(100vh - var(--sv-navbar-height) - 40px); }
+    .sv2-title { font-size: 20px; }
+    .sv2-sidebar { width: 100%; }
+    .sv2-stage.sv-mode-tab-pane { min-height: 52vh; }
+    .sv2-pane { padding: 16px; }
+    .sv2-stage .sv-dropzone {
+        max-width: 100%;
+        min-height: 240px;
+        padding: 28px 18px;
+    }
+    .sv2-toolbar { padding: 8px 10px; gap: 8px; }
+    /* 手机上工具条改单行横向滚动：≤1100px 的换行策略在这里会占 4 行 216px，
+       把画布整个挤到下方（且空态下这些按钮全是禁用态） */
+    .sv2-toolbar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+        -webkit-overflow-scrolling: touch;
+    }
+    .sv2-toolbar::-webkit-scrollbar { display: none; }
+    .sv2-toolbar .sv2-tb-group { flex: none; flex-wrap: nowrap; }
+    .sv2-toolbar .sv2-badge {
+        position: sticky;
+        left: 0;
+        z-index: 1;
+        flex: none;
+        background: var(--sv-surface-2);
+    }
+    .sv2-badge { font-size: 11px; }
+    /* 查看器操作提示在窄屏换行会盖住图，改为收起 */
+    .sv2-hint { display: none; }
+}
+
+/* ============================================================
+   UI 精修 Stage E（2026-09-01）：画布空态「最近任务」条
+
+   空态画布此前是「巨大深色空白里浮着一块落区」，下方整片无信息。
+   补一条最近任务：复用首页同一个 /api/system/history 接口、
+   历史记录页同一套 sv-history-card 视觉语言，点击把该次修复的参数
+   载回侧栏（后端每条记录都存了 parameters，但前端一直没有载回入口）。
+   零历史用户看不到这一块，落区仍是唯一焦点。
+   ============================================================ */
+
+.sv2-guide-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sv-space-4);
+    width: 100%;
+    max-width: min(920px, 94%);
+}
+/* 落区在纵向容器里改为占满容器宽，不再各自算一遍百分比 */
+.sv2-guide-inner .sv-dropzone {
+    width: 100%;
+    max-width: none;
+}
+/* 空态内容变多后允许纵向滚动，避免矮视口下最近任务被裁掉 */
+.sv2-pane#workflowGuide { overflow-y: auto; }
+
+.sv2-recent {
+    border-top: 1px solid var(--sv-border-light);
+    padding-top: var(--sv-space-4);
+}
+.sv2-recent-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sv-space-3);
+    margin-bottom: var(--sv-space-3);
+}
+.sv2-recent-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--sv-text-muted);
+}
+.sv2-recent-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--sv-text-secondary);
+    text-decoration: none;
+    transition: color var(--sv-transition-fast);
+}
+.sv2-recent-all:hover { color: var(--sv-primary); }
+
+.sv2-recent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: var(--sv-space-3);
+}
+
+/* 卡片：外层是 <button>（可键盘操作），故先清掉浏览器按钮外观 */
+.sv2-recent-card {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    text-align: left;
+    font-family: inherit;
+    color: inherit;
+    background: var(--sv-surface-1);
+    border: 1px solid var(--sv-border);
+    border-radius: var(--sv-radius-lg);
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color var(--sv-transition-fast),
+                box-shadow var(--sv-transition-fast),
+                transform var(--sv-transition-fast);
+}
+.sv2-recent-card:hover:not(:disabled) {
+    border-color: var(--sv-primary);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
+    transform: translateY(-1px);
+}
+.sv2-recent-card:focus-visible {
+    outline: 2px solid var(--sv-primary);
+    outline-offset: 2px;
+}
+.sv2-recent-card:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+.sv2-recent-thumb {
+    height: 76px;
+    flex: none;
+}
+.sv2-recent-body {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 9px 11px 11px;
+    min-width: 0;
+}
+.sv2-recent-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--sv-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.sv2-recent-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.sv2-recent-time {
+    font-size: 10.5px;
+    color: var(--sv-text-muted);
+    font-variant-numeric: tabular-nums;
+}
+@media (max-width: 768px) {
+    .sv2-recent-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+    .sv2-recent-thumb { height: 64px; }
+}
+
+/* ============================================================
+   UI 精修 Stage G（2026-09-01）：关于页显存表 5 列后的窄屏处理
+   表格由 3 列扩到 6 列（模型 + 5 精度），窄屏下必须可横向滚动，
+   否则会撑破分栏并把文字挤成竖排。
+   ============================================================ */
+.sv-about-table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+}
+.sv-about-table-scroll .sv-about-table {
+    min-width: 520px;
+}
+.sv-about-table th {
+    white-space: nowrap;
 }
