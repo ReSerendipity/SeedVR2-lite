@@ -9354,9 +9354,10 @@ a,
 }
 
 /* ③ 历史记录卡片视图：固定 4 列在记录少时右侧整列空白、
-      单卡被拉到 ~450px 过宽；改为按宽度自动填充、卡宽稳定 */
+      单卡被拉到 ~450px 过宽；改为按宽度自动填充、卡宽稳定。
+      下限取 256px：240px 在 1920 宽下会排到 7 列，文件名被压到只剩十几字符 */
 .sv-history-cards {
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(256px, 1fr));
 }
 /* 空态必须横跨全部轨道，否则会被塞进第一个 240px 轨道、贴左显示 */
 .sv-history-cards > .sv-empty-state {
