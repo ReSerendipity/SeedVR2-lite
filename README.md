@@ -382,6 +382,8 @@ SeedVR2/
 ├── website/                    # VitePress 文档站源码
 ├── demo/                       # GitHub Pages 在线模拟演示
 ├── tests/                      # 测试套件（pytest + Playwright）
+├── launcher/                   # 便携启动器（环境检测 / torch 离线安装 / smoke）
+├── perf/                       # 性能基准（benchmark / flash attention / 监控）
 ├── scripts/                    # 辅助脚本（模型下载 / 备份等）
 ├── start.bat                   # Windows 启动脚本
 ├── config.yaml                 # 应用配置文件
