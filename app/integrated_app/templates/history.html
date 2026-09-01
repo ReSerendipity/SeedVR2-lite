@@ -259,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 };
                 const s = statusMap[r.status] || { badge: 'sv-badge-secondary', text: SeedVR2.escapeHtml(r.status) };
                 const typeIcon = r.task_type === 'video' ? 'bi-play-circle' : 'bi-image';
-                const fileName = r.input_file ? SeedVR2.escapeHtml(r.input_file.split(/[\\/]/).pop()) : '--';
+                const fileName = SeedVR2.escapeHtml(SeedVR2.displayFileName(r));
                 const procTime = r.processing_time > 0 ? `${r.processing_time.toFixed(1)}s` : '--';
                 const safeId = SeedVR2.escapeHtml(String(r.id));
                 const safeOutput = SeedVR2.escapeHtml(r.output_file || '');
@@ -283,7 +283,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     <tr data-record-id="${safeId}" data-output="${safeOutput}" class="sv-history-row">
                         <td>${safeId}</td>
                         <td><i class="bi ${typeIcon} sv-mr-1"></i>${safeTaskType === 'video' ? I["history.video"] : I["history.image"]}</td>
-                        <td title="${safeInputFile}">${fileName}</td>
+                        <td class="sv-history-file-cell" title="${safeInputFile}">
+                            ${(r.task_type === 'image' && r.status === 'completed' && r.output_file)
+                                ? `<span class="sv-history-card-thumb sv-history-thumb-inline"><img src="/api/system/history/${safeId}/download" alt="" loading="lazy"></span>`
+                                : `<span class="sv-history-card-thumb sv-history-thumb-inline"><i class="bi ${typeIcon}" aria-hidden="true"></i></span>`}
+                            <span class="sv-history-file-name">${fileName}</span>
+                        </td>
                         <td>${safeModelSize}</td>
                         <td><span class="sv-badge ${s.badge}">${s.text}</span></td>
                         <td>${SeedVR2.formatTimestamp(r.created_at)}</td>
@@ -314,7 +319,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     };
                     const s = statusMap[r.status] || { badge: 'sv-badge-secondary', text: SeedVR2.escapeHtml(r.status) };
                     const typeIcon = r.task_type === 'video' ? 'bi-camera-video' : 'bi-image';
-                    const fileName = r.input_file ? SeedVR2.escapeHtml(r.input_file.split(/[\\/]/).pop()) : '--';
+                    const fileName = SeedVR2.escapeHtml(SeedVR2.displayFileName(r));
                     const procTime = r.processing_time > 0 ? `${r.processing_time.toFixed(1)}s` : '--';
                     const safeId = SeedVR2.escapeHtml(String(r.id));
                     const safeOutput = SeedVR2.escapeHtml(r.output_file || '');
@@ -369,6 +374,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     htmx.process(cardsEl);
                 }
             }
+
+            // 表格缩略图同样需要降级（产物被清理时不显示破图）
+            SeedVR2.guardBrokenThumbs(document.getElementById('historyBody'), 'bi-image');
 
             // 让 HTMX 处理动态生成的取消按钮
             if (typeof htmx !== 'undefined') {

@@ -9859,10 +9859,16 @@ a,
     white-space: nowrap;
 }
 .sv2-recent-meta {
+    /* 纵向堆叠而非横排换行：徽标宽度随状态文案变化（已完成 vs 失败），
+       横排会让有的卡片换行、有的不换行，四张卡对不齐 */
     display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+}
+.sv2-recent-card .sv-history-card-thumb {
+    /* 卡片等高：缩略图区固定，名字与状态行再变化也不错落 */
+    height: 76px;
 }
 .sv2-recent-time {
     font-size: 10.5px;
@@ -9888,5 +9894,45 @@ a,
     min-width: 520px;
 }
 .sv-about-table th {
+    white-space: nowrap;
+}
+
+/* ============================================================
+   UI 精修 Stage H（2026-09-01）：历史记录可读性
+   表格视图此前只有纯文本、且文件名是时间戳+哈希串，
+   现在加 32px 缩略图前缀 + 可读名（displayFileName 翻译）。
+   ============================================================ */
+.sv-history-file-cell {
+    display: flex;
+    align-items: center;
+    gap: var(--sv-space-2-5);
+    min-width: 0;
+}
+.sv-history-thumb-inline {
+    width: 32px;
+    height: 32px;
+    flex: none;
+    border-radius: var(--sv-radius-sm);
+    background: var(--sv-surface-2);
+    color: var(--sv-accent-terracotta);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border: 1px solid var(--sv-border-light);
+}
+.sv-history-thumb-inline img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.sv-history-thumb-inline i {
+    font-size: 13px;
+    opacity: 0.6;
+}
+.sv-history-file-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }

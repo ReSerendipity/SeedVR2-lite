@@ -3487,6 +3487,47 @@ const SeedVR2 = (() => {
      * @returns {string} 转义后的HTML安全字符串
      */
     /**
+     * 把上传文件名翻译成人类可识别的标签。
+     *
+     * 背景：旧命名方案 `generate_unique_filename` 只保留扩展名，产出
+     * `1788144794_dfccfe517746.png` 这类时间戳+哈希串，在历史记录与修复页里
+     * 对用户零信息量（移动端还会被截成 `1788144…`）。新方案已保留清洗后的原始词干，
+     * 但存量记录无法还原，只能退化成「类型 · 日期」标签。
+     *
+     * @param {Object} record 含 input_file / task_type / created_at 的记录
+     * @returns {string} 可展示的文件名（不含路径）
+     */
+    function displayFileName(record) {
+        const t = (window.__I18N__ || {});
+        const raw = String((record && record.input_file) || "").split(/[\\/]/).pop();
+        if (!raw) return "--";
+
+        // 新方案：<epoch>_<清洗词干>_<6位hex><ext>
+        const modern = raw.match(/^(\d{10})_(.+)_([0-9a-f]{6})(\.[A-Za-z0-9]{1,5})$/);
+        if (modern && modern[2]) return modern[2] + modern[4];
+
+        // 旧方案：<epoch>_<8位以上hex><ext> —— 原始名已丢失，用类型+日期兜底。
+        // 第 1 段本就是 epoch 秒，直接构造紧凑 MM-DD HH:MM；
+        // 别用 formatTimestamp（它只收一个参数，且完整日期时间会撑爆窄列）。
+        const legacy = raw.match(/^(\d{10})_([0-9a-f]{8,})(\.[A-Za-z0-9]{1,5})$/);
+        if (legacy) {
+            const kind = record.task_type === "video"
+                ? (t["history.video"] || "video")
+                : (t["history.image"] || "image");
+            const d = new Date(Number(legacy[1]) * 1000);
+            const pad = (n) => String(n).padStart(2, "0");
+            const stamp = Number.isNaN(d.getTime())
+                ? ""
+                : pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " "
+                  + pad(d.getHours()) + ":" + pad(d.getMinutes());
+            return stamp ? kind + " \u00b7 " + stamp : kind;
+        }
+
+        return raw;
+    }
+
+
+    /**
      * 缩略图降级：产物文件被清理后 <img> 会 404 并显示浏览器破图占位符。
      * 对历史卡片与修复页最近任务条同型适用，故收敛到一处。
      * error 事件不冒泡，必须在插入 DOM 后逐个挂载；同时补判 already-failed
@@ -3733,6 +3774,8 @@ const SeedVR2 = (() => {
         initTheme,
         /** @type {Function} 应用主题 */
         applyTheme,
+        /** @type {Function} 把时间戳哈希文件名翻译成可读标签 */
+        displayFileName,
         /** @type {Function} 缩略图降级（产物缺失时回退类型图标） */
         guardBrokenThumbs,
         /** @type {Function} HTML转义 */

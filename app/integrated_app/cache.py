@@ -17,6 +17,7 @@
 import asyncio
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -73,18 +74,38 @@ class FileCache:
         os.makedirs(cache_dir, exist_ok=True)
 
     def generate_unique_filename(self, original_filename: str) -> str:
-        """生成唯一文件名，保留原始扩展名
+        """生成唯一文件名，保留清洗后的原始词干以便用户识别。
+
+        历史实现只保留扩展名，产出 `1788144794_dfccfe517746.png` 这类
+        时间戳+哈希串，用户在历史记录与修复页里完全看不出是哪张图。
+
+        安全约束（该返回值后续会参与缓存路径拼接）：
+        - 只取路径最后一段，剔除目录分隔符与 `..` 等相对路径片段；
+        - 词干仅保留字母/数字/下划线/点/连字符/空格（其余替换为 `_`，
+          因此 `/ \\ : * ? \" < > |` 与控制字符一律被清掉）；
+        - 扩展名必须形如 `.ext`（1~5 位字母数字），否则退回 `.bin`；
+        - 词干截断到 48 字符，并去掉结尾的点与空格（Windows 不接受）。
 
         Args:
-            original_filename: 原始文件名
+            original_filename: 原始文件名（可能含路径，只取最后一段）
 
         Returns:
-            唯一文件名字符串
+            形如 `<epoch>_<清洗词干>_<6位随机>` + 扩展名；原始词干为空时省略该段。
         """
-        ext = Path(original_filename).suffix or ".bin"
-        unique_id = uuid.uuid4().hex[:12]
+        path_obj = Path(original_filename or "")
+        raw_ext = path_obj.suffix
+        ext = raw_ext.lower() if re.fullmatch(r"\.[A-Za-z0-9]{1,5}", raw_ext or "") else ".bin"
+
+        stem = path_obj.stem
+        stem = re.sub(r"[^\w.\- ]", "_", stem, flags=re.UNICODE)
+        while ".." in stem:
+            stem = stem.replace("..", "_")
+        stem = stem.strip(" .")[:48].rstrip(" .")
+
+        unique_id = uuid.uuid4().hex[:6]
         timestamp = int(time.time())
-        return f"{timestamp}_{unique_id}{ext}"
+        parts = [str(timestamp), stem, unique_id]
+        return "_".join(p for p in parts if p) + ext
 
     def get_cache_path(self, filename: str) -> str:
         """获取缓存文件的完整路径。

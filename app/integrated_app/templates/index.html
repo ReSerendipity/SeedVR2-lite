@@ -118,8 +118,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
             if (empty) empty.style.display = 'none';
             const rows = records.map(r => {
-                const rawName = r.input_file || '--';
-                const name = rawName.split(/[\\/]/).pop();
+                const name = SeedVR2.displayFileName(r);
                 const statusKey = 'status.' + r.status;
                 const statusText = I[statusKey] || r.status || '--';
                 const badgeClass = 'sv-badge-' + (r.status || 'pending');

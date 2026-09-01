@@ -33,6 +33,49 @@ class TestFileCache:
         names = {cache.generate_unique_filename("a.png") for _ in range(20)}
         assert len(names) == 20
 
+    def test_generate_unique_filename_keeps_readable_stem(self, tmp_path):
+        """必须保留原始词干：否则历史记录里全是时间戳+哈希，用户认不出是哪张图。"""
+        cache = FileCache(str(tmp_path))
+        name = cache.generate_unique_filename("猫图 最终版.JPG")
+        assert "猫图 最终版" in name
+        assert name.endswith(".jpg")  # 扩展名归一为小写
+        # 结构应为 <epoch>_<词干>_<随机6位><扩展名>
+        head, _, tail = name[: -len(".jpg")].rpartition("_")
+        assert head.split("_", 1)[0].isdigit()
+        assert len(tail) == 6
+
+    def test_generate_unique_filename_strips_path_and_dotdot(self, tmp_path):
+        """返回值会参与缓存路径拼接，必须杜绝目录分隔符与相对路径片段。"""
+        cache = FileCache(str(tmp_path))
+        hostile = [
+            "../../etc/passwd.png",
+            "/absolute/path/视频.mov",
+            "..",
+            "....png",
+            "evil.a..b..c.png",
+            'x< >:"|?*.mp4',
+            "weird\x00null.jpg",
+            "",
+        ]
+        for raw in hostile:
+            name = cache.generate_unique_filename(raw)
+            assert "/" not in name and "\\" not in name, f"{raw!r} -> {name!r} 含路径分隔符"
+            assert ".." not in name, f"{raw!r} -> {name!r} 含 .."
+            assert not name.endswith((".", " ")), f"{raw!r} -> {name!r} 结尾点/空格"
+            assert len(name) <= 80, f"{raw!r} -> {name!r} 过长"
+
+    def test_generate_unique_filename_rejects_bad_extension(self, tmp_path):
+        """扩展名必须是 .1~5位字母数字，否则退回 .bin（防 `.png/../../x` 之类）。"""
+        cache = FileCache(str(tmp_path))
+        assert cache.generate_unique_filename("a.png/../..").endswith(".bin")
+        assert cache.generate_unique_filename("a.verylongext").endswith(".bin")
+
+    def test_generate_unique_filename_no_collision_same_second(self, tmp_path):
+        """随机后缀从 12 位缩到 6 位后，必须重新证明同秒同名不碰撞。"""
+        cache = FileCache(str(tmp_path))
+        names = [cache.generate_unique_filename("same.png") for _ in range(2000)]
+        assert len(set(names)) == 2000
+
     def test_get_cache_path(self, tmp_path):
         cache = FileCache(str(tmp_path))
         path = cache.get_cache_path("file.txt")

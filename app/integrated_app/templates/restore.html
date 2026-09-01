@@ -2676,7 +2676,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const thumb = (isImage && r.status === 'completed' && r.output_file)
                 ? `<img src="/api/system/history/${encodeURIComponent(r.id)}/download" alt="" loading="lazy">`
                 : `<i class="bi ${isImage ? 'bi-image' : 'bi-camera-video'}" aria-hidden="true"></i>`;
-            const name = r.input_file ? SeedVR2.escapeHtml(String(r.input_file).split(/[\\/]/).pop()) : '--';
+            const name = SeedVR2.escapeHtml(SeedVR2.displayFileName(r));
             const statusText = (I['status.' + r.status] || r.status);
             return `<button type="button" class="sv2-recent-card sv-history-card" data-id="${r.id}"
                         ${canApply ? '' : 'disabled'}
