@@ -138,6 +138,7 @@ from app.integrated_app.history_db import HistoryDB  # noqa: E402
 from app.integrated_app.i18n import I18n  # noqa: E402
 from app.integrated_app.middleware.csrf import CSRFMiddleware  # noqa: E402
 from app.integrated_app.middleware.request_id import RequestIDLogFilter, RequestIDMiddleware  # noqa: E402
+from app.integrated_app.middleware.security_headers import SecurityHeadersMiddleware  # noqa: E402
 from app.integrated_app.middleware.tracing import TraceLogFilter, TracingMiddleware  # noqa: E402
 from app.integrated_app.model_manager import ModelManager  # noqa: E402
 from app.integrated_app.model_registry import model_registry  # noqa: E402
@@ -855,6 +856,10 @@ def create_app(config: dict | None = None) -> FastAPI:
 
     # W3C traceparent 传播（P3-8，LIFO 最先执行：完整覆盖全部中间件与 handler 的日志上下文）
     app.add_middleware(TracingMiddleware)
+
+    # 安全响应头中间件（M-02）：最外层，确保全部响应（含 401/403/429）携带 CSP 等安全头。
+    # 必须最后注册（Starlette add_middleware 为 LIFO，最后添加 = 最先执行 / 响应最后装配）。
+    app.add_middleware(SecurityHeadersMiddleware, config=config)
 
     return app
 

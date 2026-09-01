@@ -59,6 +59,13 @@ jobs:
       - name: Ruff (lint)
         run: python -m ruff check .
 
+      - name: Config-vs-code consistency gate (security, runtime.security)
+        # 配置幻觉根因门禁（安全评估 #13）：config.yaml runtime.security 段每个键都必须被
+        # 代码真实消费，且 runtime / runtime.security 的键须对应配置模型字段；声明不消费即失败。
+        run: |
+          pip install pyyaml
+          python scripts/check_config_refs.py
+
       - name: Black (format check)
         run: python -m black --check .
 
