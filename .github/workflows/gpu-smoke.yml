@@ -63,12 +63,6 @@ jobs:
     if: needs.runner-precheck.outputs.available == 'true'
     runs-on: [self-hosted, gpu]
     timeout-minutes: 150
-    env:
-      # 关键环境适配：GitHub Windows runner 的 PATH 含 Git 的 /usr/bin，其 GNU tar 会把
-      # C:\ 路径当远程主机解析（KNOWN_ISSUES #35）。v1.5.0 等历史 Release 资产内嵌的
-      # 解包 lib 早于该修复，必须靠 System32 优先的 bsdtar 兜底（:: 展开为原有 PATH，
-      # 不可变资产无需改动——这正是资产不可变策略的意义）。
-      PATH: 'C:\Windows\System32;C:\Windows;::'
     steps:
       - name: Fetch workflow scripts via codeload source archive
         shell: pwsh
@@ -143,6 +137,10 @@ jobs:
       - name: Unpack (per-volume SHA256 -> merge -> extract -> offline torch install)
         shell: pwsh
         run: |
+          # GitHub Windows runner 的 PATH 含 Git 的 usr\bin，GNU tar 会把 C:\ 当远程主机
+          # （KNOWN_ISSUES #35）；历史 Release 资产内嵌的解包 lib 早于修复，故在步骤内
+          # 前置 System32 让 bsdtar 优先（不动 job 级 env，避免覆盖 Actions 注入的 gh 路径）。
+          $env:Path = 'C:\Windows\System32;C:\Windows;' + $env:Path
           $target = Join-Path $PWD 'target'
           & powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\unpack_portable_bundle.ps1 `
             -BundleDir "$PWD\bundle" -TargetDir $target
