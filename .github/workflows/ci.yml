@@ -28,6 +28,10 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    # Windows runner 默认 stdout 编码为 cp1252，无法输出中文/emoji（如 check_config_refs 的
+    # [INFO] 解析到…），会触发 UnicodeEncodeError 导致配置一致性门禁崩溃。强制 UTF-8 输出。
+    env:
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
 
