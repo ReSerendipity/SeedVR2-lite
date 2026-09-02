@@ -16,11 +16,10 @@ jobs:
     name: Semgrep SAST
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
-      - name: "Semgrep Scan (report-only, no gate)"
+      - name: "Semgrep Scan (block on ERROR)"
         # 仅上报扫描结果，不作为失败门禁。
         # 说明：semgrep 1.173.0 `semgrep ci` 在 OSS 模式下任何告警均视为 blocking，
         # 若用 `--error` 会因发现 findings 而 exit 1，导致该 job 的 check-run 标红，
@@ -28,19 +27,18 @@ jobs:
         # 真实告警仍通过下方 SARIF 上报（GitHub Security 告警区可见）。
         run: |
           python -m pip install semgrep==1.173.0
-          semgrep scan --config auto --severity ERROR || true
+          semgrep scan --config auto --severity ERROR
 
-      - name: Semgrep SARIF (report-only, all severities)
+      - name: Semgrep SARIF (all severities)
         # 全量告警（含 WARNING/MEDIUM 与 nosemgrep 抑制项）进 SARIF 上报，不参与门禁。
         # || true 仅作用于报告步骤：semgrep 自身故障由上方 gate 步骤暴露，不再被静默。
         if: always()
         run: |
-          semgrep scan --config auto --sarif --output semgrep.sarif || true
+          semgrep scan --config auto --sarif --output semgrep.sarif
 
       - name: Upload SARIF results
         if: always()
         uses: github/codeql-action/upload-sarif@v3
-        continue-on-error: true
         with:
           sarif_file: semgrep.sarif
 
@@ -50,7 +48,6 @@ jobs:
     name: Secret Scanning (Trivy FS)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
