@@ -1,19 +1,19 @@
-﻿cache:
+cache:
   max_size_mb: 500
   ttl: 86400
 gpu:
   backend: auto
   vram_tile_tiers:
-  - min_available_gb: 20
+  - min_available_gb: 20.0
     tile_overlap: 512
     tile_size: 1024
-  - min_available_gb: 12
+  - min_available_gb: 12.0
     tile_overlap: 256
     tile_size: 768
-  - min_available_gb: 8
+  - min_available_gb: 8.0
     tile_overlap: 128
     tile_size: 512
-  - min_available_gb: 0
+  - min_available_gb: 0.0
     tile_overlap: 64
     tile_size: 256
 history:
@@ -36,6 +36,7 @@ inference:
   color_correction: lab
   distilled_mode: true
   enable_debug: false
+  force_reload_dit: false
   fp8_enabled: false
   inference_mode: distilled
   input_noise_scale: 0.0
@@ -202,7 +203,6 @@ runtime:
     checkpoint_dir: data/checkpoints
     checkpoint_every: 1
     id_length: 16
-    keep_last_epoch_checkpoints: 2
     max_timeout_seconds: 86400
     progress_stall_timeout_minutes: 30
     queue_maxsize: 100
