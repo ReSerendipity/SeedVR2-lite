@@ -210,7 +210,6 @@ scripts/simple_summary.ps1
 .watermark_key
 # ===== Local-only content (restored locally, not on remote — 2026-08-17) =====
 CI-LESSONS.md
-CONTRIBUTING.md
 SeedVR2_video_cover.webp
 SeedVR2_video_cover_v2.webp
 SeedVR2_video_cover_v3_vertical.webp
