@@ -173,6 +173,49 @@ def test_page_version_follows_pyproject(test_app) -> None:
     assert "v1.0.0" not in about, "关于页仍残留硬编码 v1.0.0"
 
 
+def _parse_csp(policy: str) -> dict[str, set[str]]:
+    """把 CSP 字符串解析成 {指令: {来源集}}，便于两份策略做包含关系比较。"""
+    out: dict[str, set[str]] = {}
+    for part in (policy or "").split(";"):
+        tokens = part.strip().split()
+        if not tokens:
+            continue
+        out[tokens[0]] = set(tokens[1:])
+    return out
+
+
+def test_csp_response_header_is_not_stricter_than_meta(test_app) -> None:
+    """响应头 CSP 必须放行页面 meta 里声明的每一个来源。
+
+    浏览器对 meta 与响应头两份 CSP 取交集：响应头若比 meta 更严，
+    就会拦掉页面明确声明并实际使用的资源（标题字体样式表、blob: 视频对比）。
+    nonce 是每次请求动态生成的，meta 里存在而响应头里不存在属预期，跳过比较。
+    """
+    resp = test_app.get("/restore")
+    assert resp.status_code == 200
+
+    header_csp = resp.headers.get("content-security-policy", "")
+    meta_match = re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]+)"', resp.text)
+    assert meta_match, "页面未声明 CSP meta"
+    assert header_csp, "响应未携带 CSP 响应头"
+
+    header = _parse_csp(header_csp)
+    meta = _parse_csp(meta_match.group(1))
+
+    missing: list[str] = []
+    for directive, sources in meta.items():
+        allowed = header.get(directive)
+        if allowed is None:
+            # 响应头未声明该指令 → 回退到 default-src，meta 显式声明即视为缺口
+            missing.append(f"{directive}: meta 声明 {sorted(sources)}，响应头缺失（回退 default-src）")
+            continue
+        # nonce 形如 'nonce-xxx'，每次请求都不同，不参与比较
+        gap = {s for s in sources if s not in allowed and not s.startswith("'nonce-")}
+        if gap:
+            missing.append(f"{directive}: meta 放行 {sorted(gap)}，响应头未放行")
+    assert not missing, "CSP 响应头比页面 meta 更严，会拦掉页面自己声明并使用的资源：\n" + "\n".join(missing)
+
+
 def test_history_stat_label_matches_aggregated_field() -> None:
     """统计卡标签必须与后端字段口径一致。
 
