@@ -1,6 +1,6 @@
 # Changelog
 
-## [未发布] - 2026-08-30
+## [1.5.1] - 2026-09-03
 
 ### 修复：装饰字体外链导致整页加载挂起（CI E2E 红的根因，2026-09-03）
 
@@ -8,6 +8,10 @@
 * **feat:** 14 款标题装饰字体改由 `app.js` 在用户打开「Aa」菜单时注入 `<link>`（`ensureWebfonts()`，状态机 idle→loading→loaded|failed），上次保存过字体时启动自动补注入；加载失败如实 toast（新增 `common.font_load_failed` ×5 语言）而不是静默退回系统字体变成假功能。默认界面字体本就由本地 `/static/fonts/fonts.css`（DM Sans + Instrument Serif）提供，故不加载外链时界面完全正常
 * **test:** 两条防回归门禁 —— `test_templates_have_no_render_blocking_third_party_stylesheet`（模板里禁止第三方 `rel=stylesheet` 外链）与 `test_csp_permits_on_demand_webfont_origins`（CSP 必须放行 JS 常量里的字体源，防止外链挪进 JS 后被误收紧 CSP、让字体选择器静默失效）
 * **验证:** 黑洞化后 chromium/firefox 的 `load` 分别 262ms / 268ms（修复前 >30s 超时）；字体菜单实测默认 0 条外部请求、打开后注入 1 条、14 项可选、选中后 `--sv-font` 落到根元素、刷新自动恢复；本地 `theme.spec.ts` + `history.spec.ts` 在 firefox+chromium **56 passed**；全量 pytest 1243 passed / 1 skipped；ruff + black + mypy(108) 全绿
+
+### 便携启动器脚手架（portable_launcher，2026-09-03）
+
+* **feat(scaffold):** 新增 `portable_launcher/`（Mie-Package-Launcher 风格）——`launcher.ps1` + `launcher.sh` 均相对自身解析包根 `PKG_ROOT`、自动 bootstrap 本地 venv（优先内置 `python/` 便携解释器）、从 `wheels/` 离线或 `requirements` 在线安装依赖、设置相对可移植环境变量、`model/` 权重缺失提示，最后启动 `app/clean_launch.py`；附 `README.md` 与 `requirements.txt` 占位。权重路径 / 下载 URL / venv 跨盘符可移植性等未决项已在 README 与脚本头注释中显式标注（SCAFFOLD 级，未固化）
 
 ### 契约审计收尾：死码清理 + 网站 API 文档纳入硬门禁（2026-09-03）
 
@@ -38,7 +42,8 @@
 * **feat:** 下载脚本——`download_model.py` 加 `--precisions` 与按文件名前缀的双源路由（`seedvr2_ema_*`→HuggingFace、`seedvr2_*_{int8_convrot,mxfp8,nvfp4}`→ModelScope 直连流式下载含断点续传）；SHA256 校验哈希映射覆盖全部五精度
 * **feat:** 前端——`restore.html` 模型下拉由 5 项扩至 14 项（3 尺寸 × 精度），VRAM 预检的精度解析改为后缀枚举匹配
 * **test:** 新增 `tests/test_quant_dequant.py`（38 项：三格式合成往返误差 + Hadamard/swizzle 基础 + comfy_quant dispatch + 下载路由 + 精度解析）
-* **docs:** 许可证台账 `docs/LICENSE_COMPLIANCE.md §3.2` 登记 Comfy-Org 17 文件权威哈希、NOTICE 第 5 条署名；AGENTS.md v1.43 + 陷阱 #38/#39/#40；下载与真机验证步骤固化于 `docs/plans/五精度量化_下载与真机验证交接.md`（本会话网络按流量计费，未执行真实权重下载，量化约定的真机正确性待验证）
+* **docs:** 许可证台账 `docs/LICENSE_COMPLIANCE.md §3.2` 登记 Comfy-Org 17 文件权威哈希、NOTICE 第 5 条署名；AGENTS.md v1.43 + 陷阱 #38/#39/#40；下载与真机验证步骤固化于 `docs/plans/五精度量化_下载与真机验证交接.md`
+* **test(2026-09-02):** 真机验证完成——三精度权重从 ModelScope 下载并通过 SHA256 校验；反量化约定核对通过（int8_convrot 码一致率 100%、mxfp8 93-95% E4M3 舍入正常、nvfp4 排除 ±0 抖动后 100%）；RTX 5070 Ti Laptop 真机加载推理冒烟三精度全部通过（输出 1024×1200 合法图片，mean=76.5/std=68.7）；`quant_dequant.py` 新增 `dtype` 参数（反量化后立即转 bf16，降低加载期 RAM 峰值）
 
 ### 后端服务设计体系评估全量落地（P0-P2 十二项，docs/reports/后端服务设计体系深度完整性评估_20260830.md）
 

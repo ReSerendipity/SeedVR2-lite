@@ -108,9 +108,11 @@
 
 > **模型格式：`.safetensors`**（非 GGUF、非 PTH）。SeedVR2 官方与社区仓库均以
 > HuggingFace `safetensors` 格式分发，本项目仅兼容该格式。
-> 精度支持 **FP16（全精度，画质最佳）** 与 **FP8（E4M3FN 量化，省显存）** 两种；
-> **不兼容 GGUF / INT4 / INT8** 等其他量化（这些格式在修复类扩散模型中会明显损伤画质）。
-> 📌 仓库 `model/` 内另存有实验性量化文件（`seedvr2_3b_int8_convrot.safetensors`、`seedvr2_3b_nvfp4.safetensors`、`seedvr2_3b_mxfp8.safetensors`），属研发实验产物，**非 README 推荐档位**，评测/生产请使用上表 FP16/FP8 档位。
+> 精度支持 **FP16（全精度，画质最佳）**、**FP8（E4M3FN 量化，省显存）**，以及
+> **INT8-convrot / MXFP8 / NVFP4** 三种 Comfy-Org 量化变体（加载期反量化，2026-09-02 真机验证通过）；
+> **不兼容 GGUF / INT4** 等其他量化（这些格式在修复类扩散模型中会明显损伤画质）。
+> 📌 三种量化变体来源为 ModelScope [Comfy-Org/SeedVR2](https://modelscope.cn/models/Comfy-Org/SeedVR2)（`diffusion_models/` 子目录），
+> 与 FP16/FP8 的 numz 源字节不同、哈希不可互用；下载命令：`python scripts/download_model.py --size 3b --precisions int8_convrot mxfp8 nvfp4 --no-vae`。
 
 各模型/精度组合的资源占用与效果对比：
 
@@ -118,6 +120,9 @@
 |---|---|---|---|---|---|
 | SeedVR2-3B | FP16 | `seedvr2_ema_3b_fp16.safetensors` | 16 GB | ~12 GB | ★★★ 最佳 |
 | SeedVR2-3B | FP8 | `seedvr2_ema_3b_fp8_e4m3fn.safetensors` | 8 GB | ~8 GB | ★★☆ 略降 |
+| SeedVR2-3B | INT8-convrot | `modelscope.cn/Comfy-Org/SeedVR2/.../seedvr2_3b_int8_convrot.safetensors` | 16 GB | ~10 GB | ★★★ 接近最佳 |
+| SeedVR2-3B | MXFP8 | `modelscope.cn/Comfy-Org/SeedVR2/.../seedvr2_3b_mxfp8.safetensors` | 16 GB | ~10 GB | ★★☆ 略降 |
+| SeedVR2-3B | NVFP4 | `modelscope.cn/Comfy-Org/SeedVR2/.../seedvr2_3b_nvfp4.safetensors` | 16 GB | ~8 GB | ★☆☆ 可见降质，结构完整 |
 | SeedVR2-7B | FP16 | `seedvr2_ema_7b_fp16.safetensors` | 24 GB | ~20 GB | ★★★ 最佳 |
 | SeedVR2-7B | FP8 | `seedvr2_ema_7b_fp8_e4m3fn.safetensors` | 12 GB | ~12 GB | ★★☆ 略降 |
 | SeedVR2-7B-Sharp | FP16 | `seedvr2_ema_7b_sharp_fp16.safetensors` | 24 GB | ~20 GB | ★★★ 最佳（细节增强） |

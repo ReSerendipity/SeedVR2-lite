@@ -288,3 +288,6 @@ data/checkpoints/
 
 # coverage XML 产物（CI coverage gate 用，属运行时生成）
 /coverage.xml
+
+# ── 自进化协议子文档（AGENTS.md 瘦身下沉内容，仅本地保留，2026-09-03）──
+docs/agents/

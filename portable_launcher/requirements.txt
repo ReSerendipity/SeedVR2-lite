@@ -1,0 +1,12 @@
+# SeedVR2-lite Portable Launcher — dependency manifest (SCAFFOLD)
+#
+# 本启动器运行时并不从「这个文件」安装依赖。它会到包根（PKG_ROOT）解析应用依赖：
+#   - <pkg>/requirements-lock.txt   （首选，已钉版）[确切集合暂未固化]
+#   - <pkg>/requirements.txt        （回退）
+# 做完全离线 USB 包时，把预下载的 wheel 放进 <pkg>/wheels/，
+# 启动器会以 `pip install --no-index --find-links wheels/ -r <reqs>` 安装。
+#
+# 启动器「自身」的运行时不依赖任何 Python 包（它只从 shell 驱动 `python` / `pip`）。
+# 本文件是未来 freeze 的占位；如需把启动器本身的工具依赖钉版，可列在下面。
+#
+# 应用运行所需依赖见仓库根 requirements.txt / requirements-lock.txt。
