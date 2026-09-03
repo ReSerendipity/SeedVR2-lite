@@ -58,11 +58,15 @@
 > ⚠️ **与项目运行时权重的关系（实测 SHA256 对比）**：Comfy-Org 主权重（`seedvr2_3b_fp16` 等，无 `ema` 前缀）
 > 与本仓 `config.yaml` 当前引用的 numz/SeedVR2_comfyUI 版（`seedvr2_ema_3b_fp16` 等）**字节不同、不可互换**；
 > 仅 VAE 文件 `ema_vae_fp16.safetensors` 哈希与本项目一致（`20678548…`，同内容）。
-> ✅ **2026-08-30 更新——已接入运行时（待真机验证）**：`config.yaml` 已按本表哈希登记
+> ✅ **2026-09-02 更新——已接入运行时并真机验证通过**：`config.yaml` 已按本表哈希登记
 > `checkpoint_/sha256_{int8_convrot,mxfp8,nvfp4}`（fp16/fp8 保持 numz 源不动），下载路由
 > （`download_model.py --precisions`）与加载期反量化（`app/integrated_app/engines/quant_dequant.py`）
-> 已落地并通过合成测试；**真实权重的格式约定核对与推理冒烟尚未执行**（流量计费暂缓），
-> 步骤见 `docs/plans/五精度量化_下载与真机验证交接.md`。Comfy-Org 的 fp16/fp8 转换版
+> 已落地。**真机验证（2026-09-02，RTX 5070 Ti Laptop 12GB，3B 三精度）**：
+> ① 三文件从 ModelScope 下载完成，SHA256 与本表权威值逐字一致；
+> ② 反量化约定核对通过——int8_convrot 码一致率 100%（Hadamard 核/旋转方向/scale 语义正确），
+> mxfp8 码一致率 93-95%（E4M3 舍入 ±1 LSB 正常量化噪声），nvfp4 排除 E2M1 ±0 符号抖动后码一致率 100%；
+> ③ 真机加载推理冒烟通过——三精度各输出 1024×1200 合法图片（mean=76.5, std=68.7），
+> 与同输入 FP16 结果结构一致。Comfy-Org 的 fp16/fp8 转换版
 > （本表 `seedvr2_3b_fp16` 等 6 行）仍保持仅登记不接入。
 
 ## 4. 维护约定
