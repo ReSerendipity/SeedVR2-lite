@@ -2,6 +2,14 @@
 
 ## [未发布] - 2026-08-30
 
+### 契约审计收尾：死码清理 + 网站 API 文档纳入硬门禁（2026-09-03）
+
+* **docs(P0):** 重写 `website/docs/guide/api.md` —— 原「API 参考」列有 `/api/system/sse`、`/api/restore/task/{task_id}`、`/api/tasks/checkpoint/recover`、`/api/tasks/queue`、`/api/system/gpu/status` 等**根本不存在**的端点（文档是对外承诺，用户照抄只会拿到 404），且只覆盖 12 条端点。现按应用真实路由清单重写为 52 条分组文档（修复 / 批量 / 系统 / 指标 / 历史 / 界面偏好 / 引擎抽象层），补 CSRF 双提交说明与统一响应信封示例，并收录本批新增的批量取消与重试端点
+* **feat(audit):** 审计工具新增第五项检查 `check_docs`（子命令 `docs`）——解析文档表格的「方法 + 路径」逐条与后端路由比对；配套门禁 `tests/test_api_contract.py::test_documented_api_paths_exist`，含「文档收录数 < 40 也判失败」的防假绿断言（防止有人删空文档让断言变绿）
+* **perf(dead-code):** 移除确认零引用的 HTMX 表格片段端点 —— `GET /api/system/history/table` + `templates/history_table.html` + 专属测试 `tests/test_history_htmx.py`（4 项）+ `test_api.py` 内 1 项（该用例只断言「不含 table/tbody」，并未守住任何真实契约），并清掉随之失效的 `Request` / `HTMLResponse` / `get_jinja_env` 导入。历史页现由 `GET /api/system/history` + JS 渲染接管。归档副本见 `docs/_devarchive/htmx-table-removal/`
+* **fix(audit):** 三条待定项逐条实测后**两条被推翻**（KNOWN_ISSUES #59）——`GET /api/restore/{task_id}/result` 原标 dead-code，实测 `examples/api_example.js:324` 与 `examples/api_example.py:305` 都在真实调用，改归 api-surface **不删**并补进文档；`POST /api/system/metrics/reset` 原标 no-consumer，实测它是 `MetricsCollector.reset()` 的唯一调用者，删端点只会把方法变成孤儿（用一种死码换另一种），保留并归 intentional。固化纪律：判「无消费者」必须穷举 Jinja 模板 / 自建 JS / tests（含 E2E fixtures）/ examples+scripts / website/docs 五处，删除动作前还要重跑一遍
+* **验证:** pytest **1241 passed / 1 skipped / 0 failed**（净 -4 = 移除 5 项死码测试 + 新增 1 项文档门禁）、E2E chromium-desktop **219 passed / 0 failed**、`check-responsive.js` 13/13、ruff + black + mypy(108 files) 全绿、`python scripts/audit_api_consistency.py all` 退出码 0（文档 52 条全部真实存在且方法匹配）
+
 ### 前后端契约一致性审计与批量生命周期接通（2026-09-03）
 
 * **feat(audit):** 新增可复跑审计工具 `scripts/audit_api_consistency.py`（子命令 `routes` / `form-fields` / `inline-handlers` / `orphans` / `all`）——路由清单默认进程内 `create_app(load_config())` 生成（也可 `--openapi` / `--base-url` 复用已运行实例），前端侧从模板与自建 JS 抽取字面量、模板插值、`hx-*` 属性与 **`'/api/x/' + id + '/cancel'` 拼接链**（第一版正因为没展开拼接而漏掉本次最重要的缺陷），双端归一后按段求差集；B 类孤儿路由必须逐条归档定性（intentional / api-surface / no-consumer / dead-code / gap），出现未归档新条目即退出码非 0

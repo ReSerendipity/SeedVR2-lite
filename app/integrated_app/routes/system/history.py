@@ -2,11 +2,11 @@
 """历史记录管理路由模块。
 
 提供修复历史记录的查询、统计、删除、取消等端点，
-支持分页、筛选、全文搜索，并提供 HTMX 表格局部刷新端点。
+支持分页、筛选、全文搜索。历史表格片段端点（HTMX）已移除——现由
+JSON 端点 + 前端渲染接管（契约审计 B 类死码清理，2026-09-03）。
 
 API 端点：
 - GET /api/system/history: 获取历史记录列表（JSON）
-- GET /api/system/history/table: 获取历史记录表格 HTML（HTMX）
 - GET /api/system/history/statistics: 获取历史统计数据
 - GET /api/system/history/resolve: 输出 → 任务反查（数据治理 P3-1）
 - DELETE /api/system/history/{record_id}: 删除单条历史记录
@@ -20,10 +20,10 @@ API 端点：
 
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 
-from app.integrated_app.dependencies import get_config, get_history_db, get_jinja_env, get_task_queue
+from app.integrated_app.dependencies import get_config, get_history_db, get_task_queue
 from app.integrated_app.history_db import HistoryDB
 from app.integrated_app.security.path_guard import build_default_path_guard
 from app.integrated_app.task_queue import TaskQueue
@@ -141,48 +141,6 @@ async def get_history(
         "page_size": page_size,
         "total_pages": (total + page_size - 1) // page_size,
     }
-
-
-@router.get("/table")
-async def get_history_table(
-    request: Request,
-    history_db: HistoryDB = Depends(get_history_db),
-    task_type: str | None = None,
-    status: str | None = None,
-    search: str | None = None,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-):
-    """获取历史记录表格 HTML 片段（用于 HTMX 局部刷新）。
-
-    API 端点：GET /api/system/history/table
-
-    查询参数与 get_history 相同。返回渲染后的 HTML 片段，
-    供 HTMX 直接替换页面中的表格区域，无需整页刷新。
-
-    Args:
-        request: FastAPI 请求对象。
-        history_db: 历史数据库实例（通过依赖注入）。
-        task_type: 任务类型筛选。
-        status: 状态筛选。
-        search: 搜索关键词。
-        page: 页码。
-        page_size: 每页条数。
-
-    Returns:
-        HTMLResponse 包含渲染后的表格片段。
-    """
-    if search:
-        records, total = await history_db.search_records(query=search, limit=page_size, offset=(page - 1) * page_size)
-    else:
-        records, total = await history_db.get_records(
-            task_type=task_type, status=status, limit=page_size, offset=(page - 1) * page_size
-        )
-
-    env = get_jinja_env(request)
-    template = env.get_template("history_table.html")
-    html = template.render(records=records, total=total, t=request.app.state.i18n.t)
-    return HTMLResponse(content=html)
 
 
 @router.get("/statistics")

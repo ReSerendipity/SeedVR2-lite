@@ -42,20 +42,6 @@ class TestHistoryAPI:
         assert "total_pages" in data
         assert isinstance(data["records"], list)
 
-    def test_history_table_htmx_returns_html_fragment(self, test_app):
-        response = test_app.get(
-            "/api/system/history/table",
-            headers={"HX-Request": "true"},
-        )
-        assert response.status_code == 200
-        assert response.headers["content-type"].startswith("text/html")
-        # HTML 片段不应包含完整页面包装
-        assert "<!DOCTYPE" not in response.text
-        assert "<html" not in response.text
-        assert "<body" not in response.text
-        assert "<table" not in response.text
-        assert "<tbody" not in response.text
-
     def test_history_pagination_page_zero_returns_422(self, test_app):
         """分页边界：page=0 应返回 422（page 最小值为 1）"""
         response = test_app.get("/api/system/history?page=0&page_size=10")

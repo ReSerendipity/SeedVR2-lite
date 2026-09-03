@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""audit_api_consistency.py — 前后端契约一致性审计（四个检查，一个入口）
+"""audit_api_consistency.py — 前后端契约一致性审计（五个检查，一个入口）
 
 为什么需要它
 ------------
@@ -11,13 +11,14 @@
 * 内联 ``onclick="foo()"`` 指向不存在的函数 → ReferenceError 一闪而过；
 * 后端有路由、前端无入口 → 功能对用户完全不可见。
 
-四个子命令
+五个子命令
 ----------
 ``routes``          路由差集：A 类（前端调用 / 后端缺失）+ B 类（后端存在 / 前端无入口）
+``docs``            网站 API 文档里写了、但后端不存在的路径（用户照文档调用即 404）
 ``form-fields``     前端提交的表单字段 vs 端点 OpenAPI requestBody 实际接受的字段
 ``inline-handlers`` 模板内联事件处理器引用的标识符是否都有定义
 ``orphans``         B 类逐条精确反查，并给出「有意为之 / 遗留死代码 / 真实缺口」判定
-``all``             依次执行上述四项（默认）
+``all``             依次执行上述五项（默认）
 
 路由清单来源（按优先级）
 ------------------------
@@ -105,14 +106,15 @@ KNOWN_ORPHANS: dict[str, tuple[str, str]] = {
     "/api/ui/parameters/validate": ("api-surface", "tests/test_ui_routes.py / test_property_based.py 消费"),
     "/api/ui/preferences/reset": ("api-surface", "tests/test_ui_routes.py 消费；UI 侧重置走前端本地清 sv_* 键"),
     "/api/system/metrics/reset": (
-        "no-consumer",
-        "全仓无消费者（UI/测试/文档/示例均无）——接运维入口或直接删除，需维护者定夺",
+        "intentional",
+        "运维端点（经 /docs 可达）：它是 MetricsCollector.reset() 的**唯一**调用者，"
+        "删端点只会把该方法变成孤儿——用一种死码换另一种，故保留。曾误标 no-consumer",
     ),
-    "/api/system/history/table": (
-        "dead-code",
-        "HTMX 表格片段端点；现由 /api/system/history + JS 渲染接管，history_table.html 同批清理",
+    "/api/restore/{}/result": (
+        "api-surface",
+        "examples/api_example.js:324 与 examples/api_example.py:305 实际在调用；"
+        "曾误标 dead-code（漏看了 examples 消费者），本批补进 website/docs/guide/api.md",
     ),
-    "/api/restore/{}/result": ("dead-code", "结果已由 SSE progress 事件与 /download 覆盖"),
 }
 
 _HTTP_METHODS = ("get", "post", "put", "delete", "patch")
@@ -381,6 +383,38 @@ def check_routes(spec: dict[str, Any]) -> dict[str, list[Any]]:
 
 
 # --------------------------------------------------------------------------------------
+# 检查 1b：网站 API 文档 vs 后端路由
+# --------------------------------------------------------------------------------------
+
+DOC_API = REPO / "website" / "docs" / "guide" / "api.md"
+_DOC_ROW = re.compile(r"^\|\s*(GET|POST|PUT|DELETE|PATCH)\s*\|\s*`([^`]+)`\s*\|", re.I)
+
+
+def check_docs(spec: dict[str, Any]) -> dict[str, Any]:
+    """文档里写了但后端不存在的路径。
+
+    这类不一致的后果最直接：用户照着网站文档调用，拿到 404。实测本仓
+    ``api.md`` 曾列有 ``/api/system/sse``、``/api/restore/task/{task_id}``、
+    ``/api/tasks/queue`` 等**根本不存在**的端点。
+    """
+    if not DOC_API.is_file():
+        return {"missing": [], "documented": 0, "exists": False}
+    routes = backend_routes(spec)
+    missing: list[tuple[str, str]] = []
+    total = 0
+    for line in DOC_API.read_text(encoding="utf-8").splitlines():
+        m = _DOC_ROW.match(line.strip())
+        if not m:
+            continue
+        total += 1
+        method, path = m.group(1).upper(), norm_frontend(m.group(2))
+        matched = next((bp for bp in routes if seg_match(path, bp)), None)
+        if matched is None or method not in routes[matched]:
+            missing.append((f"{method} {path}", matched or ""))
+    return {"missing": missing, "documented": total, "exists": True}
+
+
+# --------------------------------------------------------------------------------------
 # 检查 2：表单字段
 # --------------------------------------------------------------------------------------
 
@@ -638,7 +672,10 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="前后端契约一致性审计")
     parser.add_argument(
-        "command", nargs="?", default="all", choices=["routes", "form-fields", "inline-handlers", "orphans", "all"]
+        "command",
+        nargs="?",
+        default="all",
+        choices=["routes", "docs", "form-fields", "inline-handlers", "orphans", "all"],
     )
     parser.add_argument("--openapi", help="从 JSON 文件读路由清单")
     parser.add_argument("--base-url", help="从运行中的实例 GET /openapi.json（只读）")
@@ -646,7 +683,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--strict", action="store_true", help="已知死代码/缺口也判失败")
     args = parser.parse_args(argv)
 
-    needs_spec = args.command in {"routes", "form-fields", "orphans", "all"}
+    needs_spec = args.command in {"routes", "docs", "form-fields", "orphans", "all"}
     spec = load_openapi(args.openapi, args.base_url) if needs_spec else {}
 
     rc = 0
@@ -655,14 +692,29 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             print(json.dumps(res, ensure_ascii=False, default=str, indent=2))
         else:
-            print("\n" + "=" * 96 + "\n检查 1/4 · 路由差集\n" + "=" * 96)
+            print("\n" + "=" * 96 + "\n检查 1/5 · 路由差集\n" + "=" * 96)
             rc |= _print_routes(res, args.strict)
+    if args.command in {"docs", "all"}:
+        doc = check_docs(spec)
+        if args.json:
+            print(json.dumps(doc, ensure_ascii=False, indent=2))
+        else:
+            print("\n" + "=" * 96 + "\n检查 2/5 · 网站 API 文档 vs 后端路由\n" + "=" * 96)
+            if not doc["exists"]:
+                print("  · 未找到 website/docs/guide/api.md，跳过")
+            elif doc["missing"]:
+                print(f"  ✗ 文档收录 {doc['documented']} 条，其中 {len(doc['missing'])} 条后端不存在或方法不符：")
+                for documented, nearest in doc["missing"]:
+                    print(f"      {documented}" + (f"   （最接近：{nearest}）" if nearest else ""))
+                rc = 1
+            else:
+                print(f"  ✓ 文档收录 {doc['documented']} 条端点全部真实存在且方法匹配")
     if args.command in {"form-fields", "all"}:
         ff = check_form_fields(spec)
         if args.json:
             print(json.dumps(ff, ensure_ascii=False, indent=2))
         else:
-            print("\n" + "=" * 96 + "\n检查 2/4 · 表单字段前后端对齐\n" + "=" * 96)
+            print("\n" + "=" * 96 + "\n检查 3/5 · 表单字段前后端对齐\n" + "=" * 96)
             print(f"前端提交 {ff['front_total']} 个字段；后端接收面 {ff['accepted_total']} 个；端点 {ff['endpoints']}")
             if ff["dropped"]:
                 print("  ✗ 前端提交但后端不接收（FastAPI 静默丢弃，用户调了没效果）：")
@@ -677,7 +729,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             print(json.dumps(problems, ensure_ascii=False, indent=2))
         else:
-            print("\n" + "=" * 96 + "\n检查 3/4 · 内联事件处理器是否绑定真实函数\n" + "=" * 96)
+            print("\n" + "=" * 96 + "\n检查 4/5 · 内联事件处理器是否绑定真实函数\n" + "=" * 96)
             if problems:
                 print("\n".join(f"  ✗ {p}" for p in problems))
                 rc = 1

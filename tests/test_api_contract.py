@@ -76,6 +76,21 @@ def test_inline_handlers_reference_defined_functions():
     assert not problems, "内联处理器绑定了未定义的函数：\n" + "\n".join(problems)
 
 
+def test_documented_api_paths_exist(test_app):
+    """网站 API 文档里写的每条路径都必须真实存在（用户照文档调用不该拿 404）。
+
+    实测本仓 ``website/docs/guide/api.md`` 曾列有 ``/api/system/sse``、
+    ``/api/restore/task/{task_id}``、``/api/tasks/queue``、``/api/system/gpu/status``
+    等**根本不存在**的端点——这类不一致比前端笔误更直接：文档是对外承诺。
+    """
+    doc = audit.check_docs(test_app.app.openapi())
+    assert doc["exists"], "找不到 website/docs/guide/api.md（删空文档会让本断言假绿）"
+    assert doc["documented"] >= 40, f"文档收录端点数异常偏少（{doc['documented']}），疑似被整体删减"
+    assert not doc["missing"], "文档中的端点后端不存在或方法不符：" + "; ".join(
+        f"{d}" + (f"（最接近 {n}）" if n else "") for d, n in doc["missing"]
+    )
+
+
 def test_batch_lifecycle_endpoints_are_wired_both_ends(test_app):
     """批量任务的两条生命周期控制链路必须前后端都接通。
 
