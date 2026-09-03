@@ -73,10 +73,6 @@ jobs:
       - name: Black (format check)
         run: python -m black --check .
 
-      - name: Mypy (type check)
-        run: python -m mypy app/integrated_app
-        if: always()
-
       - name: Pytest + coverage
         # 测试失败（含收集失败）必须让 job 失败：本步骤是真实质量门禁，不得加 || true
         run: python -m pytest -q --ignore=tests/perf --cov=app/integrated_app --cov-report=xml --cov-report=html --cov-report=term
@@ -135,6 +131,24 @@ jobs:
           file: ./coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # 类型门禁（家族底线；2026-09-03 迁移至组织级 reusable workflow）
+  # 原先嵌在 quality-gate 双 OS 矩阵里跑两份相同的 mypy（类型错误与 OS 无关，
+  # 且双 runner 依赖版本漂移会让两端口径悄悄分家），改为独立 job 单点执行。
+  # 本仓不建 .ci/mypy_baseline.txt：模板对缺失基线走零容忍（当前口径 0 错误，
+  # 出现任何新错误即红）。口径＝mypy 2.3.1 + pydantic（pyproject 声明了
+  # pydantic.mypy 插件）；升级 mypy 版本或改 typecheck_extra_pip 前必须复测。
+  # （原步骤见 git 历史；迁移记录 docs/reports/家族模板迁移_mypy_ratchet_20260903.md）
+  typecheck:
+    name: Typecheck (mypy ratchet)
+    uses: ReSerendipity/.github/.github/workflows/python-quality-baseline.yml@main
+    with:
+      package: app/integrated_app
+      include_tests: false
+      mypy_target: app/integrated_app
+      typecheck_extra_pip: pydantic
+    permissions:
+      contents: read
 
   # ── 安全断言（部署安全红线，2026-08-17 新增） ──────────────────
   security-assertions:
