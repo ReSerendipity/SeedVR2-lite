@@ -62,14 +62,29 @@ KNOWN_ORPHANS: dict[str, tuple[str, str]] = {
     "/metrics": ("intentional", "Prometheus 抓取端点，由监控侧调用，不经 UI"),
     "/api/system/ping": ("intentional", "容器 liveness 探针（Dockerfile HEALTHCHECK / K8s startupProbe）"),
     "/api/system/ready": ("intentional", "容器 readiness 探针，预热期返回 503+Retry-After"),
-    "/api/engine/detect": ("intentional", "引擎抽象层对外集成面（MCP / 外部客户端），Web UI 走 /api/restore"),
-    "/api/engine/list": ("intentional", "同上"),
-    "/api/engine/submit": ("intentional", "同上"),
-    "/api/engine/task/{}": ("intentional", "同上"),
-    "/api/system/model/load": ("intentional", "服务端 ensure_model_loaded 在提交任务时自动调用"),
-    "/api/system/model/unload": ("intentional", "空闲超时卸载由后端 lifespan 任务驱动"),
-    "/api/system/model/switch": ("intentional", "尺寸/精度切换由 ensure_model_loaded 对齐 dit_model 时代替"),
-    "/api/system/history/resolve": ("intentional", "内部路径解析，供下载/缩略图链路使用"),
+    "/api/engine/detect": (
+        "api-surface",
+        "引擎抽象层对外集成面：仅 /docs Swagger 与外部客户端可达（tests/ 亦无消费者），Web UI 走 /api/restore",
+    ),
+    "/api/engine/list": ("api-surface", "同上"),
+    "/api/engine/submit": ("api-surface", "同上"),
+    "/api/engine/task/{}": ("api-surface", "同上"),
+    "/api/system/model/load": (
+        "api-surface",
+        "tests/test_api.py 与 E2E api-mocks 消费；Web UI 不直连——提交任务时由服务端 ensure_model_loaded 自动加载",
+    ),
+    "/api/system/model/unload": (
+        "api-surface",
+        "tests/test_api.py 与 E2E api-mocks 消费；空闲超时卸载由后端 lifespan 任务驱动",
+    ),
+    "/api/system/model/switch": (
+        "api-surface",
+        "tests/test_api.py 与 E2E api-client 消费；UI 侧改尺寸/精度由 ensure_model_loaded 对齐 dit_model 时代替",
+    ),
+    "/api/system/history/resolve": (
+        "api-surface",
+        "tests/test_output_provenance.py 消费的内部路径解析，供下载/缩略图链路使用",
+    ),
     "/api/system/gpu/system": (
         "api-surface",
         "tests/test_api.py 与 E2E api-mocks 消费的系统级 GPU 汇总，UI 走 /api/system/gpu",
@@ -502,28 +517,29 @@ def check_inline_handlers() -> list[str]:
 # --------------------------------------------------------------------------------------
 
 
-def _probe_candidates(path: str) -> list[str]:
-    """静态尾段探针（至少带一个前导斜杠，避免 ``/ping`` 误命中 ``stopping`` 这类子串）。"""
-    segs = [s for s in path.split("/") if s and s != "{}"]
-    out: list[str] = []
-    for take in (3, 2, 1):
-        if len(segs) >= take:
-            out.append("/" + "/".join(segs[-take:]))
-    return list(dict.fromkeys(out))
+def _probe_pattern(path: str) -> re.Pattern[str]:
+    """整条静态路径做探针，参数段 ``{}`` 编译成 ``.{0,40}``。
+
+    必须带前后边界断言：只用「尾段子串」会大面积假命中——``/system`` 命中
+    ``/api/system/settings``、``/load`` 命中注释里的 ``loading``、``/metrics``
+    命中 ``/api/system/metrics``，展示出来的「前端引用」全是假的。
+    ``.{0,40}`` 同时覆盖 ``${id}`` 模板插值与 ``'/a/' + id + '/b'`` 字符串拼接。
+    """
+    body = r".{0,40}".join(re.escape(p) for p in path.split("{}"))
+    return re.compile(rf"(?<![\w/.{{}}-]){body}(?![\w/-])")
 
 
 def classify_orphans(b_orphans: list[tuple[str, set[str]]]) -> list[dict[str, Any]]:
     files = frontend_sources()
     rows: list[dict[str, Any]] = []
     for path, methods in b_orphans:
-        probes = _probe_candidates(path)
+        pattern = _probe_pattern(path)
         hits: list[str] = []
         for f, src in files:
-            for probe in probes:
-                for lineno, line in enumerate(src.splitlines(), 1):
-                    if probe in line:
-                        hits.append(f"{short_name(f)}:{lineno}")
-                        break
+            for lineno, line in enumerate(src.splitlines(), 1):
+                if pattern.search(line):
+                    hits.append(f"{short_name(f)}:{lineno}")
+                    break
         disposition, reason = KNOWN_ORPHANS.get(path, ("unclassified", "未归档——需要维护者定性"))
         rows.append(
             {
