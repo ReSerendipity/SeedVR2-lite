@@ -10,7 +10,8 @@
 * **fix(i18n):** 动态取词键缺词——状态徽标走 `I['status.' + data.status]`，而 `status` 命名空间只有 pending/processing/completed/failed，**没有 cancelled**，导致五种语言界面在任务被取消后都显示裸英文 `cancelled`；静态完整性门禁为避误报必须跳过动态键，因此这类缺词无任何自动拦截（已补 `status.cancelled` ×5 语言，并在 AGENTS §8.1 登记该盲区，KNOWN_ISSUES #56）
 * **test:** 新增契约门禁 `tests/test_api_contract.py`（6 项：抽取器自证未静默失效 / A 类路径缺失 / HTTP 方法不匹配 / 表单字段被 FastAPI 静默丢弃 / 内联 `onclick` 悬空引用 / 静态资源 404 / 批量取消与重试两端接通）；`tests/test_api.py` 补 4 项批量生命周期用例（不存在批次 404、processing 中取消真实调用 `request_cancel` 并落账、已完成批次取消 400、重试 404）
 * **docs:** AGENTS.md v1.52（§4.1 新增「前后端契约一致性」测试行、§8.1 新增动态取词盲区行）；KNOWN_ISSUES 追加 #55/#56
-* **审计结论（本轮实测）:** A 类 0 处遗留（候选 `/api/restore` 尾斜杠经 `curl` 证实被 `redirect_slashes` 307 兜住、非缺陷；拼接形态的批量取消已修）；表单字段 33/33 全被后端接收、零静默丢弃；内联处理器 0 处悬空引用；静态资源 0 处缺失；B 类 23 条全部归档定性（11 有意 / 11 对外 API 面 / 1 无消费者待定夺 / 2 待清理遗留），`python scripts/audit_api_consistency.py all` 退出码 0
+* **审计结论（本轮实测）:** A 类 0 处遗留（候选 `/api/restore` 尾斜杠经 `curl` 证实被 `redirect_slashes` 307 兜住、非缺陷；拼接形态的批量取消已修）；表单字段 33/33 全被后端接收、零静默丢弃；内联处理器 0 处悬空引用；静态资源 0 处缺失；B 类 24 条全部归档定性（3 有意探针/集成面 / 18 对外 API 面 / 1 无消费者待定夺 / 2 待清理遗留），`python scripts/audit_api_consistency.py all` 退出码 0
+* **fix(audit):** 工具自身两处可信度缺陷随后修掉（`1c6fca3` / `7aed8b1`）——① 孤儿反查探针原用「尾 1~3 段做子串匹配」，`/system` 命中 `/api/system/settings`、`/load` 命中注释里的 `loading`，「前端引用」一列几乎全是假的，改为整条静态路径 + 前后边界断言；② 路径比对的参数段通配原双向放开，导致前端 `/api/system/history/${id}` 「顺便覆盖」后端字面路由 `/api/system/history/table`，把死码端点判成已有入口（B 类漏报 2 条），改为**只允许后端方向通配**（收紧后 A 类仍为 0，反证不带来假阳性），见 KNOWN_ISSUES #57
 * **验证:** 全量 pytest **1245 passed / 1 skipped / 0 failed**、ruff + black + mypy(108 files) 全绿、E2E chromium-desktop **219 passed / 0 failed**、`node tests/check-responsive.js` 13/13 无横向溢出；新按钮在 1440/900/375 三视口 × 双主题实测 92×44（移动 81×44）达标且卡片内外均无溢出；端点可达性经隔离实例带 CSRF 双提交实测（返回本处理器自己的 `NOT_FOUND 批量任务不存在` 信封）
 
 ### Comfy-Org 五精度量化兼容（fp16/fp8 留 numz，新增 int8_convrot/mxfp8/nvfp4）
