@@ -605,6 +605,7 @@
     "processing": "Traitement",
     "completed": "Terminé",
     "failed": "Échoué",
+    "cancelled": "Annulé",
     "uploaded": "Téléchargé",
     "lock_hint_lock": "Cliquez pour déverrouiller et personnaliser",
     "lock_hint_unlock": "Cliquez pour verrouiller la valeur recommandée",

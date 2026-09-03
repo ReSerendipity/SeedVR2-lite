@@ -339,6 +339,56 @@ class TestRestoreTaskFlow:
         response = test_app.get("/api/restore/batch/nonexistent_batch_001/progress")
         assert response.status_code == 404
 
+    def test_batch_cancel_nonexistent_returns_404(self, test_app):
+        """POST /api/restore/batch/{batch_id}/cancel 对不存在的批次应返回 404"""
+        response = csrf_post(test_app, "/api/restore/batch/nonexistent_batch_002/cancel", json={})
+        assert response.status_code == 404
+
+    def test_batch_cancel_requests_queue_cancel_and_marks_cancelled(self, test_app):
+        """运行中的批量任务取消：必须真正通知队列并把状态置为 cancelled。
+
+        回归锁：前端 cancelBatch() 一直 POST 这个路径，但后端曾经**根本没有这个
+        路由**（404 被 .catch 吞掉后仍 toast「已取消」），用户以为停了、GPU 却继续
+        跑完剩余文件。此用例同时钉住「路由存在」「调用 request_cancel」「状态落账」。
+        """
+        from app.integrated_app.services.task_state import task_state_store
+
+        batch_id = "batch-cancel-ok"
+        task_state_store.get_cached_or_create(batch_id, template={"status": "processing", "total": 3})
+        calls: list[str] = []
+        queue = test_app.app.state.task_queue
+        monkey = queue.request_cancel
+        queue.request_cancel = lambda tid: calls.append(tid) or True
+        try:
+            response = csrf_post(test_app, f"/api/restore/batch/{batch_id}/cancel", json={})
+        finally:
+            queue.request_cancel = monkey
+            task_state_store.remove(batch_id)
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["success"] is True
+        assert payload["data"]["status"] == "cancelled"
+        assert calls == [batch_id]
+
+    def test_batch_cancel_finished_task_returns_400(self, test_app):
+        """已完成的批量任务不允许取消 → 400（而不是静默假装成功）"""
+        from app.integrated_app.services.task_state import task_state_store
+
+        batch_id = "batch-cancel-done"
+        task_state_store.get_cached_or_create(batch_id, template={"status": "completed"})
+        try:
+            response = csrf_post(test_app, f"/api/restore/batch/{batch_id}/cancel", json={})
+        finally:
+            task_state_store.remove(batch_id)
+        assert response.status_code == 400
+        assert "无法取消" in response.json()["error"]["message"]
+
+    def test_batch_retry_nonexistent_returns_404(self, test_app):
+        """POST /api/restore/batch/{batch_id}/retry 对不存在的批次应返回 404"""
+        response = csrf_post(test_app, "/api/restore/batch/nonexistent_batch_003/retry", json={})
+        assert response.status_code == 404
+
 
 class TestApiV1Alias:
     """P2-9：/api/v1 路径别名（重写到规范 /api 路径，零路由重复注册）。"""

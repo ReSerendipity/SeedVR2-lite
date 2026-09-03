@@ -605,6 +605,7 @@
     "processing": "Processing",
     "completed": "Completed",
     "failed": "Failed",
+    "cancelled": "Cancelled",
     "uploaded": "Uploaded",
     "lock_hint_lock": "Click to unlock and customize",
     "lock_hint_unlock": "Click to lock back to recommended",

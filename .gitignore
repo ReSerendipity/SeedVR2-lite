@@ -288,8 +288,3 @@ data/checkpoints/
 
 # coverage XML 产物（CI coverage gate 用，属运行时生成）
 /coverage.xml
-
-# 未完成草稿（调研/审计用，未入库；完成后再移除忽略并提交，
-# 避免被 ruff/black 全量检查阻塞代码推送）
-scripts/audit_api_consistency.py
-tests/test_api_contract.py

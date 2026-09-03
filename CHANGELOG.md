@@ -2,6 +2,17 @@
 
 ## [未发布] - 2026-08-30
 
+### 前后端契约一致性审计与批量生命周期接通（2026-09-03）
+
+* **feat(audit):** 新增可复跑审计工具 `scripts/audit_api_consistency.py`（子命令 `routes` / `form-fields` / `inline-handlers` / `orphans` / `all`）——路由清单默认进程内 `create_app(load_config())` 生成（也可 `--openapi` / `--base-url` 复用已运行实例），前端侧从模板与自建 JS 抽取字面量、模板插值、`hx-*` 属性与 **`'/api/x/' + id + '/cancel'` 拼接链**（第一版正因为没展开拼接而漏掉本次最重要的缺陷），双端归一后按段求差集；B 类孤儿路由必须逐条归档定性（intentional / api-surface / no-consumer / dead-code / gap），出现未归档新条目即退出码非 0
+* **fix(P0):** A 类真实缺口——前端 `cancelBatch()` 一直 `POST /api/restore/batch/{batch_id}/cancel`，而该路径后端**从未注册**（`batch.py` 只有 `/batch`、`/batch/{id}/progress`、`/batch/{id}/retry`）。404 被 `.catch` 吞掉后仍 toast「任务已取消」，于是用户看到一次成功操作、`task_queue` 却从未收到取消信号、GPU 继续跑完整批剩余文件。新增 `cancel_batch` 端点（与单任务 `cancel_task` 同构：状态校验 → `task_queue.request_cancel(batch_id)` → 任务置 cancelled；批量按文件各自落库故不动单条记录），并把两条取消分支的失败反馈改为词表现成的 `restore.cancel_failed` 警告，不再谎报成功（KNOWN_ISSUES #55）
+* **feat(P1):** B 类真实缺口——`POST /api/restore/batch/{batch_id}/retry`（`retry_failed_batch`）后端早已完整实现，但全仓搜不到任何前端引用：批量界面只显示「失败 N」却没有重试入口。在批量进度卡头部补 `#btnRetryBatch`（复用既有 `.sv-btn.sv-btn-outline.sv-btn-sm`，自带 `min-height:44px` 满足触控门禁；复用既有 `bi-arrow-repeat` 图标；零新增 CSS），点击后**复用同一张进度卡与既有 1s 轮询**恢复跟踪，不新建界面或第二套进度组件；文案取词用五语词表现成的 `common.retry` + 失败计数
+* **fix(i18n):** 动态取词键缺词——状态徽标走 `I['status.' + data.status]`，而 `status` 命名空间只有 pending/processing/completed/failed，**没有 cancelled**，导致五种语言界面在任务被取消后都显示裸英文 `cancelled`；静态完整性门禁为避误报必须跳过动态键，因此这类缺词无任何自动拦截（已补 `status.cancelled` ×5 语言，并在 AGENTS §8.1 登记该盲区，KNOWN_ISSUES #56）
+* **test:** 新增契约门禁 `tests/test_api_contract.py`（6 项：抽取器自证未静默失效 / A 类路径缺失 / HTTP 方法不匹配 / 表单字段被 FastAPI 静默丢弃 / 内联 `onclick` 悬空引用 / 静态资源 404 / 批量取消与重试两端接通）；`tests/test_api.py` 补 4 项批量生命周期用例（不存在批次 404、processing 中取消真实调用 `request_cancel` 并落账、已完成批次取消 400、重试 404）
+* **docs:** AGENTS.md v1.52（§4.1 新增「前后端契约一致性」测试行、§8.1 新增动态取词盲区行）；KNOWN_ISSUES 追加 #55/#56
+* **审计结论（本轮实测）:** A 类 0 处遗留（候选 `/api/restore` 尾斜杠经 `curl` 证实被 `redirect_slashes` 307 兜住、非缺陷；拼接形态的批量取消已修）；表单字段 33/33 全被后端接收、零静默丢弃；内联处理器 0 处悬空引用；静态资源 0 处缺失；B 类 23 条全部归档定性（11 有意 / 11 对外 API 面 / 1 无消费者待定夺 / 2 待清理遗留），`python scripts/audit_api_consistency.py all` 退出码 0
+* **验证:** 全量 pytest **1245 passed / 1 skipped / 0 failed**、ruff + black + mypy(108 files) 全绿、E2E chromium-desktop **219 passed / 0 failed**、`node tests/check-responsive.js` 13/13 无横向溢出；新按钮在 1440/900/375 三视口 × 双主题实测 92×44（移动 81×44）达标且卡片内外均无溢出；端点可达性经隔离实例带 CSRF 双提交实测（返回本处理器自己的 `NOT_FOUND 批量任务不存在` 信封）
+
 ### Comfy-Org 五精度量化兼容（fp16/fp8 留 numz，新增 int8_convrot/mxfp8/nvfp4）
 
 * **feat:** 加载期反量化引擎——新增 `app/integrated_app/engines/quant_dequant.py`，纯 torch 实现 int8_convrot（分组 Hadamard 逆旋转）/ mxfp8（E8M0 块缩放）/ nvfp4（E2M1 nibble 打包 × e4m3 块缩放 × 全局标量）三种 ComfyUI 量化格式的反量化，数值语义逐条对齐上游 comfy_kitchen（Apache-2.0）；`seedvr2_engine.py` 在 fp8 分支旁挂 `dequantize_state_dict` dispatch（按 `*.comfy_quant` 元数据识别格式）

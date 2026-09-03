@@ -605,6 +605,7 @@
     "processing": "处理中",
     "completed": "已完成",
     "failed": "失败",
+    "cancelled": "已取消",
     "uploaded": "已上传",
     "lock_hint_lock": "点击解锁，可手动修改",
     "lock_hint_unlock": "点击锁回系统推荐值",

@@ -8,6 +8,7 @@ OOM 分类降级、断点续跑）已迁移到 services/restore_service.py（P0-
 API 端点：
 - POST /api/restore/batch: 创建批量修复任务
 - GET /api/restore/batch/{batch_id}/progress: 查询批量任务进度
+- POST /api/restore/batch/{batch_id}/cancel: 取消进行中的批量任务
 - POST /api/restore/batch/{batch_id}/retry: 重试批量任务中失败的文件
 
 所属项目：SeedVR2 (SeedVR2 视频/图像修复工具)
@@ -319,6 +320,61 @@ async def get_batch_progress(batch_id: str, history_db: HistoryDB = Depends(get_
             "media_type": cached.get("media_type", "image"),
         }
     )
+
+
+@router.post("/batch/{batch_id}/cancel")
+async def cancel_batch(
+    batch_id: str,
+    history_db: HistoryDB = Depends(get_history_db),
+    task_queue: TaskQueue = Depends(get_task_queue),
+):
+    """取消进行中的批量修复任务。
+
+    API 端点：POST /api/restore/batch/{batch_id}/cancel
+
+    路径参数：
+    - batch_id: 批量任务 ID
+
+    返回格式（JSON）：
+    {
+        "success": true,
+        "data": {
+            "batch_id": str,
+            "status": "cancelled",
+            "message": "批量任务已取消"
+        }
+    }
+
+    错误响应：
+    - 404: 批量任务不存在
+    - 400: 任务状态不允许取消（已完成/失败/已取消）
+
+    说明：批量任务的历史记录是**逐文件**落库的，这里不改动单条记录；
+    后台循环在每次文件迭代前检查 ``task_queue.is_cancelled(batch_id)``，
+    并在退出点把最终状态定为 ``cancelled``（见 services/restore_service.py）。
+
+    Args:
+        batch_id: 批量任务 ID。
+        history_db: 历史数据库实例。
+        task_queue: 任务队列实例。
+
+    Returns:
+        取消操作结果。
+
+    Raises:
+        HTTPException: 任务不存在或状态不合法时抛出。
+    """
+    task = await common.get_task_state(batch_id, history_db)
+    if not task:
+        raise HTTPException(status_code=404, detail="批量任务不存在")
+
+    status = task.get("status", "unknown")
+    if status not in ("pending", "processing"):
+        raise HTTPException(status_code=400, detail=f"任务状态为 {status}，无法取消")
+
+    task_queue.request_cancel(batch_id)
+    await common.update_task_state(batch_id, history_db, status="cancelled", error_message="用户取消")
+    return respond_success({"batch_id": batch_id, "status": "cancelled", "message": "批量任务已取消"})
 
 
 @router.post("/batch/{batch_id}/retry")

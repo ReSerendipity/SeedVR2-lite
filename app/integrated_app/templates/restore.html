@@ -207,6 +207,7 @@
                     <span id="batchProgressTitle">{{ t('video.batch_progress') }}</span>
                     <span class="sv2-batch-pct" id="batchPercentText">0%</span>
                     <span id="batchStatus" class="sv-badge sv-badge-processing">{{ t('status.processing') }}</span>
+                    <button type="button" class="sv-btn sv-btn-outline sv-btn-sm" id="btnRetryBatch" style="display:none;" hidden><i class="bi bi-arrow-repeat"></i> {{ t('common.retry') }}</button>
                     <button type="button" class="sv2-cancel" id="btnCancelBatch" aria-label="{{ t('common.cancel') }}" title="{{ t('restore.cancel_batch_task') }}"><i class="bi bi-x-lg"></i></button>
                 </div>
                 <div class="sv2-progress-track"><div class="sv2-progress-bar" id="batchProgressBar"></div></div>
@@ -572,6 +573,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnResetRestore: document.getElementById('btnResetRestore'),
         btnCancelRestore: document.getElementById('btnCancelRestore'),
         btnCancelBatch: document.getElementById('btnCancelBatch'),
+        btnRetryBatch: document.getElementById('btnRetryBatch'),
         batchProgressBar: document.getElementById('batchProgressBar'),
         batchProgressText: document.getElementById('batchProgressText'),
         batchPercentText: document.getElementById('batchPercentText'),
@@ -954,13 +956,13 @@ document.addEventListener('DOMContentLoaded', () => {
             currentBatchId = null;
             try { localStorage.removeItem('sv_restore_session'); } catch(e) {}
 
-            // 尝试通知后端取消（失败也无妨，前端已清理）
+            // 尝试通知后端取消（失败必须如实告知：前端已清理不代表后端真的停了）
             if (savedTaskId) {
                 SeedVR2.api.post('/api/restore/' + savedTaskId + '/cancel').then(function() {
                     SeedVR2.toast(I['restore.task_cancelled'] || '任务已取消', 'info');
                 }).catch(function(err) {
                     console.warn('Cancel API failed (frontend already cleaned):', err.message);
-                    SeedVR2.toast(I['restore.task_cancelled'] || '任务已取消', 'info');
+                    SeedVR2.toast((I['restore.cancel_failed'] || 'Cancel failed') + ': ' + (err && err.message ? err.message : err), 'warning', 8000);
                 });
             } else {
                 SeedVR2.toast(I['restore.task_cancelled'] || '任务已取消', 'info');
@@ -1005,7 +1007,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     SeedVR2.toast(I['restore.batch_task_cancelled'] || '任务已取消', 'info');
                 }).catch(function(err) {
                     console.warn('Cancel API failed (frontend already cleaned):', err.message);
-                    SeedVR2.toast(I['restore.batch_task_cancelled'] || '任务已取消', 'info');
+                    SeedVR2.toast((I['restore.cancel_failed'] || 'Cancel failed') + ': ' + (err && err.message ? err.message : err), 'warning', 8000);
                 });
             } else {
                 SeedVR2.toast(I['restore.batch_task_cancelled'] || '任务已取消', 'info');
@@ -1661,6 +1663,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (els.batchPercentText) els.batchPercentText.textContent = '0%';
                     if (els.batchEta) els.batchEta.textContent = '';
                     if (els.batchCurrentFile) els.batchCurrentFile.style.display = 'none';
+                    setBatchRetry(0);
                     SeedVR2.toast(I['video.batch_started'] || '批量处理已启动', 'info');
                     pollBatchProgress(batchData.batch_id);
                 } catch (err) {
@@ -1736,12 +1739,53 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (els.batchPercentText) els.batchPercentText.textContent = data.status === 'completed' ? '100%' : progress + '%';
                     if (els.batchEta) els.batchEta.textContent = data.status === 'completed' ? (I['restore.completed'] || '完成') : '';
                     if (els.batchCurrentFile) els.batchCurrentFile.style.display = 'none';
+                    setBatchRetry(failed);
                     SeedVR2.toast(I['video.batch_completed']?.replace('{completed}', completed).replace('{failed}', failed) || '批量处理完成', data.status === 'completed' ? 'success' : 'error');
                 }
             } catch (err) {
                 console.error('Batch poll error:', err);
             }
         }, 1000);
+    }
+
+    /**
+     * 批量重试按钮的显隐与文案（「重试 (失败数)」）。
+     * 只在批量任务进入终态且有失败文件时出现；文案复用五语言词表已有的 common.retry。
+     */
+    function setBatchRetry(failed) {
+        if (!els.btnRetryBatch) return;
+        const count = Number(failed) || 0;
+        els.btnRetryBatch.hidden = count <= 0;
+        els.btnRetryBatch.style.display = count > 0 ? '' : 'none';
+        if (count > 0) {
+            els.btnRetryBatch.innerHTML = '<i class="bi bi-arrow-repeat"></i> '
+                + SeedVR2.escapeHtml(I['common.retry'] || 'Retry') + ' (' + count + ')';
+        }
+    }
+
+    /**
+     * 重试本批失败的文件。
+     * 后端 POST /api/restore/batch/{batch_id}/retry 早已实现，但界面上没有任何入口能触发它；
+     * 这里补上入口，并**复用**当前进度卡与既有轮询：重置徽标 → 重新 pollBatchProgress，
+     * 不新建第二套进度组件、不改后端重试逻辑（重试后状态回到 processing，failed 归零）。
+     */
+    function retryFailedBatch() {
+        if (!currentBatchId) return;
+        const batchId = currentBatchId;
+        setBatchRetry(0);
+        SeedVR2.api.post('/api/restore/batch/' + batchId + '/retry').then(() => {
+            if (els.batchStatus) {
+                els.batchStatus.className = 'sv-badge sv-badge-processing';
+                els.batchStatus.textContent = I['status.processing'] || 'Processing';
+            }
+            if (els.batchEta) els.batchEta.textContent = '';
+            batchStartTime = Date.now();
+            SeedVR2.toast(I['video.retrying'] || 'Retrying...', 'info');
+            pollBatchProgress(batchId);
+        }).catch((err) => {
+            console.warn('Batch retry failed:', err);
+            SeedVR2.toast((I['video.retry_failed'] || 'Retry failed') + ': ' + (err && err.message ? err.message : err), 'error', 8000);
+        });
     }
 
     // 重置
@@ -1753,6 +1797,7 @@ document.addEventListener('DOMContentLoaded', () => {
             batchInterval = null;
         }
         currentBatchId = null;
+        setBatchRetry(0);
         scannedFiles = [];
         els.scanResults.innerHTML = '';
         els.folderPath.value = '';
@@ -1943,6 +1988,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (els.btnCancelBatch) {
         els.btnCancelBatch.addEventListener('click', cancelBatch);
+    }
+    if (els.btnRetryBatch) {
+        els.btnRetryBatch.addEventListener('click', retryFailedBatch);
     }
 
     // ===== 优化参数分组：点击 🔒/🔓 图标解锁 & 重新锁定 =====
