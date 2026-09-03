@@ -1,0 +1,66 @@
+name: 提问
+description: 咨询 SeedVR2 的安装、配置或使用问题
+title: "[QUESTION] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你的提问！请尽量描述清楚问题背景，方便社区协助解答。
+
+  - type: textarea
+    id: question
+    attributes:
+      label: 你的问题
+      description: 清晰描述你的问题
+      placeholder: "例如：如何处理超大分辨率视频导致的显存不足？"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 背景 / 想达成的目标
+      description: 你在做什么？想要达到什么效果？
+    validations:
+      required: false
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: 已尝试的方法
+      description: 你已经尝试过哪些步骤？
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: 项目版本
+      description: README 徽章或 config.yaml version 字段
+      placeholder: "例如：2.0.0"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows 10
+        - Windows 11
+        - Ubuntu 22.04
+        - Ubuntu 24.04
+        - Debian 12
+        - macOS
+        - 其他
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 补充信息
+      description: 还有其他需要说明的吗？
+    validations:
+      required: false
