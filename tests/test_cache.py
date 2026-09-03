@@ -6,6 +6,7 @@
 """
 
 import os
+import re
 import time
 
 from app.integrated_app.cache import FileCache
@@ -70,11 +71,22 @@ class TestFileCache:
         assert cache.generate_unique_filename("a.png/../..").endswith(".bin")
         assert cache.generate_unique_filename("a.verylongext").endswith(".bin")
 
-    def test_generate_unique_filename_no_collision_same_second(self, tmp_path):
-        """随机后缀从 12 位缩到 6 位后，必须重新证明同秒同名不碰撞。"""
+    def test_generate_unique_filename_same_second_collision_is_bounded(self, tmp_path):
+        """随机后缀从 12 位缩到 6 位后，重新证明同秒同名的碰撞率可忽略。
+
+        ⚠️ 不能断言「2000 次全不碰撞」：6 位 hex 只有 2^24 空间，2000 次同秒
+        抽样的期望碰撞数 C(2000,2)/2^24 ≈ 0.12，也就是**约 11% 的运行至少撞一次**
+        ——那是一条会自己飘红的假断言（本仓 playwright/pytest 均 retries=0，
+        它会随机把 CI 打红）。正确口径是「碰撞率可忽略」：要求 ≥1990 个不同名
+        （需撞满 10 次才失败，泊松 λ≈0.12 下概率约 1e-12），同时仍能抓住真正的
+        回归——后缀若被去掉，2000 次只会得到 1 个不同名。
+        """
         cache = FileCache(str(tmp_path))
         names = [cache.generate_unique_filename("same.png") for _ in range(2000)]
-        assert len(set(names)) == 2000
+        distinct = set(names)
+        assert len(distinct) >= 1990, f"同秒同名碰撞率异常：{len(names) - len(distinct)} 次碰撞"
+        for name in list(distinct)[:5]:
+            assert re.fullmatch(r"\d{10}_same_[0-9a-f]{6}\.png", name), name
 
     def test_get_cache_path(self, tmp_path):
         cache = FileCache(str(tmp_path))
