@@ -157,11 +157,17 @@ def norm_frontend(path: str) -> str:
 
 
 def seg_match(front: str, back: str) -> bool:
-    """按段比较。``{}`` 匹配任意单段。"""
+    """按段比较，**通配只允许后端方向**。
+
+    只有后端参数段（``{record_id}`` → ``{}``）可以吸收前端任意段；前端的
+    ``{}``（来自 ``${id}`` 这类动态拼接）**不得**匹配后端字面段——否则前端
+    ``/api/system/history/${id}`` 会「顺便覆盖」后端字面路由
+    ``/api/system/history/table``，把真正的孤儿端点漏判成已有入口。
+    """
     a, b = front.split("/"), back.split("/")
     if len(a) != len(b):
         return False
-    return all(fx == "{}" or bx == "{}" or fx == bx for fx, bx in zip(a, b, strict=True))
+    return all(bx == "{}" or fx == bx for fx, bx in zip(a, b, strict=True))
 
 
 # --------------------------------------------------------------------------------------
