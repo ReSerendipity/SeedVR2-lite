@@ -52,17 +52,16 @@ async def get_inference_history():
     Returns:
         JSON 响应，data 字段包含推理记录列表
     """
-    with metrics_collector._lock:
-        records = [
-            {
-                "timestamp": r.timestamp,
-                "duration": round(r.duration, 2),
-                "success": r.success,
-                "model_size": r.model_size,
-                "input_type": r.input_type,
-            }
-            for r in metrics_collector._inference_records
-        ]
+    records = [
+        {
+            "timestamp": r.timestamp,
+            "duration": round(r.duration, 2),
+            "success": r.success,
+            "model_size": r.model_size,
+            "input_type": r.input_type,
+        }
+        for r in metrics_collector.recent_inferences()
+    ]
     return respond_success(data=records)
 
 

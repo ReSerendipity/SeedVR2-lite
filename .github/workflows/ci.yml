@@ -71,7 +71,7 @@ jobs:
           python scripts/check_config_refs.py
 
       - name: Black (format check)
-        run: python -m black --check .
+        run: python -m ruff format --check .
 
       - name: Pytest + coverage
         # 测试失败（含收集失败）必须让 job 失败：本步骤是真实质量门禁，不得加 || true

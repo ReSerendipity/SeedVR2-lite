@@ -310,6 +310,7 @@
     "gpu_warning_detail": "SeedVR2 需要配备 NVIDIA 独立显卡的电脑才能进行视频/图片修复。当前设备未检测到支持的显卡。",
     "gpu_warning_hint": "如有NVIDIA显卡，请安装最新显卡驱动后重试。",
     "gpu_retry_failed": "检测失败，请重试",
+    "recommendations_applied": "已应用推荐参数",
     "gpu_not_found": "仍未检测到可用 GPU，请确认驱动安装",
     "cancel_task": "取消任务",
     "cancel_task_confirm": "确定要取消当前修复任务吗？已处理进度将丢失。",

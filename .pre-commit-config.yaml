@@ -4,7 +4,16 @@ repos:
     hooks:
       - id: ruff
         args: [--fix]
-      - id: ruff-format
+    # 格式化交给下面的 black（CI 与 precheck 同样跑 black --check）。
+    # 不要在此再加 ruff-format：它与 black 的折行规则存在分歧，两个 formatter
+    # 同时强制会让「提交时被 ruff 改写、push 时被 black 拒绝」来回翻转
+    # （实测见 KNOWN_ISSUES #61）。
+
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 26.5.1
+    hooks:
+      - id: black
+        args: [--config, pyproject.toml]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0

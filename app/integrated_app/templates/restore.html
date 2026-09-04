@@ -240,7 +240,7 @@
             <button type="button" class="sv2-tb-btn sv2-ico" id="btnPresetSave" title="{{ t('restore.preset_save_tip') }}"><i class="bi bi-plus-lg"></i></button>
             <button type="button" class="sv2-tb-btn sv2-ico" id="btnPresetDelete" title="{{ t('restore.preset_delete_tip') }}" disabled><i class="bi bi-trash"></i></button>
         </div>
-        
+
         <!-- 默认设置按钮组 -->
         <div class="sv2-presets sv2-presets-defaults">
             <button type="button" class="sv-btn sv-btn-secondary sv-btn-sm sv-w-100" id="btnSaveAsDefault" title="{{ t('restore.save_default_tip') }}">
@@ -1279,7 +1279,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const typeStats = [];
             if (videoCount > 0) typeStats.push(`<i class="bi bi-film"></i> ${videoCount} ${I['restore.video_files'] || '视频'}`);
             if (imageCount > 0) typeStats.push(`<i class="bi bi-image"></i> ${imageCount} ${I['restore.image_files'] || '图片'}`);
-            
+
             // 生成文件列表（仅展示前 10 个，添加滚动和统计提示）
             const previewCount = Math.min(scannedFiles.length, 10);
             const listHtml = scannedFiles.slice(0, previewCount).map(f => {
@@ -1291,14 +1291,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${sizeText ? `<span class="sv-text-xs sv-text-muted sv-ml-auto" title="文件大小：${sizeText}">${sizeText}</span>` : ''}
                 </div>`;
             }).join('');
-            
+
             const remainingCount = scannedFiles.length - previewCount;
-            const moreInfo = remainingCount > 0 
+            const moreInfo = remainingCount > 0
                 ? `<div class="sv-text-xs sv-text-muted sv-mt-1 sv-flex sv-align-center">
                        <i class="bi bi-list-ul sv-mr-1"></i> ... ${I['restore.and_more'] || '还有'} <strong>${remainingCount}</strong> ${I['restore.more_files'] || '个文件'}
-                   </div>` 
+                   </div>`
                 : '';
-            
+
             els.scanResults.innerHTML = `
                 <div class="sv-alert sv-alert-success sv-mb-2">
                     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
@@ -1981,7 +1981,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (encodeTileOverlap) encodeTileOverlap.value = d.vram_tile_overlap;
         if (decodeTileOverlap) decodeTileOverlap.value = d.vram_tile_overlap;
 
-        SeedVR2.toast?.success?.('已应用推荐参数') || console.log('推荐参数已应用');
+        SeedVR2.toast(I['restore.recommendations_applied'] || '推荐参数已应用', 'success');
     });
     if (els.btnCancelRestore) {
         els.btnCancelRestore.addEventListener('click', cancelRestore);
@@ -2378,36 +2378,36 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     });
                 }
-                
+
                 // 保存到后端
                 await SeedVR2.saveRestorePrefs({ values });
-                
+
                 // 同时保存到 localStorage（跨设备/浏览器同步）
                 localStorage.setItem('seedvr2_restore_defaults', JSON.stringify(values));
-                
+
                 SeedVR2.toast('已保存为默认设置 ✓', 'success');
             } catch (e) {
                 SeedVR2.toast('保存失败：' + e.message, 'error');
             }
         });
     }
-    
+
     // "重置为默认值" - 从 localStorage 加载默认值并应用到表单
     const btnResetToDefault = document.getElementById('btnResetToDefault');
     if (btnResetToDefault) {
         btnResetToDefault.addEventListener('click', async () => {
             if (!confirm('确定要重置所有参数为默认值吗？')) return;
-            
+
             try {
                 // 从 localStorage 加载默认值
                 const defaults = localStorage.getItem('seedvr2_restore_defaults');
                 if (defaults) {
                     const values = JSON.parse(defaults);
                     _applyRestoreFormValues(values);
-                    
+
                     // 同时更新后端 preferences
                     await SeedVR2.saveRestorePrefs({ values });
-                    
+
                     SeedVR2.toast('已重置为上次保存的默认值 ✓', 'success');
                 } else {
                     SeedVR2.toast('还没有保存过默认设置，请先点击"保存为默认设置"', 'warning');
@@ -2806,5 +2806,3 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 {% endblock %}
-
-

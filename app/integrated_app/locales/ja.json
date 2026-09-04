@@ -309,6 +309,7 @@
     "gpu_warning_detail": "SeedVR2で動画・画像を修復するには、NVIDIA製GPUを搭載したコンピューターが必要です。現在のデバイスでは対応するGPUが検出されませんでした。",
     "gpu_warning_hint": "NVIDIA GPUをお持ちの場合は、最新のグラフィックスドライバーをインストールしてから再試行してください。",
     "gpu_retry_failed": "検出に失敗しました。再試行してください",
+    "recommendations_applied": "推奨パラメータを適用しました",
     "gpu_not_found": "利用可能なGPUがまだ検出されません。ドライバーのインストールを確認してください",
     "cancel_task": "タスクをキャンセル",
     "cancel_task_confirm": "現在の修復タスクをキャンセルしてもよろしいですか？処理済みの進捗は失われます。",

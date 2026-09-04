@@ -310,6 +310,7 @@
     "gpu_warning_detail": "SeedVR2 requires a computer with an NVIDIA dedicated GPU for video/image restoration. No supported GPU was detected on this device.",
     "gpu_warning_hint": "If you have an NVIDIA GPU, please install the latest graphics driver and try again.",
     "gpu_retry_failed": "Detection failed, please retry",
+    "recommendations_applied": "Recommended parameters applied",
     "gpu_not_found": "Still no available GPU detected, please confirm driver installation",
     "cancel_task": "Cancel Task",
     "cancel_task_confirm": "Are you sure you want to cancel the current restoration task? Processed progress will be lost.",

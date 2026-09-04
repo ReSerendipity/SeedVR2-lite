@@ -208,6 +208,16 @@ class MetricsCollector:
 
         return snap
 
+    def recent_inferences(self) -> list["InferenceRecord"]:
+        """返回最近推理记录的**拷贝**（锁内取，线程安全）。
+
+        供 ``/api/system/metrics/inference`` 端点使用。此前该端点直接读取
+        ``_lock`` / ``_inference_records`` 私有成员，属封装泄漏——一旦内部
+        结构（deque、字段名）调整就会在路由层炸开。
+        """
+        with self._lock:
+            return list(self._inference_records)
+
     def reset(self) -> None:
         """重置所有推理计数器（不重置运行时间）"""
         with self._lock:

@@ -309,6 +309,7 @@
     "gpu_warning_detail": "SeedVR2 nécessite un ordinateur équipé d'une carte graphique dédiée NVIDIA pour la restauration vidéo/image. Aucune carte graphique compatible n'a été détectée sur cet appareil.",
     "gpu_warning_hint": "Si vous disposez d'un GPU NVIDIA, veuillez installer le dernier pilote graphique puis réessayer.",
     "gpu_retry_failed": "Détection échouée, veuillez réessayer",
+    "recommendations_applied": "Paramètres recommandés appliqués",
     "gpu_not_found": "Aucun GPU disponible n'a été détecté, veuillez confirmer l'installation du pilote",
     "cancel_task": "Annuler la Tâche",
     "cancel_task_confirm": "Êtes-vous sûr de vouloir annuler la tâche de restauration en cours ? La progression traitée sera perdue.",

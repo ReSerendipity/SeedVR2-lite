@@ -309,6 +309,7 @@
     "gpu_warning_detail": "SeedVR2 需要配備 NVIDIA 獨立顯示卡的電腦才能進行影片/圖片修復。當前裝置未偵測到支援的顯示卡。",
     "gpu_warning_hint": "如有NVIDIA顯示卡，請安裝最新顯示卡驅動程式後重試。",
     "gpu_retry_failed": "偵測失敗，請重試",
+    "recommendations_applied": "已套用建議參數",
     "gpu_not_found": "仍未偵測到可用 GPU，請確認驅動程式安裝",
     "cancel_task": "取消任務",
     "cancel_task_confirm": "確定要取消當前修復任務嗎？已處理進度將遺失。",
