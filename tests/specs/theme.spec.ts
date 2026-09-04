@@ -38,12 +38,11 @@ test.describe('Theme Switching', () => {
     // Clear localStorage after navigation to ensure consistent theme state
     // (localStorage is not accessible on about:blank)
     await page.evaluate(() => localStorage.removeItem('sv-theme'));
-    // Reload to apply the cleared theme state.
-    // 必须显式 waitUntil:'domcontentloaded'（与 BasePage.navigate 同策略）：
-    // 默认 'load' 会被 mock 的 SSE/长连接资源拖住，firefox 上偶发整页 load
-    // 超过 60s（CI E2E run #64-#70 反复红在同一处，用例随机轮换）。
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await basePage.waitForPageLoad();
+    // 重新载入以应用清空后的主题状态。
+    // 不用 page.reload()：CI run #64-#70 firefox 反复卡 `page.reload: Timeout
+    // 60000ms`（与 waitUntil 档位无关，详见 BasePage.reloadApplyingClientState
+    // 注释——EventSource mock 有限体触发重连风暴）。改走 goto 原语。
+    await basePage.reloadApplyingClientState();
   });
 
   // ----------------------------------------------------------
@@ -116,9 +115,8 @@ test.describe('Theme Switching', () => {
     const storedTheme = await page.evaluate(() => localStorage.getItem('sv-theme'));
     expect(storedTheme).toBe('light');
 
-    // Reload the page（显式 domcontentloaded，理由同 beforeEach 注释）
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await basePage.waitForPageLoad();
+    // Reload the page（goto+断流辅助，理由同 beforeEach：reload 在 firefox 死锁）
+    await basePage.reloadApplyingClientState();
 
     // Verify the theme persists after reload
     const themeAfterReload = await basePage.getCurrentTheme();
@@ -140,9 +138,8 @@ test.describe('Theme Switching', () => {
     await page.evaluate(() => localStorage.removeItem('sv-theme'));
 
     // Reload the page so the app re-evaluates the theme
-    //（显式 domcontentloaded，理由同 beforeEach 注释）
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await basePage.waitForPageLoad();
+    //（goto+断流辅助，理由同 beforeEach）
+    await basePage.reloadApplyingClientState();
 
     // The page should use the dark fallback (system preference is ignored by design)
     const theme = await basePage.getCurrentTheme();

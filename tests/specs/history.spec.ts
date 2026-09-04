@@ -109,10 +109,11 @@ test.describe('History Records', () => {
         }
       });
 
-      // Reload the page to pick up the new mock
-      //（显式 domcontentloaded：默认 'load' 会被 SSE/长连接拖住，firefox 偶发 60s 超时）
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.waitForLoadState('domcontentloaded');
+      // 重新进入页面以生效新 mock。
+      // 不用 page.reload()：CI run #64-#71 firefox 反复卡 `page.reload: Timeout`
+      // （EventSource mock 有限体触发重连风暴拖住导航；详见
+      //  BasePage.reloadApplyingClientState 注释）。改走 goto 原语。
+      await historyPage.reloadApplyingClientState();
 
       // Pagination should be visible
       await expect(historyPage.pagination).toBeVisible();
@@ -156,8 +157,8 @@ test.describe('History Records', () => {
         }
       });
 
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.waitForLoadState('domcontentloaded');
+      // 重新进入页面以生效新 mock（同上一用例，goto 替代 reload）
+      await historyPage.reloadApplyingClientState();
 
       // Click next page
       if (await historyPage.btnNextPage.isEnabled()) {

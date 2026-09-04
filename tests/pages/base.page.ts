@@ -46,6 +46,36 @@ export class BasePage {
     await this.page.waitForLoadState('domcontentloaded');
   }
 
+  /**
+   * 重新进入当前页面以应用已被改动的客户端状态（如清空后的 localStorage）。
+   *
+   * 不用 page.reload()：CI E2E run #64-#70 的 firefox 反复红在
+   * `page.reload: Timeout 60000ms`。根因不是 waitUntil 档位——app.js 在每次
+   * 载入都会 `new EventSource('/api/sse/events')`，而 api-mocks 的 SSE 用
+   * `route.fulfill` 返回**有限**响应体，服务端关闭连接后 EventSource 依规范
+   * 自动重连，形成重连风暴；此时发起 reload，firefox 会在“旧文档拆载 + 新文档
+   * domcontentloaded”之间死锁（无论 load 还是 domcontentloaded 都超时）。
+   *
+   * 对策（两处都改）：
+   * 1) 先客户端 `__sseConnection.close()` 掐断重连风暴（app.js 在
+   *    `initGlobalSSE` 里把实例挂到了 `window.__sseConnection`）；
+   * 2) 用 `page.goto(当前 URL)` 而非 `reload()`——`goto` 是本类
+   *    `navigate()` 一直在用的原语，8 次失败签名里从无一次卡 `goto`。
+   */
+  async reloadApplyingClientState(): Promise<void> {
+    await this.page.evaluate(() => {
+      try {
+        const conn = (window as unknown as { __sseConnection?: { close?: () => void } })
+          .__sseConnection;
+        conn?.close?.();
+      } catch (e) {
+        /* ignore */
+      }
+    });
+    await this.page.goto(this.page.url(), { waitUntil: 'domcontentloaded' });
+    await this.waitForPageLoad();
+  }
+
   async getPageTitle(): Promise<string> {
     return await this.page.title();
   }
