@@ -38,8 +38,11 @@ test.describe('Theme Switching', () => {
     // Clear localStorage after navigation to ensure consistent theme state
     // (localStorage is not accessible on about:blank)
     await page.evaluate(() => localStorage.removeItem('sv-theme'));
-    // Reload to apply the cleared theme state
-    await page.reload();
+    // Reload to apply the cleared theme state.
+    // 必须显式 waitUntil:'domcontentloaded'（与 BasePage.navigate 同策略）：
+    // 默认 'load' 会被 mock 的 SSE/长连接资源拖住，firefox 上偶发整页 load
+    // 超过 60s（CI E2E run #64-#70 反复红在同一处，用例随机轮换）。
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await basePage.waitForPageLoad();
   });
 
@@ -113,8 +116,8 @@ test.describe('Theme Switching', () => {
     const storedTheme = await page.evaluate(() => localStorage.getItem('sv-theme'));
     expect(storedTheme).toBe('light');
 
-    // Reload the page
-    await page.reload();
+    // Reload the page（显式 domcontentloaded，理由同 beforeEach 注释）
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await basePage.waitForPageLoad();
 
     // Verify the theme persists after reload
@@ -137,7 +140,8 @@ test.describe('Theme Switching', () => {
     await page.evaluate(() => localStorage.removeItem('sv-theme'));
 
     // Reload the page so the app re-evaluates the theme
-    await page.reload();
+    //（显式 domcontentloaded，理由同 beforeEach 注释）
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await basePage.waitForPageLoad();
 
     // The page should use the dark fallback (system preference is ignored by design)

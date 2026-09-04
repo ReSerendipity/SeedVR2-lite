@@ -110,7 +110,8 @@ test.describe('History Records', () => {
       });
 
       // Reload the page to pick up the new mock
-      await page.reload();
+      //（显式 domcontentloaded：默认 'load' 会被 SSE/长连接拖住，firefox 偶发 60s 超时）
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await page.waitForLoadState('domcontentloaded');
 
       // Pagination should be visible
@@ -155,7 +156,7 @@ test.describe('History Records', () => {
         }
       });
 
-      await page.reload();
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await page.waitForLoadState('domcontentloaded');
 
       // Click next page
