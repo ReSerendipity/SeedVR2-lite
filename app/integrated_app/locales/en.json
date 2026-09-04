@@ -54,6 +54,7 @@
     "switch_language": "Switch language",
     "pending": "Pending",
     "cancel": "Cancel",
+    "font_load_failed": "Title fonts unavailable (network blocked); using system font",
     "confirm": "Confirm",
     "close": "Close",
     "back": "Back",

@@ -2,6 +2,13 @@
 
 ## [未发布] - 2026-08-30
 
+### 修复：装饰字体外链导致整页加载挂起（CI E2E 红的根因，2026-09-03）
+
+* **fix(P0):** `base.html` 的 Google Fonts 外链（15 个字族、`media="all"` 渲染阻塞）改为**按需注入** —— 上一轮把 CSP 响应头与页面 meta 对齐（为修「无控制台错误」用例）的副作用是：原本被 CSP 立刻挡掉的外链变成真实网络请求，于是该域名挂起时整页卡死。实测把 `fonts.googleapis.com` 黑洞化后 `/restore` **连 DOMContentLoaded 都等不到**（>30s 超时），正常网络下 `load` 仅 176ms；CI 上 `firefox-desktop › theme.spec › page.reload: Timeout 60000ms exceeded` 正是同一根因（chromium/webkit 只是运气好）。对本项目主要的中文用户群体而言该域名常不可达 —— 这是真实产品缺陷，不是测试 flake
+* **feat:** 14 款标题装饰字体改由 `app.js` 在用户打开「Aa」菜单时注入 `<link>`（`ensureWebfonts()`，状态机 idle→loading→loaded|failed），上次保存过字体时启动自动补注入；加载失败如实 toast（新增 `common.font_load_failed` ×5 语言）而不是静默退回系统字体变成假功能。默认界面字体本就由本地 `/static/fonts/fonts.css`（DM Sans + Instrument Serif）提供，故不加载外链时界面完全正常
+* **test:** 两条防回归门禁 —— `test_templates_have_no_render_blocking_third_party_stylesheet`（模板里禁止第三方 `rel=stylesheet` 外链）与 `test_csp_permits_on_demand_webfont_origins`（CSP 必须放行 JS 常量里的字体源，防止外链挪进 JS 后被误收紧 CSP、让字体选择器静默失效）
+* **验证:** 黑洞化后 chromium/firefox 的 `load` 分别 262ms / 268ms（修复前 >30s 超时）；字体菜单实测默认 0 条外部请求、打开后注入 1 条、14 项可选、选中后 `--sv-font` 落到根元素、刷新自动恢复；本地 `theme.spec.ts` + `history.spec.ts` 在 firefox+chromium **56 passed**；全量 pytest 1243 passed / 1 skipped；ruff + black + mypy(108) 全绿
+
 ### 契约审计收尾：死码清理 + 网站 API 文档纳入硬门禁（2026-09-03）
 
 * **docs(P0):** 重写 `website/docs/guide/api.md` —— 原「API 参考」列有 `/api/system/sse`、`/api/restore/task/{task_id}`、`/api/tasks/checkpoint/recover`、`/api/tasks/queue`、`/api/system/gpu/status` 等**根本不存在**的端点（文档是对外承诺，用户照抄只会拿到 404），且只覆盖 12 条端点。现按应用真实路由清单重写为 52 条分组文档（修复 / 批量 / 系统 / 指标 / 历史 / 界面偏好 / 引擎抽象层），补 CSRF 双提交说明与统一响应信封示例，并收录本批新增的批量取消与重试端点

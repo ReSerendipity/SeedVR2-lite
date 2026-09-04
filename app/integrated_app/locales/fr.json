@@ -54,6 +54,7 @@
     "switch_language": "Changer la langue",
     "pending": "En attente",
     "cancel": "Annuler",
+    "font_load_failed": "Polices de titre indisponibles (réseau bloqué) ; police système utilisée",
     "confirm": "Confirmer",
     "close": "Fermer",
     "back": "Retour",
