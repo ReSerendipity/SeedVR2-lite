@@ -11,7 +11,7 @@
 
 模块职责:
 - 模型配置解析与验证（从 config.yaml 读取模型路径、大小、精度配置）
-- 智能精度推荐（根据可用显存自动选择 fp16/fp8）
+- 智能精度推荐（根据可用显存和实际可用模型自动选择 fp16/fp8/mxfp8/int8_convrot/nvfp4）
 - 模型文件存在性检查与缺失时的精度回退
 - 显存预检与加载前的资源验证
 - 模型加载/卸载/切换的完整生命周期管理
@@ -46,7 +46,7 @@ class ModelManager:
     通过 model_registry 维护全局模型状态，支持 SSE 状态推送。
 
     核心功能:
-    - 智能精度推荐: 根据 GPU 显存自动选择 fp16 或 fp8
+    - 智能精度推荐: 根据 GPU 显存和实际可用模型自动选择最优精度（fp16/fp8/mxfp8/int8_convrot/nvfp4）
     - 显存预检: 加载前估算显存需求，检查是否有足够资源
     - 自动回退: 请求的精度文件不存在时自动尝试另一种精度
     - 安全切换: 切换模型失败时自动回滚到之前的模型
@@ -128,7 +128,7 @@ class ModelManager:
 
         Args:
             size: 模型大小标识 (如 "3b", "7b")
-            precision: 模型精度 (如 "fp16", "fp8")，None 时使用配置中的默认精度
+            precision: 模型精度 (如 "fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4")，None 时使用配置中的默认精度
 
         Returns:
             bool: 模型文件存在返回 True，否则返回 False
@@ -146,28 +146,28 @@ class ModelManager:
         return os.path.exists(checkpoint_path)
 
     def get_recommended_precision(self, model_size: str) -> str:
-        """根据 GPU 显存大小推荐最佳精度
+        """根据 GPU 显存和实际可用模型推荐最佳精度。
 
-        检测 CUDA 设备的总显存，与模型的最小显存需求比较，
-        推荐 fp16（显存充足时）或 fp8（显存有限时）。
+        检测 CUDA 设备的总显存，先筛选用户实际拥有的模型精度（文件存在），
+        再从中推荐：显存充足选 fp16，否则按 fp8 → mxfp8 → int8_convrot → nvfp4
+        顺序选第一个可用的低显存精度。v1.5.1 起支持五精度，不再只返回 fp16/fp8。
 
         Args:
             model_size: 模型大小标识 (如 "3b", "7b")
 
         Returns:
-            str: 推荐的精度标识，"fp16" 或 "fp8"
+            str: 推荐的精度标识
 
         Note:
-            - fp16 提供更好的推理质量，但需要更多显存
-            - fp8 显存占用约为 fp16 的一半，质量略有下降
-            - 即使显存不足也返回 fp8，由上层决定是否允许加载
+            - 量化格式（mxfp8/int8_convrot/nvfp4）为加载期反量化，驻留显存≈fp16，
+              但模型文件更小、加载更快，适合磁盘空间有限的场景
+            - 即使显存不足也返回最低可用精度，由上层决定是否允许加载
         """
         model_info = self.get_model_info(model_size)
         if not model_info:
             return "fp16"
 
         min_fp16_gb = model_info.get("min_vram_fp16_gb", 16)
-        min_fp8_gb = model_info.get("min_vram_fp8_gb", 8)
 
         try:
             if torch.cuda.is_available():
@@ -177,15 +177,34 @@ class ModelManager:
         except Exception:
             total_vram_gb = 0
 
-        if total_vram_gb >= min_fp16_gb:
+        # 筛选用户实际拥有的精度（文件存在）
+        all_precisions = ["fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4"]
+        available = [p for p in all_precisions if self.check_model_exists(model_size, p)]
+
+        # 无任何模型文件时（如测试环境、用户未下载权重），回退到纯显存推荐逻辑
+        if not available:
+            if total_vram_gb >= min_fp16_gb:
+                return "fp16"
+            min_fp8_gb = model_info.get("min_vram_fp8_gb", 8)
+            if total_vram_gb < min_fp8_gb:
+                logger.warning(
+                    f"显存 {total_vram_gb:.1f}GB 不足以运行 {model_size} 模型 (最低需要 {min_fp8_gb}GB)，推荐使用 FP8 精度"
+                )
+            return "fp8"
+
+        # 显存充足且拥有 fp16 → 推荐 fp16（质量最优）
+        if "fp16" in available and total_vram_gb >= min_fp16_gb:
             return "fp16"
-        elif total_vram_gb >= min_fp8_gb:
-            return "fp8"
-        else:
-            logger.warning(
-                f"显存 {total_vram_gb:.1f}GB 不足以运行 {model_size} 模型 (最低需要 {min_fp8_gb}GB)，推荐使用 FP8 精度"
-            )
-            return "fp8"
+
+        # 显存不足或无 fp16 → 从低显存精度中按顺序选第一个可用的
+        low_vram_order = ["fp8", "mxfp8", "int8_convrot", "nvfp4"]
+        for p in low_vram_order:
+            if p in available:
+                return p
+
+        # fallback：返回第一个可用精度
+        logger.warning(f"显存 {total_vram_gb:.1f}GB，可用精度 {available}，推荐 {available[0]}")
+        return available[0]
 
     async def load_model(
         self, model_size: str | None = None, device: str | None = None, precision: str | None = None
@@ -198,7 +217,7 @@ class ModelManager:
         Args:
             model_size: 模型大小 (如 "3b", "7b")，None 时使用配置中的 default_size
             device: 推理设备 ("auto"/"cuda")，None 时使用配置中的 device
-            precision: 模型精度 ("fp16"/"fp8"/"auto")，None 或 "auto" 时根据显存自动选择
+            precision: 模型精度 ("fp16"/"fp8"/"mxfp8"/"int8_convrot"/"nvfp4"/"auto")，None 或 "auto" 时根据显存和可用模型自动选择
 
         Returns:
             dict: 加载结果字典，包含:
@@ -211,7 +230,7 @@ class ModelManager:
         Raises:
             RuntimeError: 未检测到 NVIDIA GPU（SeedVR2 仅支持 CUDA）
             ValueError: 指定了未知的模型大小
-            FileNotFoundError: 模型 checkpoint 文件不存在（fp16 和 fp8 都不存在）
+            FileNotFoundError: 模型 checkpoint 文件不存在（所有已配置精度均无对应文件）
             MemoryError: 显存不足无法加载模型（即使尝试 fp8 回退也不足）
         """
         if model_size is None:
@@ -273,16 +292,33 @@ class ModelManager:
             raise ValueError(f"未知的模型大小: {model_size}")
 
         if not self.check_model_exists(model_size, precision):
-            # 回退方向：fp16↔fp8 互备（numz 源）；Comfy-Org 量化精度缺失时回退 fp16
+            # 第一回退：fp16↔fp8 互备（numz 源，历史默认路径）
             fallback_precision = "fp8" if precision == "fp16" else "fp16"
             if self.check_model_exists(model_size, fallback_precision):
                 logger.warning(f"{precision} 模型文件不存在，回退到 {fallback_precision}")
                 precision = fallback_precision
             else:
-                raise FileNotFoundError(
-                    f"模型文件不存在: {model_cfg.get(f'checkpoint_{precision}', 'N/A')} "
-                    f"和 {model_cfg.get(f'checkpoint_{fallback_precision}', 'N/A')}"
-                )
+                # 第二回退：遍历所有已配置精度（含 Comfy-Org 量化格式 mxfp8/int8_convrot/nvfp4），
+                # 找到第一个文件存在的精度。v1.5.1 起五精度并存，用户可能只下载了其中一种。
+                all_precisions = ["fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4"]
+                tried = [precision, fallback_precision]
+                found = None
+                for p in all_precisions:
+                    if p in tried:
+                        continue
+                    if model_cfg.get(f"checkpoint_{p}") and self.check_model_exists(model_size, p):
+                        found = p
+                        break
+                if found:
+                    logger.warning(f"{precision}/{fallback_precision} 均不存在，回退到可用精度 {found}")
+                    precision = found
+                else:
+                    configured = [p for p in all_precisions if model_cfg.get(f"checkpoint_{p}")]
+                    raise FileNotFoundError(
+                        f"模型文件不存在: 已尝试 {', '.join(tried)}，"
+                        f"已配置精度 {', '.join(configured) if configured else '无'} 均无对应文件。"
+                        f"请下载模型权重到 {self.get_pretrained_dir()}/"
+                    )
 
         required_vram = estimate_model_vram(model_size, precision=precision)
         can_load, available_vram = check_vram_available(required_vram)

@@ -141,7 +141,8 @@ class SeedVR2Engine(
         self.sampling_timesteps = None
         self.sampler = None
         self.model_size = None
-        self.precision = "fp16"
+        # 从配置读取默认精度（v1.5.1 起支持五精度，不再硬编码 fp16）
+        self.precision = config.get("model", {}).get("default_precision", "fp16")
         self.device = "cpu"
         self._loaded = False
         self._progress_callback = None
@@ -314,8 +315,7 @@ class SeedVR2Engine(
             failed_checks = [k for k, v in integrity_results.items() if not v]
             if failed_checks:
                 raise RuntimeError(
-                    f"模型权重完整性校验失败 (CWE-353): {', '.join(failed_checks)}. "
-                    f"文件可能已被篡改或投毒，拒绝加载。"
+                    f"模型权重完整性校验失败 (CWE-353): {', '.join(failed_checks)}. 文件可能已被篡改或投毒，拒绝加载。"
                 )
 
             # 记录 DiT 路径 (延迟加载)
@@ -906,11 +906,11 @@ class SeedVR2Engine(
             # 诊断: 验证 BlockSwap 确实生效
             blockswap_marker = getattr(model, "_blockswap_active", False)
             blockswap_config = getattr(model, "_block_swap_config", None)
-            logger.info(f"BlockSwap 诊断: model._blockswap_active={blockswap_marker}, " f"config={blockswap_config}")
+            logger.info(f"BlockSwap 诊断: model._blockswap_active={blockswap_marker}, config={blockswap_config}")
 
             if not blockswap_marker:
                 logger.error(
-                    "BlockSwap 未正确应用! 模型._blockswap_active=False，" "这会导致模型整体加载到 GPU，内存爆满!"
+                    "BlockSwap 未正确应用! 模型._blockswap_active=False，这会导致模型整体加载到 GPU，内存爆满!"
                 )
                 # 尝试手动设置
                 model._blockswap_active = True
@@ -959,7 +959,7 @@ class SeedVR2Engine(
         # Currently disabled as it requires model architecture changes
 
         num_params = sum(p.numel() for p in model.parameters())
-        logger.info(f"DiT 参数数量: {num_params:,}, dtype={dit_dtype}, " f"blockswap={self._blockswap_active}")
+        logger.info(f"DiT 参数数量: {num_params:,}, dtype={dit_dtype}, blockswap={self._blockswap_active}")
 
         # P1-2: 记录加载参数签名，供缓存复用前比对（参数变化时自动重载）
         self._dit_load_signature = build_dit_load_signature(

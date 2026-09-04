@@ -266,7 +266,7 @@ def estimate_model_vram(model_size: str, resolution: tuple | None = None, precis
     Args:
         model_size: 模型大小标识，支持 "3b" / "7b"
         resolution: 目标分辨率 (height, width) 元组；为 None 时仅计算权重显存
-        precision: 计算精度，支持 "fp16" / "fp8"
+        precision: 计算精度，支持 "fp16" / "fp8" / "mxfp8" / "int8_convrot" / "nvfp4"（量化格式回退 fp16 基线）
 
     Returns:
         int: 估算的总显存需求（MB）
@@ -348,7 +348,7 @@ def oom_protect(func: Callable) -> Callable:
                 # OOM 后立即强制清理，尽可能回收显存
                 force_garbage_collect()
                 raise MemoryError(
-                    "GPU 显存不足，请尝试：\n" "1. 切换到 3B 模型\n" "2. 降低输出分辨率\n" "3. 关闭其他占用显存的程序"
+                    "GPU 显存不足，请尝试：\n1. 切换到 3B 模型\n2. 降低输出分辨率\n3. 关闭其他占用显存的程序"
                 ) from e
             raise
         except Exception as e:
@@ -395,7 +395,7 @@ def estimate_vram_requirements(
 
     Args:
         model_name: 模型名称，支持 "3b" / "7b" / "7b-sharp" / "7b_sharp"。
-        precision: 计算精度，"fp16" 或 "fp8"。
+        precision: 计算精度，"fp16" / "fp8" / "mxfp8" / "int8_convrot" / "nvfp4"（量化格式回退 fp16 基线）。
         input_width: 输入宽度（像素）。
         input_height: 输入高度（像素）。
         num_frames: 帧数，图像=1，视频=实际帧数。
@@ -448,7 +448,7 @@ def recommend_params(
 
     Returns:
         dict: 推荐参数组合，包含以下键：
-            - precision (str): 推荐精度，"fp16" 或 "fp8"
+            - precision (str): 推荐精度，"fp16" / "fp8" / "mxfp8" / "int8_convrot" / "nvfp4"
             - enable_blockswap (bool): 是否开启 BlockSwap
             - blocks_to_swap (int): 推荐换出块数（BlockSwap 开启时有效）
             - tile_size (int): 推荐 VAE tile 分块大小

@@ -1,6 +1,6 @@
 # SeedVR2-lite
 
-![Version](https://img.shields.io/badge/version-1.5.0-blue?style=for-the-badge) ![License](https://img.shields.io/badge/license-Apache%202.0-green?style=for-the-badge) ![Python](https://img.shields.io/badge/python-3.12+-yellow?style=for-the-badge&logo=python&logoColor=white) ![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white) ![Models](https://img.shields.io/badge/model-3B%20%7C%207B%20%7C%207B--Sharp-ff69b4?style=for-the-badge) [![CI](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/ReSerendipity/SeedVR2-lite/actions)
+![Version](https://img.shields.io/badge/version-1.5.1-blue?style=for-the-badge) ![License](https://img.shields.io/badge/license-Apache%202.0-green?style=for-the-badge) ![Python](https://img.shields.io/badge/python-3.12+-yellow?style=for-the-badge&logo=python&logoColor=white) ![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white) ![Models](https://img.shields.io/badge/model-3B%20%7C%207B%20%7C%207B--Sharp-ff69b4?style=for-the-badge) [![CI](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/ReSerendipity/SeedVR2-lite/actions)
 
 **基于 SeedVR2 扩散模型的视频与图像超分辨率修复工具箱 — 独立运行的 Web UI，一键修复，无需 ComfyUI**
 
@@ -37,7 +37,7 @@
 
 ## 🆕 新手必看
 
-**第一次使用？完全不懂技术？**  
+**第一次使用？完全不懂技术？**
 👉 请先阅读 [新手引导](https://reserendipity.github.io/SeedVR2-lite/docs/) —— 从零开始的保姆级教程，包含：
 - 如何获取代码（ZIP 下载 vs Git 克隆）
 - 系统要求和环境检查清单
@@ -142,7 +142,7 @@
 > ⚠️ **重要说明**：当前项目的 FP8 实现**仅用于权重存储格式**。推理时权重仍按 FP16/FP32 加载，
 > 因此 **FP8 模型和 FP16 模型的推理速度基本相同**。真正影响速度的是 BlockSwap、分辨率和帧数。
 > - **BlockSwap 开启**：降低 20-70% 速度（取决于交换块数）
-> - **分辨率提高**：2048×2048 比 1024×1024 慢 3-4 倍  
+> - **分辨率提高**：2048×2048 比 1024×1024 慢 3-4 倍
 > - **FP8 vs FP16**：几乎无差异（当前未实现真正的 FP8 计算内核）
 >
 > 显存不足时可通过 **FP8 + BlockSwap**（GPU/CPU 动态换入换出 Transformer 块）进一步压降显存需求。
@@ -452,4 +452,3 @@ SeedVR2 的 Web UI **默认仅绑定 `127.0.0.1`**（`config.yaml` 中 `server.h
 
 本项目采用 [Apache License 2.0](LICENSE) 开源协议。
 版权所有 Copyright 2024-2026 ReSerendipity。
-

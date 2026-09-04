@@ -293,13 +293,23 @@ def adjust_params_for_retry(
             new_params = _replace_nested_config(new_params, resolution=new_res)
             strategies.append(RetryStrategy.RESOLUTION_DECREASE)
 
-    # 3. 第三次及以后：精度降级（fp16 → fp8）
+    # 3. 第三次及以后：精度降级（按显存/质量从高到低：fp16 → fp8 → mxfp8 → int8_convrot → nvfp4）
+    #    v1.5.1 起支持五精度，不再硬编码 fp16→fp8。
     if attempt >= 3 and cfg.enable_precision_fallback:
         dit_model = _get_param(new_params, "dit_model", default="")
-        if dit_model and "fp16" in dit_model:
-            new_dit = dit_model.replace("fp16", "fp8")
-            new_params = _replace_nested_config(new_params, dit_model=new_dit)
-            strategies.append(RetryStrategy.PRECISION_FALLBACK)
+        if dit_model:
+            from app.integrated_app.spec import model_size_from_dit_model, precision_from_dit_model
+
+            size = model_size_from_dit_model(dit_model)
+            prec = precision_from_dit_model(dit_model)
+            fallback_chain = ["fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4"]
+            if prec and prec in fallback_chain:
+                idx = fallback_chain.index(prec)
+                if idx + 1 < len(fallback_chain):
+                    next_prec = fallback_chain[idx + 1]
+                    new_dit = f"{size}_{next_prec}"
+                    new_params = _replace_nested_config(new_params, dit_model=new_dit)
+                    strategies.append(RetryStrategy.PRECISION_FALLBACK)
 
     # 始终换种子
     if cfg.enable_seed_rotation:
@@ -335,7 +345,7 @@ def _log_adjustment(attempt: int, params: dict[str, Any], strategies: list[Retry
     seed = _get_param(params, "seed", "N/A")
     dit = _get_param(params, "dit_model", "N/A")
     logger.info(
-        "[BadCaseRetry] 第 %d 次重试参数调整: blocks_to_swap=%s, resolution=%s, " "dit_model=%s, seed=%s, 策略=%s",
+        "[BadCaseRetry] 第 %d 次重试参数调整: blocks_to_swap=%s, resolution=%s, dit_model=%s, seed=%s, 策略=%s",
         attempt,
         bts,
         res,

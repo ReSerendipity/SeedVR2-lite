@@ -8,7 +8,7 @@
 ## 1. 版本号规范
 
 - 遵循 SemVer `MAJOR.MINOR.PATCH`。MAJOR=不兼容变更、MINOR=向后兼容新功能、PATCH=向后兼容修复。
-- 版本权威位：`app/integrated_app/version.py`（pyproject 直读）→ `pyproject.toml`，`AGENTS.md` 顶部「对应项目版本」与 `CHANGELOG.md` 一致。当前 **v1.5.0**。
+- 版本权威位：`app/integrated_app/version.py`（pyproject 直读）→ `pyproject.toml`，`AGENTS.md` 顶部「对应项目版本」与 `CHANGELOG.md` 一致。当前 **v1.5.1**。
 - 可选预发布：`-alpha.N` / `-beta.N` / `-rc.N`。
 
 ## 2. CHANGELOG 管理

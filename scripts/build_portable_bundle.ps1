@@ -88,10 +88,10 @@ function Get-SeedVR2ComponentSpec {
         'model-fp8' {
             return [pscustomobject]@{
                 Id          = 'model-fp8'
-                Title       = 'SeedVR2-3B FP8 主模型'
+                Title       = 'SeedVR2-3B MXFP8 主模型'
                 Required    = $true
                 Level       = 1
-                Description = '内置的唯一主模型（3.16 GB，压缩后 2.17 GB，显存 8 GB 可跑）。FP16 与 7B 权重不随包分发，按 README 自行下载。'
+                Description = '内置的唯一主模型（Comfy-Org MXFP8 量化，约 3.3 GB，显存 8 GB 可跑；v1.5.1 起支持五精度加载期反量化）。FP16/FP8/7B 权重不随包分发，按 README 自行下载。'
             }
         }
         default {
@@ -135,7 +135,7 @@ function Get-SeedVR2ModelFilesFromConfig {
         throw "配置文件不存在：$ConfigPath"
     }
     $lines = [System.IO.File]::ReadAllLines($ConfigPath)
-    $result = @{ pretrained_dir = 'model'; checkpoint_fp8 = ''; vae_checkpoint = ''; pos_emb = ''; neg_emb = '' }
+    $result = @{ pretrained_dir = 'model'; checkpoint_fp8 = ''; checkpoint_mxfp8 = ''; vae_checkpoint = ''; pos_emb = ''; neg_emb = '' }
     foreach ($line in $lines) {
         if ($line -match '^\s*pretrained_dir\s*:\s*(.+)$') {
             $v = Clear-SeedVR2YamlValue -Raw $Matches[1]
@@ -145,7 +145,7 @@ function Get-SeedVR2ModelFilesFromConfig {
         }
     }
     $inBlock = $false
-    $keys = @('checkpoint_fp8', 'vae_checkpoint', 'pos_emb', 'neg_emb')
+    $keys = @('checkpoint_fp8', 'checkpoint_mxfp8', 'vae_checkpoint', 'pos_emb', 'neg_emb')
     foreach ($line in $lines) {
         if ($line -match '^\s{4}3b\s*:\s*$') {
             $inBlock = $true
@@ -163,7 +163,8 @@ function Get-SeedVR2ModelFilesFromConfig {
             }
         }
     }
-    foreach ($key in $keys) {
+    # checkpoint_fp8 可选（v1.5.1 起内置模型改用 MXFP8）；checkpoint_mxfp8 必需
+    foreach ($key in @('checkpoint_mxfp8', 'vae_checkpoint', 'pos_emb', 'neg_emb')) {
         if (-not $result.$key) {
             throw "config.yaml 的 model.models.3b 缺少 $key，无法确定要打包的权重文件名"
         }
@@ -532,7 +533,7 @@ if (-not $ModelDir) {
 }
 if ($PrintModelFiles) {
     # 供 CI 复用同一份文件名事实来源，避免工作流里再硬编码一遍权重名。
-    Write-Output $modelCfg.checkpoint_fp8
+    Write-Output $modelCfg.checkpoint_mxfp8
     Write-Output $modelCfg.vae_checkpoint
     Write-Output $modelCfg.pos_emb
     Write-Output $modelCfg.neg_emb
@@ -668,7 +669,7 @@ foreach ($id in $Component) {
                 -SourceModelDir $ModelDir -ExtraSourceDir $sharedMap
         }
         'model-fp8' {
-            $built = New-SeedVR2ModelPayload -PayloadDir $payload -FileNames @($modelCfg.checkpoint_fp8) -SourceModelDir $ModelDir
+            $built = New-SeedVR2ModelPayload -PayloadDir $payload -FileNames @($modelCfg.checkpoint_mxfp8) -SourceModelDir $ModelDir
         }
     }
     Write-Host ("  载荷：{0} 文件 / {1}（未压缩）" -f $built.Files, (Format-SeedVR2Size $built.Bytes))

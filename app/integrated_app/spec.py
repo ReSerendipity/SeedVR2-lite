@@ -299,7 +299,10 @@ def latent_spatial_size(width: int, height: int) -> tuple[int, int]:
 
 
 def recommend_precision(vram_gb: float, min_vram_fp16: float, min_vram_fp8: float) -> str:
-    """根据可用显存推荐模型精度。
+    """根据可用显存推荐模型精度（简化版，仅 fp16/fp8 二选一）。
+
+    完整的五精度推荐逻辑见 ModelManager.get_recommended_precision，
+    本函数保留用于纯计算场景和向后兼容。
 
     Args:
         vram_gb: 可用显存 (GB)。

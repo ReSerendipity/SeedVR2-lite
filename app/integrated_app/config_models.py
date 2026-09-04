@@ -171,7 +171,7 @@ class ModelConfig(BaseModel):
 
     Attributes:
         default_size: 默认模型大小标识（如 "3b" 表示 30 亿参数）。
-        default_precision: 默认推理精度，"fp16" 或 "fp8"。
+        default_precision: 默认推理精度，"fp16"/"fp8"/"mxfp8"/"int8_convrot"/"nvfp4"。
         pretrained_dir: 预训练模型文件根目录（portable 模式下使用）。
         model_source_mode: 模型源模式，"portable"（项目内自包含）或 "shared"（外部共享目录）。
         shared_models_root: shared 模式下的外部共享模型目录绝对路径，为空时回退到 portable 模式。

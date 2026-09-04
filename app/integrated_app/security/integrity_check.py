@@ -158,7 +158,15 @@ def verify_model_files(
 
     # DiT checkpoint
     checkpoint_key = f"checkpoint_{precision}"
-    checkpoint_name = model_cfg.get(checkpoint_key) or model_cfg.get("checkpoint_fp16", "")
+    checkpoint_name = model_cfg.get(checkpoint_key, "")
+    if not checkpoint_name:
+        # 回退：遍历所有已知精度，找第一个配置了文件名的（v1.5.1 五精度支持）
+        for p in ["fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4"]:
+            candidate = model_cfg.get(f"checkpoint_{p}", "")
+            if candidate:
+                checkpoint_name = candidate
+                precision = p  # 用实际找到的精度做 hash 校验
+                break
     if checkpoint_name:
         checkpoint_path = pretrained_path / checkpoint_name
         hash_key = f"sha256_{precision}"

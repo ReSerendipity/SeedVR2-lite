@@ -134,6 +134,12 @@ async def get_history(
             task_type=task_type, status=status, limit=page_size, offset=(page - 1) * page_size
         )
 
+    # 清理已被 retention 策略删除的输出文件引用：记录仍在但文件已不存在时，
+    # 清空 output_file 使前端不显示下载按钮和缩略图（否则点击下载返回 404）。
+    for r in records:
+        if r.status == "completed" and r.output_file and not os.path.exists(r.output_file):
+            r.output_file = ""
+
     return {
         "records": [vars(r) for r in records],
         "total": total,

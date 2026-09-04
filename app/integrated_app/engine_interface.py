@@ -92,7 +92,7 @@ class RestoreEngine(Protocol):
             dict: 模型信息字典，应包含至少以下键:
                 - loaded: bool - 模型是否已加载
                 - model_size: str - 模型大小标识 (如 "3b", "7b")
-                - precision: str - 模型精度 (如 "fp16", "fp8")
+                - precision: str - 模型精度 (如 "fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4")
                 - device: str - 推理设备 (如 "cuda", "cpu")
                 - model_name: str - 人类可读的模型名称
         """
@@ -107,7 +107,7 @@ class RestoreEngine(Protocol):
         Args:
             model_size: 模型大小标识，如 "3b"、"7b"，具体值由实现类定义
             device: 推理设备，"auto" 表示自动选择，"cuda" 表示使用 GPU
-            precision: 模型精度，如 "fp16"、"fp8"，None 表示使用默认精度
+            precision: 模型精度，如 "fp16"、"fp8"、"mxfp8"、"int8_convrot"、"nvfp4"，None 表示使用默认精度
 
         Returns:
             bool: 加载成功返回 True，失败返回 False
