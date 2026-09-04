@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "SeedVR2 桌面壳主能力：事件、通知、窗口控制，并放行本机后端页面的 IPC（桥接脚本）",
+  "windows": ["main", "update"],
+  "permissions": [
+    "core:default",
+    "notification:default",
+    "updater:default"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*",
+      "http://localhost:*"
+    ]
+  }
+}
