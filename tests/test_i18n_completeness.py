@@ -225,9 +225,10 @@ def test_history_stat_label_matches_aggregated_field() -> None:
     data = _load_all()
     for lang in LANGS:
         label = data[lang]["history"]["stat_total_records"]
-        assert "完成" not in label and "Completed" not in label and "terminées" not in label, (
-            f"{lang}: stat_total_records 标签 {label!r} 仍把全量记录说成完成数"
-        )
+        # 判定收进变量：长 assert 落在 black 与 ruff-format 的分歧点上，而本仓
+        # pre-commit 跑 ruff format、precheck/pre-push 跑 black --check，会来回翻转。
+        overstated = any(w in label for w in ("完成", "Completed", "terminées"))
+        assert not overstated, f"{lang}: stat_total_records 标签 {label!r} 把全量记录说成完成数"
 
 
 #: 第三方域名样式表只允许由 JS 按需注入，不允许出现在模板里阻塞页面加载。
