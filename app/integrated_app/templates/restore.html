@@ -1665,6 +1665,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (els.batchCurrentFile) els.batchCurrentFile.style.display = 'none';
                     setBatchRetry(0);
                     SeedVR2.toast(I['video.batch_started'] || '批量处理已启动', 'info');
+                    // 桌面壳钩子：批量任务开始 → 标题切"处理中"（浏览器模式自动跳过）
+                    if (window.__seedvr2Shell && typeof window.__seedvr2Shell.onTaskStart === 'function') {
+                        window.__seedvr2Shell.onTaskStart();
+                    }
                     pollBatchProgress(batchData.batch_id);
                 } catch (err) {
                     SeedVR2.toast((I['video.batch_start_failed'] || '批量处理启动失败') + ': ' + err.message, 'error');
@@ -1741,6 +1745,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (els.batchCurrentFile) els.batchCurrentFile.style.display = 'none';
                     setBatchRetry(failed);
                     SeedVR2.toast(I['video.batch_completed']?.replace('{completed}', completed).replace('{failed}', failed) || '批量处理完成', data.status === 'completed' ? 'success' : 'error');
+                    // 桌面壳钩子：批量任务终结 → 空闲标题 + 系统通知（浏览器模式自动跳过）
+                    if (window.__seedvr2Shell && typeof window.__seedvr2Shell.onTaskEnd === 'function') {
+                        window.__seedvr2Shell.onTaskEnd(data.status);
+                    }
                 }
             } catch (err) {
                 console.error('Batch poll error:', err);

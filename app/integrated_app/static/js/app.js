@@ -1107,6 +1107,10 @@ const SeedVR2 = (() => {
     const _restoreSseMaxRetries = 20;
 
     function startRestoreProgressSSE(taskId, taskType) {
+        // 桌面壳钩子：任务开始 → 标题切"处理中"（浏览器模式自动跳过）
+        if (window.__seedvr2Shell && typeof window.__seedvr2Shell.onTaskStart === 'function') {
+            window.__seedvr2Shell.onTaskStart();
+        }
         // 关闭之前的连接
         if (currentRestoreEventSource) {
             currentRestoreEventSource.close();
@@ -1365,6 +1369,11 @@ const SeedVR2 = (() => {
                         taskStatus.textContent = (window.__I18N__ && window.__I18N__['status.cancelled']) || 'Cancelled';
                         taskStatus.className = 'sv-badge sv-badge-failed';
                     }
+                }
+
+                // 桌面壳钩子：任务终结 → 恢复空闲标题 + 系统通知（浏览器模式自动跳过）
+                if (taskFinished && window.__seedvr2Shell && typeof window.__seedvr2Shell.onTaskEnd === 'function') {
+                    window.__seedvr2Shell.onTaskEnd(data.status);
                 }
             } catch (err) {
                 console.error('SSE data parse error:', err);
