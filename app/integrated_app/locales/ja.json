@@ -54,6 +54,7 @@
     "switch_language": "言語切替",
     "pending": "保留中",
     "cancel": "キャンセル",
+    "font_load_failed": "タイトルフォントを読み込めませんでした（ネットワーク制限）。システムフォントを使用しています",
     "confirm": "確認",
     "close": "閉じる",
     "back": "戻る",

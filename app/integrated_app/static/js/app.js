@@ -1076,7 +1076,7 @@ const SeedVR2 = (() => {
                 }
             } catch(e) { /* Never let saveRestoreSession break the caller */ }
         }
-    
+
         /**
          * @function restoreRestoreSession
      * @description On page load, check for a saved restore session and restore UI state.
@@ -3805,6 +3805,44 @@ const SeedVR2 = (() => {
 
 /* ===== 标题字体切换（14 种免费开源字体，Google Fonts / SIL OFL / Apache 2.0） ===== */
 (function () {
+    /**
+     * 装饰字体样式表**按需注入**，不再写在 base.html 里阻塞页面。
+     * 默认界面字体（DM Sans / Instrument Serif）由本地 /static/fonts/fonts.css 提供，
+     * 所以这条外链缺席时界面依然正常；只有用户主动选装饰字体才需要它。
+     * 根因：外链一旦网络挂起（弱网 / 该域名不可达），阻塞式 <link> 会让整页
+     * 连 DOMContentLoaded 都等不到——实测 >30s，正常时 load 仅 176ms。
+     */
+    var WEBFONT_CSS = 'https://fonts.googleapis.com/css2'
+        + '?family=Noto+Sans+SC:wght@400;500;700'
+        + '&family=Noto+Serif+SC:wght@400;600;700'
+        + '&family=Ma+Shan+Zheng&family=ZCOOL+XiaoWei&family=ZCOOL+QingKe+HuangYou&family=ZCOOL+KuaiLe'
+        + '&family=Long+Cang&family=Liu+Jian+Mao+Cao&family=Zhi+Mang+Xing'
+        + '&family=Playfair+Display:wght@400;600&family=Cinzel:wght@400;600'
+        + '&family=Great+Vibes&family=Pacifico&family=Dancing+Script:wght@400;600'
+        + '&display=swap';
+    // idle → loading → loaded | failed；failed 允许用户再次打开菜单时重试
+    var webfontState = 'idle';
+
+    function ensureWebfonts() {
+        if (webfontState === 'loading' || webfontState === 'loaded') return;
+        webfontState = 'loading';
+        var link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.id = 'sv-webfont-css';
+        link.href = WEBFONT_CSS;
+        link.onload = function () { webfontState = 'loaded'; };
+        link.onerror = function () {
+            webfontState = 'failed';
+            if (link.parentNode) link.parentNode.removeChild(link);
+            var I = window.__I18N__ || {};
+            // 如实告知：不静默退回系统字体，否则用户以为「选了没反应」= 假功能
+            if (window.SeedVR2 && SeedVR2.toast) {
+                SeedVR2.toast(I['common.font_load_failed'] || 'Title fonts unavailable (network blocked); using system font', 'warning', 8000);
+            }
+        };
+        document.head.appendChild(link);
+    }
+
     var FONTS = [
         { g: '中文现代', items: [
             { n: '思源黑体', f: '"Noto Sans SC",sans-serif', d: '现代简洁 · 默认' },
@@ -3870,7 +3908,10 @@ const SeedVR2 = (() => {
 
     function restore() {
         var saved = curFont();
-        if (saved) document.documentElement.style.setProperty('--sv-font', saved);
+        if (saved) {
+            ensureWebfonts();
+            document.documentElement.style.setProperty('--sv-font', saved);
+        }
         sync();
     }
 
@@ -3880,6 +3921,8 @@ const SeedVR2 = (() => {
         if (lm) lm.classList.remove('show');
         menu.classList.toggle('show');
         btn.setAttribute('aria-expanded', menu.classList.contains('show'));
+        // 只在菜单真要展示时才拉装饰字体：菜单项预览需要它们，页面本身不需要
+        if (menu.classList.contains('show')) ensureWebfonts();
     });
     document.addEventListener('click', function (e) {
         if (!e.target.closest('#fontDropdown')) {
@@ -3890,4 +3933,3 @@ const SeedVR2 = (() => {
     build();
     restore();
 })();
-

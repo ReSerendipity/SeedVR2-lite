@@ -54,6 +54,7 @@
     "switch_language": "切换语言",
     "pending": "待处理",
     "cancel": "取消",
+    "font_load_failed": "标题字体加载失败（网络受限），已使用系统字体",
     "confirm": "确认",
     "close": "关闭",
     "back": "返回",

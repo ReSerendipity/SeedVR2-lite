@@ -225,6 +225,51 @@ def test_history_stat_label_matches_aggregated_field() -> None:
     data = _load_all()
     for lang in LANGS:
         label = data[lang]["history"]["stat_total_records"]
-        assert (
-            "完成" not in label and "Completed" not in label and "terminées" not in label
-        ), f"{lang}: stat_total_records 标签 {label!r} 仍把全量记录说成完成数"
+        assert "完成" not in label and "Completed" not in label and "terminées" not in label, (
+            f"{lang}: stat_total_records 标签 {label!r} 仍把全量记录说成完成数"
+        )
+
+
+#: 第三方域名样式表只允许由 JS 按需注入，不允许出现在模板里阻塞页面加载。
+_BLOCKING_EXT_CSS = re.compile(r"""<link[^>]+href=["']https?://[^"']+["'][^>]*\brel=["']stylesheet["']""", re.I)
+
+
+def test_templates_have_no_render_blocking_third_party_stylesheet() -> None:
+    """模板里禁止出现指向第三方域名的 `rel="stylesheet"` 阻塞外链。
+
+    根因实测：`base.html` 曾有一条 15 个字体族的 Google Fonts 阻塞 `<link>`。
+    把该域名网络黑洞化后，`/restore` **连 DOMContentLoaded 都等不到**（>30s 超时），
+    而正常网络下 `load` 仅 176ms。后果不是测试 flake 而是真实产品缺陷：
+    弱网 / 该域名不可达环境（对本项目的主要中文用户很常见）会看到整页卡死。
+    装饰字体现已改由 `app.js` 在用户打开字体菜单时按需注入。
+    """
+    offenders: list[str] = []
+    for tpl in sorted(TEMPLATES_DIR.rglob("*.html")):
+        text = tpl.read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if _BLOCKING_EXT_CSS.search(line):
+                offenders.append(f"{tpl.name}:{lineno}")
+    assert not offenders, "模板存在渲染阻塞的第三方样式表（应改为 JS 按需注入）：" + ", ".join(offenders)
+
+
+def test_csp_permits_on_demand_webfont_origins(test_app) -> None:
+    """CSP 必须放行 app.js 按需注入的装饰字体源。
+
+    反向风险：字体外链从模板挪进 JS 后，静态审查容易误以为「页面不再依赖
+    Google Fonts」而把 CSP 收紧——那会让字体选择器静默失败，14 个选项全部
+    退化成系统字体，变成用户点了没反应的假功能。此断言把 CSP 与 JS 常量绑死。
+    """
+    js = (TEMPLATES_DIR.parent / "static" / "js" / "app.js").read_text(encoding="utf-8")
+    m = re.search(r"WEBFONT_CSS\s*=\s*'(https?://[^']+)'", js)
+    assert m, "app.js 里找不到 WEBFONT_CSS 常量（按需注入被改掉了？同步更新本用例）"
+    hosts = set(re.findall(r"https?://([^/']+)", m.group(1)))
+    assert hosts, "WEBFONT_CSS 未解析出任何主机"
+    # 样式表来自 googleapis，真正的 woff2 由 Google 重定向到 gstatic（对应 CSP font-src）
+    hosts |= {"fonts.gstatic.com"}
+
+    page = test_app.get("/")
+    meta = re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]+)"', page.text)
+    assert meta, "首页缺少 CSP meta"
+    policy = meta.group(1)
+    for host in hosts:
+        assert host in policy, f"CSP 未放行按需字体源 {host}（会让标题字体选择器静默失效）：{policy[:200]}"
