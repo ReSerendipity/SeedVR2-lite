@@ -291,3 +291,15 @@ data/checkpoints/
 
 # ── 自进化协议子文档（AGENTS.md 瘦身下沉内容，仅本地保留，2026-09-03）──
 docs/agents/
+
+# ── SeedVR2 Tauri 桌面壳：构建产物与临时输出（仅本地，2026-09-04）──
+# 依赖与编译产物不入库；源码（src-tauri/src、capabilities、*.rs、Cargo.toml、
+# tauri.conf.json、icons、desktop/src、package.json）正常纳入版本控制。
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/schemas/
+# 冒烟测试/编译检查的临时输出（本次开发过程产物，非源码）
+desktop/src-tauri/*.txt
+desktop/**/*.log
+# Tauri 迁移指导与 AI-2 交付/交接文档（流程/规划文档，仅本地保留，按 LOCAL_RULES §4）
+docs/tauri-migration/

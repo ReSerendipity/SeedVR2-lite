@@ -1,0 +1,6 @@
+{
+  "version": "1.5.1",
+  "release_date": "2026-09-04",
+  "minimum_shell_version": "1.0.0",
+  "changelog": "修复历史记录404问题，支持五精度模型加载"
+}
