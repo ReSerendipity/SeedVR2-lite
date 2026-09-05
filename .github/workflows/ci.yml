@@ -70,6 +70,15 @@ jobs:
           pip install pyyaml
           python scripts/check_config_refs.py
 
+      - name: Front/back API contract audit (routes · docs · form fields · handlers)
+        # 契约一致性门禁（2026-09-03 前后端契约审计固化）：前端调用的路径/方法、提交的表单字段、
+        # 内联 onclick 引用的函数、/static/ 资源，以及网站 API 文档写出的端点，都必须后端/磁盘
+        # 真实存在。独立成步而非只靠全量 pytest 间接覆盖，是为了在 CI 日志里一眼定位「契约回退」，
+        # 而不是在几百行用例输出中翻找。
+        run: |
+          python -m pytest tests/test_api_contract.py -q
+          python scripts/audit_api_consistency.py all
+
       - name: Black (format check)
         run: python -m black --check .
 
