@@ -60,6 +60,11 @@ class VideoInfo:
 
 _FFMPEG_VERSION_CACHE: dict[str, str] = {}
 
+# ffmpeg 子进程不弹控制台窗口：CREATE_NO_WINDOW 仅 Windows 提供，且 typeshed 的
+# 非 Windows 平台视图缺失该属性（CI 在 ubuntu 上按 linux 平台跑 mypy 会报
+# attr-defined，债务基线零容忍），故用 getattr 动态取、模块级声明一次。
+_SUBPROCESS_NO_WINDOW_FLAGS: int = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
 
 def get_ffmpeg_version(ffmpeg_path: str | None = None) -> str:
     """获取 ffmpeg 版本串（进程级缓存一次，数据治理 P1-2 血缘字段）。
@@ -89,7 +94,7 @@ def get_ffmpeg_version(ffmpeg_path: str | None = None) -> str:
             capture_output=True,
             text=True,
             timeout=10,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            creationflags=_SUBPROCESS_NO_WINDOW_FLAGS,
         )
         if result.returncode == 0 and result.stdout:
             version = result.stdout.splitlines()[0].strip()[:200]
