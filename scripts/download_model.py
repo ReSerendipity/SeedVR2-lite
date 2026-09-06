@@ -377,7 +377,7 @@ def verify_downloaded_hashes(save_dir: Path, files: list[str], config_path: Path
         config_path: config.yaml 路径（期望哈希来源）。
 
     Raises:
-        RuntimeError: 任一文件的 SHA256 与期望值不符时抛出。
+        RuntimeError: 任一文件的 SHA256 与期望值不符时抛出（损坏文件已被删除）。
     """
     expected_map = _load_expected_hashes(config_path)
     if not expected_map:
@@ -396,11 +396,14 @@ def verify_downloaded_hashes(save_dir: Path, files: list[str], config_path: Path
             continue  # 缺失文件已由存在性检查负责报错
         actual = _sha256_of(target)
         if actual.lower() != expected.lower():
+            # MLOps P2-5：校验失败立即删除残缺文件——防止重跑时旧坏文件被续传
+            # 逻辑当作「已下载」跳过、或残留在 model/ 目录（加载侧 verify_model_files 为双保险）
+            target.unlink(missing_ok=True)
             raise RuntimeError(
                 f"SHA256 校验失败: {filename}\n"
                 f"  期望: {expected}\n"
                 f"  实际: {actual}\n"
-                f"该文件可能在下载或镜像过程中损坏，请删除后重新下载。"
+                f"该文件可能在下载或镜像过程中损坏，已删除损坏文件，请重新下载。"
             )
         verified += 1
         print(f"  [校验] {filename}: SHA256 OK")

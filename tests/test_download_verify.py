@@ -72,6 +72,16 @@ def test_verify_raises_on_corrupted_file(tmp_path: Path, config_file: Path):
     assert "pos_emb.pt" in str(exc_info.value)
 
 
+def test_verify_deletes_corrupted_file(tmp_path: Path, config_file: Path):
+    """MLOps P2-5：校验失败必须删除残缺文件，不留坏字节给续传/加载链路。"""
+    target = tmp_path / "pos_emb.pt"
+    target.write_bytes(b"corrupted-bytes")
+
+    with pytest.raises(RuntimeError):
+        verify_downloaded_hashes(tmp_path, ["pos_emb.pt"], config_file)
+    assert not target.exists(), "损坏文件应在抛出前被删除"
+
+
 def test_verify_skips_files_without_expected_hash(tmp_path: Path, config_file: Path):
     unknown = tmp_path / "unknown.bin"
     unknown.write_bytes(b"whatever")
