@@ -169,3 +169,87 @@ class TestPeriodicModelIdleUnload:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+class TestCheckpointSweepWiring:
+    """孤儿 checkpoint 周期清扫接线（后续建议 R2）"""
+
+    @pytest.mark.asyncio
+    async def test_periodic_sweep_invoked_with_ttl(self, monkeypatch):
+        async def _fake_cleanup(history_db, threshold_minutes=30, task_queue=None):
+            return 0
+
+        monkeypatch.setattr("app.integrated_app.routes.restore.unified.cleanup_stale_tasks", _fake_cleanup)
+
+        sweeps: list[int] = []
+
+        class _FakeMgr:
+            def remove_stale_checkpoints(self, max_age_seconds: int) -> int:
+                sweeps.append(max_age_seconds)
+                return 3
+
+        task = asyncio.create_task(
+            periodic_stale_cleanup(
+                history_db=object(),
+                get_queue=lambda: _FakeQueue(),
+                last_progress_publish={},
+                threshold_minutes=30,
+                interval_seconds=0.05,
+                get_checkpoint_mgr=lambda: _FakeMgr(),
+                checkpoint_ttl_minutes=10,
+            )
+        )
+        await asyncio.sleep(0.25)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert sweeps, "周期循环未调用 checkpoint 清扫"
+        assert all(s == 600 for s in sweeps)
+
+    @pytest.mark.asyncio
+    async def test_periodic_sweep_skipped_when_disabled_or_missing(self, monkeypatch):
+        async def _fake_cleanup(history_db, threshold_minutes=30, task_queue=None):
+            return 0
+
+        monkeypatch.setattr("app.integrated_app.routes.restore.unified.cleanup_stale_tasks", _fake_cleanup)
+
+        sweeps: list[int] = []
+
+        class _FakeMgr:
+            def remove_stale_checkpoints(self, max_age_seconds: int) -> int:
+                sweeps.append(max_age_seconds)
+                return 0
+
+        # ttl=0 → 跳过
+        task = asyncio.create_task(
+            periodic_stale_cleanup(
+                history_db=object(),
+                get_queue=lambda: _FakeQueue(),
+                last_progress_publish={},
+                threshold_minutes=30,
+                interval_seconds=0.05,
+                get_checkpoint_mgr=lambda: _FakeMgr(),
+                checkpoint_ttl_minutes=0,
+            )
+        )
+        await asyncio.sleep(0.15)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        # mgr 缺失（None）→ 跳过
+        task2 = asyncio.create_task(
+            periodic_stale_cleanup(
+                history_db=object(),
+                get_queue=lambda: _FakeQueue(),
+                last_progress_publish={},
+                threshold_minutes=30,
+                interval_seconds=0.05,
+                get_checkpoint_mgr=lambda: None,
+                checkpoint_ttl_minutes=10,
+            )
+        )
+        await asyncio.sleep(0.15)
+        task2.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task2
+        assert sweeps == []

@@ -390,12 +390,17 @@ async def lifespan(app: FastAPI):
     )
 
     # 启动定期清理卡死任务的后台任务（每5分钟检查一次，阈值 runtime.task.stale_threshold_minutes）
+    # 后续建议 R2：同循环周期执行孤儿 checkpoint 清扫（启动扫描的长驻进程补位）
     stale_cleanup_task = asyncio.create_task(
         periodic_stale_cleanup(
             history_db,
             get_queue=lambda: app.state.task_queue,
             last_progress_publish=_last_progress_publish,
             threshold_minutes=int(config.get("runtime", {}).get("task", {}).get("stale_threshold_minutes", 30) or 0),
+            get_checkpoint_mgr=lambda: getattr(app.state, "checkpoint_mgr", None),
+            checkpoint_ttl_minutes=int(
+                config.get("runtime", {}).get("task", {}).get("checkpoint_ttl_minutes", 1440) or 0
+            ),
         )
     )
     app.state.stale_cleanup_task = stale_cleanup_task

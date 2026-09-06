@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from app.integrated_app.task_queue import TaskQueue
@@ -35,6 +35,8 @@ async def periodic_stale_cleanup(
     threshold_minutes: int,
     *,
     interval_seconds: float = 300,
+    get_checkpoint_mgr: Callable[[], Any] | None = None,
+    checkpoint_ttl_minutes: int = 0,
 ) -> None:
     """定期清理卡死的 processing 任务（每 interval_seconds 检查一次）。
 
@@ -47,6 +49,9 @@ async def periodic_stale_cleanup(
         last_progress_publish: 进度事件节流表（P2-11），随清理周期重置。
         threshold_minutes: 卡死判定阈值（分钟）。
         interval_seconds: 检查间隔（秒），默认 300；测试可注入小值。
+        get_checkpoint_mgr: 断点续跑管理器解析回调（后续建议 R2）：
+            提供后周期执行孤儿 checkpoint 清扫（启动扫描的长驻进程补位）。
+        checkpoint_ttl_minutes: checkpoint 最长保留分钟数；<=0 时跳过清扫。
     """
     effective_threshold = threshold_minutes if threshold_minutes > 0 else 10**9
     from app.integrated_app.routes.restore import unified as unified_routes
@@ -63,6 +68,20 @@ async def periodic_stale_cleanup(
             # P2-11：顺带清理事件总线过期的最终状态缓存（TTL 60s，5min 扫一次足够）
             task_event_bus.cleanup_expired()
             last_progress_publish.clear()
+            # 孤儿 checkpoint 周期清扫（后续建议 R2）：启动扫描只补一次，
+            # 长驻进程期间失败/中断任务的新残留由本循环按同一 TTL 回收
+            if get_checkpoint_mgr is not None and checkpoint_ttl_minutes > 0:
+                mgr = get_checkpoint_mgr()
+                if mgr is not None:
+                    try:
+                        removed = mgr.remove_stale_checkpoints(checkpoint_ttl_minutes * 60)
+                        if removed:
+                            logger.info(
+                                f"周期孤儿 checkpoint 清理: 删除 {removed} 个超过 "
+                                f"{checkpoint_ttl_minutes} 分钟的残留 JSON"
+                            )
+                    except Exception as e:
+                        logger.debug(f"周期孤儿 checkpoint 清理失败: {e}")
         except asyncio.CancelledError:
             break
         except Exception as e:
