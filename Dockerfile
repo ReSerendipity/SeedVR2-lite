@@ -10,10 +10,13 @@
 #    运行时仅需 NVIDIA 驱动经 nvidia-container-toolkit 注入：
 #      docker run --gpus all ...
 #    下面的 NVIDIA_VISIBLE_DEVICES / NVIDIA_DRIVER_CAPABILITIES 保证 nvidia runtime 自动生效。
-# 4. 依赖锁定：安装 requirements.txt（版本区间声明）。
-#    requirements-lock.txt 是按当前开发机（Windows + torch+cu132 本地轮子）生成的带哈希锁，
-#    直接在 Linux 容器内 --require-hashes 安装会因平台轮子哈希不同而失败；
-#    如需容器内哈希锁定，请在 Linux 环境重跑 scripts/generate_lock.py 生成平台化锁文件。
+# 4. 依赖锁定（评估报告 R4c）：安装 requirements-container-lock.txt（uv.lock 导出的
+#    跨平台精确钉版锁，111 包全带哈希）。torch==2.13.0+cu132 来自 download.pytorch.org，
+#    该索引不提供轮子哈希元数据（锁中该行无哈希），故无法全量 --require-hashes：
+#    版本已精确钉死（修复原 requirements.txt 区间漂浮），哈希强制列为后续工作
+#    （改用 PyPI CUDA 轮或带哈希镜像源后可开启）。锁文件再生成：
+#      uv export --format requirements-txt --no-dev --no-emit-project --emit-index-url \
+#          -o requirements-container-lock.txt
 # 5. 优雅关闭：gunicorn 收到 SIGTERM 后等待 --graceful-timeout，
 #    覆盖应用 lifespan 关闭链（任务队列排空 ≤30s + 模型卸载），避免强杀丢任务。
 FROM python:3.12-slim-bookworm AS builder
@@ -21,9 +24,10 @@ FROM python:3.12-slim-bookworm AS builder
 WORKDIR /app
 
 # 仅复制依赖清单以最大化层缓存命中（代码变更不击穿依赖层）
-COPY requirements.txt .
+COPY requirements-container-lock.txt .
 
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+# 锁文件头部自带 --index-url/--extra-index-url（PyPI + cu132 源），pip 按行解析
+RUN pip install --no-cache-dir --prefix=/install -r requirements-container-lock.txt
 
 # ---------------------------------------------------------------- runtime stage
 FROM python:3.12-slim-bookworm
