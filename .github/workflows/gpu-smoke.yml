@@ -8,12 +8,16 @@
 # (--require-inference).
 #
 # 触发源（评估报告 P1-2：真机验证与发布脱钩的收口）：
-#   1. schedule：每周一 03:00 UTC 兜底冒烟最新 Release；
+#   1. schedule：周一 + 周四 03:00 UTC 兜底冒烟最新 Release（周四档专为「无发布但
+#      main 有合并」的窗口提供源码级真机回归，见下「双层烟测」）；
 #   2. workflow_dispatch：手动指定/默认最新 Release；
 #   3. workflow_run：Portable Release 成功结束后立即冒烟该 tag —— 通知级联动，
 #      不阻塞发布（发布前门禁已由解包冒烟承担打包级错误，真机只补 GPU 推理级缺陷）。
 #      workflow_run 仅按默认分支上的本文件版本触发；tag push 的 head_branch 即 tag 名，
 #      非 v* tag（如手动 dispatch 构建）只记 notice 不冒烟。
+# 双层烟测（报告长期⑨「main 源码级 + 发布包级」的落地形态）：每次触发跑两遍真机——
+#   第一遍发布包原样（发布可交付性），第二遍把解包目录 app/+config.yaml 换成当前分支源码、
+#   复用同一便携 Python 与权重（main 引擎/显存回归，无发布也随周四/周一与 workflow_run 覆盖）。
 # skip 可观测（R4）：runner-precheck 决定跳过时不再只发 ::notice::，而是建/追加一条
 #   skip-record issue（用 GITHUB_TOKEN，不依赖 REPO_ADMIN_TOKEN），消除「连续 skip 无人察觉」
 #   的静默盲区；冒烟成功后自动关闭未决的 skip-record。
@@ -24,6 +28,7 @@
 #   2. gh CLI on PATH (release asset download)
 #   3. Python 3.11+ on PATH (the smoke script is stdlib-only)
 #   4. NVIDIA driver ready; ~7 GB free disk for download + unpack
+#      (勾选 quant_baseline 时另需 ~8 GB：补下 3B FP8 权重 + 网络可达 hf-mirror/ModelScope)
 # Without an online `gpu` runner the trigger skips itself via runner-precheck (with an
 # issue record since R4).
 name: GPU Smoke (real inference, self-hosted)
@@ -35,8 +40,13 @@ on:
         description: "Release tag to smoke (empty = newest published release)"
         required: false
         default: ""
+      quant_baseline:
+        description: "额外跑跨精度量化质量基线（MLOps P2-6，追加 fp8 权重下载 + 常驻服务真机对比，耗时显著）"
+        type: boolean
+        required: false
+        default: false
   schedule:
-    - cron: "0 3 * * 1" # every Monday 03:00 UTC
+    - cron: "0 3 * * 1,4" # 周一 + 周四 03:00 UTC（周四专补「无发布窗口」的 main 源码回归）
   workflow_run:
     workflows: ["Portable Release"] # name: 必须与 portable-release.yml 的 name 一致
     types: [completed]
@@ -149,7 +159,7 @@ jobs:
     needs: runner-precheck
     if: needs.runner-precheck.outputs.available == 'true' && needs.runner-precheck.outputs.wanted == 'true'
     runs-on: [self-hosted, gpu]
-    timeout-minutes: 150
+    timeout-minutes: 300
     steps:
       - name: Fetch workflow scripts via codeload source archive
         shell: pwsh
@@ -252,6 +262,71 @@ jobs:
             --metrics-module (Join-Path $PWD 'src\app\integrated_app\utils\image_metrics.py') `
             --boot-timeout 900 --task-timeout 1800 --resolution 512
           if ($LASTEXITCODE -ne 0) { throw "GPU smoke failed" }
+
+      - name: Source-overlay smoke (main 源码跑在发布包运行时上 — 双层烟测源码层)
+        shell: pwsh
+        run: |
+          # 上一遍证明「发布包原样」可真实推理；这一遍只替换代码与配置——把解包目录的
+          # app/ 与 config.yaml 换成当前分支源码（src/ 已由 codeload 取出），复用同一
+          # 便携 Python 环境、model/ 权重与运行时，重跑一次真机推理 + 质量门。
+          # 价值：不重发版即暴露 main 相对最近发布包的 engines/ 与 optimization/gpu 回归
+          # （两者都在 app/ 树下）；model_lib/、common/（禁区/稳定 vendored）刻意不覆盖，
+          # 隔离「代码回归」与「vendored 漂移」。config.yaml 一并覆盖：若 main 配置需新键，
+          # 属真实的发布集成缺口，红在此处正合适。
+          $ErrorActionPreference = 'Stop'
+          $portable = Join-Path $PWD 'target\SeedVR2-Portable'
+          Remove-Item -Recurse -Force (Join-Path $portable 'app')
+          Copy-Item -Recurse -Force (Join-Path $PWD 'src\app') (Join-Path $portable 'app')
+          Copy-Item -Force (Join-Path $PWD 'src\config.yaml') (Join-Path $portable 'config.yaml')
+          python .\scripts\smoke_portable_bundle.py `
+            --app-dir $portable `
+            --require-inference --quality-gate --min-psnr 15 --min-ssim 0.5 `
+            --metrics-module (Join-Path $PWD 'src\app\integrated_app\utils\image_metrics.py') `
+            --boot-timeout 900 --task-timeout 1800 --resolution 512
+          if ($LASTEXITCODE -ne 0) { throw "source-overlay smoke failed: main 源码在发布包运行时上未通过真机验收" }
+
+      - name: Quant baseline — prepare cross-precision weights (fp8; bundle ships mxfp8)
+        if: inputs.quant_baseline == true
+        shell: pwsh
+        run: |
+          # 量化基线需要 ≥2 精度对比。便携包只内置 3B MXFP8（见 SOURCE.md），此处补下
+          # numz 3B FP8 作参考精度（--precisions 已存在的会跳过；--no-vae 复用包内共享 VAE）。
+          $ErrorActionPreference = 'Stop'
+          $portable = Join-Path $PWD 'target\SeedVR2-Portable'
+          $py = @(Resolve-Path (Join-Path $portable 'WPy64-*\python*\python.exe'), (Join-Path $portable 'WPy64-*\python\python.exe') -ErrorAction SilentlyContinue | ForEach-Object Path)
+          if ($py.Count -eq 0) { throw "便携解释器未找到（quant 需 requests/huggingface_hub，非系统 python）" }
+          & $py[0] (Join-Path $PWD 'src\scripts\download_model.py') --size 3b --precisions fp8 --no-vae --save-dir (Join-Path $portable 'model') --endpoint https://hf-mirror.com
+          if ($LASTEXITCODE -ne 0) { throw "fp8 权重下载失败：量化基线缺参考精度" }
+
+      - name: Quant baseline — serve-and-run cross-precision PSNR/SSIM
+        if: inputs.quant_baseline == true
+        shell: pwsh
+        run: |
+          # 常驻模式（smoke --serve-and-run）：由 smoke 起便携服务并复用其 boot/健康/关停链路，
+          # 就绪后驱动 perf/benchmark/quant_quality_baseline.py 对 fp8 与 mxfp8 跑同一确定性
+          # golden 源图，产出 PSNR/SSIM 对比 JSON（MLOps P2-6）。cwd 为便携目录，故全用绝对路径。
+          $ErrorActionPreference = 'Stop'
+          $portable = Join-Path $PWD 'target\SeedVR2-Portable'
+          $out = Join-Path $PWD 'quant_baseline.json'
+          $serve = @((Join-Path $PWD 'src\perf\benchmark\quant_quality_baseline.py'),
+            '--base-url', 'http://127.0.0.1:7870',
+            '--model', '3b', '--precisions', 'fp8', 'mxfp8', '--reference', 'fp8',
+            '--resolution', '512', '--seed', '42', '--timeout', '2400',
+            '--src-dir', (Join-Path $PWD 'src'),
+            '--output', $out)
+          python (Join-Path $PWD 'src\scripts\smoke_portable_bundle.py') --app-dir $portable --boot-timeout 900 --serve-and-run '{python}' @serve
+          if ($LASTEXITCODE -ne 0) { throw "量化质量基线未通过：fp8↔mxfp8 精度间质量回退或服务异常" }
+          if (-not (Test-Path $out)) { throw "quant_baseline.json 未生成" }
+          Write-Host '--- quant_baseline.json ---'
+          Get-Content $out -Raw
+
+      - name: Upload quant baseline JSON
+        if: inputs.quant_baseline == true && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quant-baseline
+          path: quant_baseline.json
+          if-no-files-found: warn
 
       - name: Close stale skip-record issues (R4 loop closure)
         if: success()
