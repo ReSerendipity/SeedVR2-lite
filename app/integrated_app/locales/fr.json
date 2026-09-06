@@ -287,7 +287,7 @@
     "and_more": "... et",
     "more_files": "autres fichiers",
     "eta": "ETA",
-    "tip_model": "La taille du modèle affecte la qualité et la vitesse. 3B rapide, 7B haute qualité, 7B-Sharp netteté améliorée",
+    "tip_model": "La taille du modèle affecte la qualité et la vitesse. 3B rapide, 7B haute qualité, 7B-Sharp netteté améliorée. NB : FP8/INT8/MXFP8/NVFP4 ne sont que des formats de stockage des poids - le chargement à l'inférence reste FP16/FP32 ; la VRAM et la vitesse dépendent surtout de la taille du modèle, du BlockSwap et de la résolution",
     "tip_resolution": "Résolution cible de sortie (hauteur en pixels), recommandé 2160 (4K)",
     "tip_seed": "La graine aléatoire contrôle l'aléatoire d'inférence. Même graine + même entrée = même sortie",
     "tip_color_correction": "Appliquer ou non une correction colorimétrique après restauration. LAB (recommandé) : rapproche les couleurs dans l'espace LAB en préservant teinte, balance des blancs et saturation d'origine. Aucune : conserve la sortie brute du modèle, qui peut dériver de l'image source.",

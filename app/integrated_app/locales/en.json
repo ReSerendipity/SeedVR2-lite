@@ -287,7 +287,7 @@
     "and_more": "... and",
     "more_files": "more files",
     "eta": "ETA",
-    "tip_model": "Model size affects quality and speed. 3B for speed, 7B for quality, 7B-Sharp for enhanced sharpness",
+    "tip_model": "Model size affects quality and speed. 3B for speed, 7B for quality, 7B-Sharp for enhanced sharpness. Note: FP8/INT8/MXFP8/NVFP4 are storage-only quantizations - weights are loaded as FP16/FP32 at inference; VRAM and speed are driven by model size, BlockSwap and resolution",
     "tip_resolution": "Target output resolution (height in pixels), recommended 2160 (4K)",
     "tip_seed": "Random seed controls inference randomness. Same seed + same input = same output",
     "tip_color_correction": "Whether to colour-correct after restoration. LAB (recommended): matches colours in LAB space, preserving the original hue, white balance and saturation. None: keeps the model's raw output, which may drift from the original colours.",
