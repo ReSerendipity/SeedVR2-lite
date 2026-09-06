@@ -112,7 +112,10 @@
 ## F2. CI 验证（R4a 抑制是否生效）
 - 首次 CI SAST（report-only）后 open ERROR 告警 13→**10**：4 处 yaml run-shell-injection 已关闭（env 化真修复），但 6 处 Python 侧「短名→完整 ID + 行锚定」未全生效——暴露独立 `# nosemgrep` 行只抑制紧邻下一行（seedvr2_engine 的 neg_emb 未覆盖）。
 - **本地实证**：`pip install semgrep==1.173.0` + 与 CI 完全同款 `semgrep scan --config auto --severity ERROR`，逐文件定位残留→补行内注释→全仓扫描 **ERROR = 0**（确定性证据，替代盲试 CI）。
-- 据此翻 `--error` 硬门禁（R4b）。semgrep 安装仅落在 gitignored 的 `.venv`，不触依赖清单。
+- 据此翻 `--error` 硬门禁（R4b，`1c4f39d`）。semgrep 安装仅落在 gitignored 的 `.venv`，不触依赖清单。
+- **CI 终态实证**：`--error` 上线后 SAST 在 62646ff 与 63b0ae0 均 success（ERROR findings 双端=0），R4 端到端达成。
+- GitHub open ERROR alerts 计数仍显示 10：属告警自动关闭的**异步滞后**（依赖后续扫描收敛），非门禁缺口；按铁律不经 API 越权 dismiss（维护者判断），列报告外观察。
+- **外部并行事件留痕**：①后端门禁首红根因是我 R1 提交的 experiment 脚本缺 black 格式（已在本文件 F1 提交说明遗漏核验，教训：新增脚本必须点名过 black）——修复 `63b0ae0` 由维护者并行提交（标题注明「越权最小处置」），我方重复修复自动变为 no-op；②同一时段 main 上存在并行 MLOps 整改线（4a17570/5d0a33d/d97df5b/9523292），其中 5d0a33d 与我的 gpu-smoke.yml env 修复为不同 hunk，共存无损，已逐行复核。
 
 ## F2b. 本轮决策（续 D14 之后）
 | ID | 决策 | 理由 |
