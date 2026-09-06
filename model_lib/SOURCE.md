@@ -70,7 +70,17 @@ python scripts/download_model.py --size 7b
 python scripts/download_model.py --size 7b_sharp
 ```
 
-Weights come from HuggingFace repository `Reserendipity/SeedVR2` or mirrors. See `NOTICE` file for full attribution.
+Weights come from upstream model repos, not the code repo. Per `scripts/download_model.py`
+(默认/来源以脚本常量为准):
+- **FP16 / FP8** (`seedvr2_ema_*`): HuggingFace **`numz/SeedVR2_comfyUI`** (`_DEFAULT_REPO`)；
+  国内镜像用 `--endpoint https://hf-mirror.com`。
+- **INT8-convrot / MXFP8 / NVFP4** (`seedvr2_*`): ModelScope/HF **`Comfy-Org/SeedVR2`**
+  （`_COMFY_ORG_REPO`，`diffusion_models/` 子目录）——与 numz 自家字节不同、哈希不可互用。
+- 原始权重作者上游：ByteDance-Seed（见 `NOTICE` 第 5 条）。
+
+> ⚠ 勘误（2026-09-06）：本行旧版写「`Reserendipity/SeedVR2`」——那是本项目**代码仓**
+> （且拼写有误，实为 `ReSerendipity/SeedVR2`，见 NOTICE），**不是**权重下载源；已按
+> `download_model.py::_DEFAULT_REPO / _COMFY_ORG_REPO` 实测更正。完整署名见 `NOTICE`。
 
 ## Compliance Checklist
 
