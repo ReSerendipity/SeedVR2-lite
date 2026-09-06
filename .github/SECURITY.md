@@ -60,8 +60,8 @@ SeedVR2 已实施以下安全措施：
 
 ### 路径与访问控制
 
-- **PathGuard 白名单**：下载和扫描端点仅允许 `outputs/` 和 `data/uploads/` 目录
-- **路径遍历防护**：拒绝包含 `..` 的路径，使用 `realpath()` 解析符号链接
+- **PathGuard 白名单**：扫描 / 下载 / 目录浏览 / 资源管理器等全部用户可控路径端点统一受 `runtime.security.allowed_base_dirs` 白名单约束（默认 `outputs/`、`data/uploads/`、`data/checkpoints/`、`model/`）；`browse-dir` 空路径仅返回白名单根目录列表，不枚举盘符
+- **路径遍历防护**：拒绝包含 `..` 的路径，使用 `realpath()` 解析符号链接后按 `is_relative_to` 语义复检（防兄弟目录前缀绕过）
 - **速率限制**：上传接口 30 次/分钟
 - **网络绑定**：默认仅绑定 `127.0.0.1`，不对外暴露
 
@@ -80,10 +80,15 @@ SeedVR2 已实施以下安全措施：
 
 ### 网络绑定警告
 
-SeedVR2 的 Web UI **默认仅绑定 `127.0.0.1`**。**严禁将 `server.host` 修改为 `0.0.0.0` 或公网 IP**。本应用不含用户认证与权限隔离机制，直接暴露到公网将导致：
+SeedVR2 的 Web UI **默认仅绑定 `127.0.0.1`**。**严禁将 `server.host` 修改为 `0.0.0.0` 或公网 IP**。本应用默认不含用户认证与权限隔离机制，直接暴露到公网将导致：
 - 任意第三方调用推理 API 占用 GPU 资源
 - 通过上传接口投递恶意文件
 - 下载 `outputs/` 与 `data/uploads/` 目录内容
+
+**容器/编排部署强制鉴权（fail-closed）**：镜像内置 `SEEDVR2_DEPLOYMENT=container` 标记，容器内启动时若 Basic Auth 未生效将**拒绝启动**并输出修复指引。启用方式（任选其一）：
+1. 注入环境变量 `SEEDVR2_AUTH_USERNAME` + `SEEDVR2_AUTH_PASSWORD`（推荐，优先级高于 config.yaml）；
+2. 在 config.yaml 配置 `security.auth.enable=true` / `username` / `password`；
+3. 端口映射严格限定回环（如 `127.0.0.1:7870:7870`）时，可设 `SEEDVR2_ALLOW_UNAUTHENTICATED=1` 显式豁免。
 
 如需局域网共享，请在反向代理（Nginx/Caddy）后增加 Basic Auth，并启用 HTTPS。详见 [部署文档](docs/plans/DEPLOYMENT.md)。
 
