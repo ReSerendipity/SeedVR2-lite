@@ -310,3 +310,6 @@ desktop/tauri.key
 # Runtime cache (contains machine-absolute paths, must NOT be committed)
 data/model_hash_cache.json
 *.bak.*
+
+# AI assistant workspace (not part of the project)
+.workbuddy-ai/
