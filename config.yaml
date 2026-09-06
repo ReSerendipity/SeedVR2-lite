@@ -195,6 +195,7 @@ runtime:
     max_upload_image_mb: 50
     max_upload_video_mb: 500
     rate_limit_per_minute: 30
+    watermark_on_failure: mark_metadata
   sse:
     heartbeat_interval_seconds: 30
     max_duration_seconds: 300

@@ -364,6 +364,11 @@ class _VideoPipelineMixin:
             prev_prop_frame = None  # FeaturePropagation 跨段传播 (torch 张量)
             prev_tail_out = None  # 上一段处理后尾帧 (uint8 HWC), 用于重叠混合
             raw_buf: list[torch.Tensor] = []  # 原始帧缓冲, 复用重叠帧避免回退读取
+            # 水印失败处置（评估报告 R2）：任务级解析一次策略；失败帧聚合计数，
+            # 审计/日志只报首帧避免逐帧刷屏
+            watermark_policy = None
+            watermark_failed_frames = 0
+            watermark_last_error: str | None = None
 
             try:
                 cap = cv2.VideoCapture(video_path)
@@ -655,6 +660,12 @@ class _VideoPipelineMixin:
                     # 水印配置
                     watermark_cfg = self.config.get("security", {}).get("watermark", {})
                     enable_watermark = watermark_cfg.get("enable", True)
+                    if enable_watermark and watermark_policy is None:
+                        from app.integrated_app.services.watermark_policy import (
+                            resolve_watermark_failure_policy,
+                        )
+
+                        watermark_policy = resolve_watermark_failure_policy(self.config)
                     overlap_n = min(segment_overlap, len(restored_frames))
                     for i, frame in enumerate(restored_frames):
                         if prev_tail_out is not None and i < overlap_n:
@@ -666,13 +677,23 @@ class _VideoPipelineMixin:
                             ).astype(np.uint8)
                         # 嵌入不可感知数字水印 (视频帧)
                         if enable_watermark:
-                            try:
-                                from app.integrated_app.security.watermark import embed_watermark
+                            from app.integrated_app.services.watermark_policy import embed_with_retry
 
-                                # P3-1：逐帧水印绑定 task_id（视频按帧嵌入，payload 同源）
-                                frame = embed_watermark(frame, payload=watermark_payload)
-                            except Exception:
-                                pass
+                            # P3-1：逐帧水印绑定 task_id（视频按帧嵌入，payload 同源）
+                            frame, embedded, wm_error = embed_with_retry(frame, payload=watermark_payload)
+                            if not embedded:
+                                watermark_failed_frames += 1
+                                watermark_last_error = wm_error
+                                if watermark_failed_frames == 1:
+                                    from app.integrated_app.services.watermark_policy import (
+                                        handle_watermark_failure,
+                                    )
+
+                                    handle_watermark_failure(
+                                        policy=watermark_policy or "mark_metadata",
+                                        error=wm_error or "unknown",
+                                        payload=watermark_payload,
+                                    )
                         cv2.imwrite(
                             os.path.join(frames_dir, f"frame_{seg_start + i:06d}.png"),
                             cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
@@ -768,6 +789,19 @@ class _VideoPipelineMixin:
                 return RestoreResult(success=False, error=ffmpeg_hint)
 
             logger.info(f"视频修复完成: {output_path} ({output_frames} 帧)")
+
+            # 水印缺失兜底（评估报告 R2）：mark_metadata 策略下写侧车元数据标识
+            if watermark_failed_frames and (watermark_policy or "mark_metadata") == "mark_metadata":
+                try:
+                    from app.integrated_app.services.watermark_policy import write_provenance_sidecar
+
+                    sidecar_path = write_provenance_sidecar(output_path, payload=watermark_payload)
+                    logger.warning(
+                        f"{watermark_failed_frames} 帧水印嵌入失败"
+                        f"（末次: {watermark_last_error}），已写溯源侧车: {sidecar_path}"
+                    )
+                except OSError as e:
+                    logger.error(f"[SECURITY] 水印缺失且溯源侧车写入失败: {e}")
 
             # 清理临时帧目录, 释放磁盘空间 (长视频帧文件可达数十 GB)
             try:

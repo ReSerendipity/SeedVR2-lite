@@ -67,7 +67,8 @@ SeedVR2 已实施以下安全措施：
 
 ### 输出保护
 
-- **内容溯源**：推理输出自动嵌入不可感知的来源标识，可溯源到 SeedVR2
+- **内容溯源**：推理输出默认嵌入不可感知的来源标识（HMAC 签名载荷绑定任务 ID，可反查产生任务）；验证工具 `scripts/verify_watermark.py` 支持图像与视频（视频为采样帧验证）
+- **已知限制（评估报告 R2）**：图像产物的隐式水印可稳定验证；视频隐式水印经 H.264/H.265 有损编码后目前**不可靠**（实测 0/16 帧存活，见 `scripts/experiment_watermark_transcode.py`）。水印嵌入失败的产物会按 `runtime.security.watermark_on_failure` 策略处置（默认 `mark_metadata`：写 `<输出名>.provenance.json` 侧车 + 审计事件，绝不静默）
 - **GPG 签名**：GitHub Release 自动生成 SHA256SUMS + GPG 签名
 
 ### 依赖安全

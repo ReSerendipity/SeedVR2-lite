@@ -544,6 +544,8 @@ class RuntimeSecurityConfig(BaseModel):
         integrity_recheck_interval_seconds: 运行时周期完整性重检间隔（秒），0 表示禁用。
         max_upload_image_mb: 单张图片上传大小上限（MB），1-2048 范围。
         max_upload_video_mb: 单个视频上传大小上限（MB），1-10240 范围。
+        watermark_on_failure: 水印嵌入失败处置策略（评估报告 R2）：
+            mark_metadata=侧车元数据标识（默认）/ block=阻断产出 / ignore=仅日志。
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -553,6 +555,11 @@ class RuntimeSecurityConfig(BaseModel):
     integrity_recheck_interval_seconds: int = Field(1800, ge=0, le=86400)
     max_upload_image_mb: int = Field(50, ge=1, le=2048, description="单张图片上传大小上限（MB）")
     max_upload_video_mb: int = Field(500, ge=1, le=10240, description="单个视频上传大小上限（MB）")
+    watermark_on_failure: str = Field(
+        "mark_metadata",
+        pattern="^(mark_metadata|block|ignore)$",
+        description="水印嵌入失败处置策略：mark_metadata（默认）/ block / ignore",
+    )
 
 
 class RetentionConfig(BaseModel):
