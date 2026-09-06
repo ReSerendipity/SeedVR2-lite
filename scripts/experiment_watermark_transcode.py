@@ -87,11 +87,22 @@ def _run(scheme: str, frames: int, size: int, crf: int, workdir: str, ffmpeg: st
     out_mp4 = os.path.join(workdir, f"out_{_safe_name(scheme)}_crf{crf}.mp4")
     proc = subprocess.run(
         [
-            ffmpeg, "-y", "-framerate", "8",
-            "-i", os.path.join(frames_dir, "frame_%06d.png"),
-            "-c:v", "libx264", "-crf", str(crf), "-pix_fmt", "yuv420p", out_mp4,
+            ffmpeg,
+            "-y",
+            "-framerate",
+            "8",
+            "-i",
+            os.path.join(frames_dir, "frame_%06d.png"),
+            "-c:v",
+            "libx264",
+            "-crf",
+            str(crf),
+            "-pix_fmt",
+            "yuv420p",
+            out_mp4,
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if proc.returncode != 0:
         print(f"ffmpeg 转码失败 (scheme={scheme}, crf={crf}): {proc.stderr[-400:]}", file=sys.stderr)
@@ -113,9 +124,7 @@ def _run(scheme: str, frames: int, size: int, crf: int, workdir: str, ffmpeg: st
 def main() -> int:
     parser = argparse.ArgumentParser(description="水印转码鲁棒性诊断实验（图像/视频双方案）")
     parser.add_argument("--frames", type=int, default=8, help="合成帧数（默认 8）")
-    parser.add_argument(
-        "--size", type=int, default=512, help="帧边长（默认 512，需偶数；视频方案 R=3 需 ≥410px 容量）"
-    )
+    parser.add_argument("--size", type=int, default=512, help="帧边长（默认 512，需偶数；视频方案 R=3 需 ≥410px 容量）")
     parser.add_argument(
         "--crfs", type=int, nargs="+", default=[18, 23], help="CRF 档位列表（18 为生产 compose_video 取值）"
     )
