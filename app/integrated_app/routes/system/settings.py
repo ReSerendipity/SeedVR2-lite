@@ -24,6 +24,7 @@ import logging
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -39,11 +40,38 @@ from app.integrated_app.dependencies import (
 from app.integrated_app.i18n import I18n
 from app.integrated_app.model_manager import ModelManager
 from app.integrated_app.security.audit import audit_event
+from app.integrated_app.security.path_guard import PathGuard, build_default_path_guard
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/system", tags=["设置"])
 
+# 兼容保留：历史遗留的模块级白名单常量（恒为空 = 不限制）。
+# 生产端点 browse-dir / open-explorer 已改为经 _path_guard_from_config()
+# 显式传入与 scan/download 同源的 runtime.security.allowed_base_dirs 白名单，
+# 不再依赖该默认值；直接调用 validate_path() 而不传 allowed_roots 视为不受限。
 ALLOWED_ROOT_DIRS: list[str] = []
+
+
+def _path_guard_from_config(config: dict) -> PathGuard:
+    """从应用配置构建 browse/open 端点的路径白名单。
+
+    与 scan-folder / download 端点同源（runtime.security.allowed_base_dirs），
+    保证所有用户可控路径端点共用同一份白名单事实来源。
+
+    Args:
+        config: 应用配置字典（get_config 依赖注入）。
+
+    Returns:
+        PathGuard: 已按项目根解析的路径守卫实例。
+    """
+    security_cfg = config.get("runtime", {}).get("security", {})
+    allowed_dirs = security_cfg.get("allowed_base_dirs", ["outputs/", "data/uploads/"])
+    return build_default_path_guard(os.getcwd(), allowed_dirs)
+
+
+def _allowed_roots_of(path_guard: PathGuard) -> list[str]:
+    """取白名单根目录的字符串形式（validate_path 入参）。"""
+    return [str(p) for p in path_guard.allowed_dirs]
 
 
 def validate_path(path: str, allowed_roots: list[str] | None = None) -> str:
@@ -55,6 +83,8 @@ def validate_path(path: str, allowed_roots: list[str] | None = None) -> str:
     3. 使用 os.path.realpath() 解析真实路径（消除符号链接）
     4. 再次检查解析后的路径是否包含 '..'
     5. 如配置了允许根目录列表，验证路径在允许范围内
+       （Path.is_relative_to 语义：`allowed` 不会误放行兄弟目录 `allowed_evil`，
+        修复历史 startswith 前缀匹配的兄弟目录绕过）
 
     Args:
         path: 待验证的路径字符串。
@@ -78,7 +108,7 @@ def validate_path(path: str, allowed_roots: list[str] | None = None) -> str:
         raise HTTPException(status_code=400, detail="解析后的路径不允许包含 '..'")
 
     roots = allowed_roots if allowed_roots is not None else ALLOWED_ROOT_DIRS
-    if roots and not any(real_path.startswith(os.path.realpath(r)) for r in roots):
+    if roots and not any(Path(real_path).is_relative_to(Path(os.path.realpath(r))) for r in roots):
         raise HTTPException(status_code=403, detail="路径不在允许的目录范围内")
 
     return real_path
@@ -471,13 +501,19 @@ async def get_locales(i18n: I18n = Depends(get_i18n)):
 
 
 @router.get("/browse-dir")
-async def browse_directory(path: str = "", show_files: bool = False):
-    """浏览服务器本地目录，返回子目录列表（用于文件夹选择器）。
+async def browse_directory(
+    path: str = "",
+    show_files: bool = False,
+    config: dict = Depends(get_config),
+):
+    """浏览白名单内的本地目录，返回子目录列表（用于文件夹选择器）。
 
     API 端点：GET /api/system/browse-dir
 
     查询参数：
-    - path (optional): 要浏览的目录路径，为空则返回根驱动器列表
+    - path (optional): 要浏览的目录路径；为空则返回白名单根目录列表
+      （runtime.security.allowed_base_dirs，与 scan/download 端点同源）。
+      不再枚举盘符，避免白名单外文件系统结构信息泄漏。
     - show_files (optional): 是否同时显示文件，默认 false
 
     返回格式（JSON）：
@@ -488,7 +524,7 @@ async def browse_directory(path: str = "", show_files: bool = False):
             {
                 "name": str,
                 "path": str,
-                "type": "drive"|"directory"|"file",
+                "type": "directory"|"file",
                 "ext"?: str,    // 文件扩展名（仅文件）
                 "size"?: int    // 文件大小（仅文件）
             }
@@ -496,41 +532,40 @@ async def browse_directory(path: str = "", show_files: bool = False):
     }
 
     错误响应：
-    - 403: 权限不足
+    - 403: 路径不在白名单范围内
     - 404: 路径不存在
     - 400: 路径不是目录
 
     Args:
-        path: 目录路径，空字符串返回驱动器列表。
+        path: 目录路径，空字符串返回白名单根目录列表。
         show_files: 是否包含文件列表。
+        config: 应用配置（get_config 依赖注入，提供路径白名单）。
 
     Returns:
         JSONResponse 包含目录内容。
 
     Raises:
-        HTTPException: 路径无效或无权限时抛出。
+        HTTPException: 路径无效、越出白名单或无权限时抛出。
     """
+    path_guard = _path_guard_from_config(config)
+
     if not path:
-        drives = []
-        if os.name == "nt":
-            import string
+        # 根视图：列出白名单根目录（文件夹选择器从安全模型内的入口开始导航）
+        items: list[dict[str, str | int]] = []
+        for root in path_guard.allowed_dirs:
+            if await asyncio.to_thread(os.path.isdir, root):
+                items.append({"name": str(root), "path": str(root), "type": "directory"})
+        return JSONResponse({"current_path": "", "parent_path": "", "items": items})
 
-            for letter in string.ascii_uppercase:
-                drive = f"{letter}:\\"
-                if await asyncio.to_thread(os.path.exists, drive):
-                    drives.append({"name": drive, "path": drive, "type": "drive"})
-        else:
-            drives.append({"name": "/", "path": "/", "type": "drive"})
-        return JSONResponse({"current_path": "", "items": drives})
-
-    path = validate_path(path)
+    path = validate_path(path, allowed_roots=_allowed_roots_of(path_guard))
 
     if not await asyncio.to_thread(os.path.exists, path):
         raise HTTPException(status_code=404, detail=f"Path not found: {path}")
     if not await asyncio.to_thread(os.path.isdir, path):
         raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
 
-    items: list[dict[str, str | int]] = []
+    # 类型注解已在根视图分支声明（同一变量复用，避免 mypy no-redef）
+    items = []
     try:
         entries = await asyncio.to_thread(
             lambda: sorted(os.scandir(path), key=lambda e: (not e.is_dir(), e.name.lower()))
@@ -566,6 +601,9 @@ async def browse_directory(path: str = "", show_files: bool = False):
     parent = os.path.dirname(path.rstrip("/\\"))
     if parent == path.rstrip("/\\"):
         parent = ""
+    # 「向上一级」越出白名单时收回到根视图（前端以空 path 回到白名单根列表）
+    if parent and not path_guard.is_safe_path(parent):
+        parent = ""
 
     return JSONResponse(
         {
@@ -577,14 +615,14 @@ async def browse_directory(path: str = "", show_files: bool = False):
 
 
 @router.post("/open-explorer")
-async def open_in_explorer(request: Request):
-    """在系统资源管理器中打开指定路径。
+async def open_in_explorer(request: Request, config: dict = Depends(get_config)):
+    """在系统资源管理器中打开白名单内的指定目录。
 
     API 端点：POST /api/system/open-explorer
 
     请求体（JSON）：
     {
-        "path": str  // 要打开的路径
+        "path": str  // 要打开的目录路径（仅目录，且须在路径白名单内）
     }
 
     返回格式（JSON）：
@@ -599,28 +637,32 @@ async def open_in_explorer(request: Request):
     - Linux: 使用 xdg-open 命令
 
     错误响应：
-    - 400: 路径为空
-    - 404: 路径不存在
+    - 400: 路径为空 / 非目录路径
+    - 403: 路径不在白名单范围内
     - 500: 打开失败
 
     Args:
         request: FastAPI 请求对象。
+        config: 应用配置（get_config 依赖注入，提供路径白名单）。
 
     Returns:
         JSONResponse 确认打开操作。
 
     Raises:
-        HTTPException: 路径无效或打开失败时抛出。
+        HTTPException: 路径无效、越出白名单或打开失败时抛出。
     """
     body = await request.json()
     path = body.get("path", "").strip()
     if not path:
         raise HTTPException(status_code=400, detail="路径为空")
 
-    path = validate_path(path)
+    path_guard = _path_guard_from_config(config)
+    path = validate_path(path, allowed_roots=_allowed_roots_of(path_guard))
 
-    if not await asyncio.to_thread(os.path.exists, path):
-        raise HTTPException(status_code=404, detail=f"路径不存在: {path}")
+    # 收敛为仅目录：对文件调用 os.startfile 会以默认程序打开文件，
+    # 在暴露部署下等价于远程触发本机文件执行的原语（评估报告 R1）
+    if not await asyncio.to_thread(os.path.isdir, path):
+        raise HTTPException(status_code=400, detail="仅支持打开目录路径")
 
     try:
         if sys.platform == "win32":
