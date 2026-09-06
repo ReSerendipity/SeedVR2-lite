@@ -100,7 +100,7 @@ jobs:
           # 仅比对指标内容；--ignore-cr-at-eol 规避跨平台换行符差异造成的误报
           git diff --ignore-cr-at-eol --exit-code -- tests/golden/manifest.json
 
-      - name: Coverage Gate (>= 50%)
+      - name: Coverage Gate (>= 55%)
         if: always()
         shell: bash
         run: |
@@ -112,9 +112,9 @@ jobs:
           rate = float(ET.parse('coverage.xml').getroot().get('line-rate'))
           pct = rate * 100
           print(f'Line coverage: {pct:.1f}%')
-          if pct < 50:
-              raise SystemExit(f'[FAIL] coverage {pct:.1f}% < 50%')
-          print('[PASS] coverage meets 50% threshold')
+          if pct < 55:
+              raise SystemExit(f'[FAIL] coverage {pct:.1f}% < 55%')
+          print('[PASS] coverage meets 55% threshold')
           PYEOF
       - name: Upload coverage XML
         if: always()
