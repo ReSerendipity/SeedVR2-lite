@@ -11,12 +11,12 @@
 #      docker run --gpus all ...
 #    下面的 NVIDIA_VISIBLE_DEVICES / NVIDIA_DRIVER_CAPABILITIES 保证 nvidia runtime 自动生效。
 # 4. 依赖锁定（评估报告 R4c）：安装 requirements-container-lock.txt（uv.lock 导出的
-#    跨平台精确钉版锁，111 包全带哈希）。torch==2.13.0+cu132 来自 download.pytorch.org，
-#    该索引不提供轮子哈希元数据（锁中该行无哈希），故无法全量 --require-hashes：
-#    版本已精确钉死（修复原 requirements.txt 区间漂浮），哈希强制列为后续工作
-#    （改用 PyPI CUDA 轮或带哈希镜像源后可开启）。锁文件再生成：
+#    跨平台精确钉版锁，112 包全量带哈希，pip 自动进入 --require-hashes 校验模式）。
+#    torch==2.13.0+cu132 的 manylinux 轮哈希由 CI 构建实测补录（cu132 索引不发布
+#    PEP 658 哈希元数据，uv.lock 无法自动记录）。锁文件再生成后须同样补录 torch 哈希：
 #      uv export --format requirements-txt --no-dev --no-emit-project --emit-index-url \
 #          -o requirements-container-lock.txt
+#      # 在 torch 条目补 --hash=sha256:<构建日志实测值>
 # 5. 优雅关闭：gunicorn 收到 SIGTERM 后等待 --graceful-timeout，
 #    覆盖应用 lifespan 关闭链（任务队列排空 ≤30s + 模型卸载），避免强杀丢任务。
 FROM python:3.12-slim-bookworm AS builder
