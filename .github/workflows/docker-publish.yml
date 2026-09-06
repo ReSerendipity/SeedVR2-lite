@@ -37,7 +37,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       # 供 scan job 按不可变 digest 扫描（避免 tag 在两次 job 间被覆盖的竞态）
-      digest: ${{ steps.meta.outputs.digest }}
+      # digest 来自 build-push-action（steps.build）；metadata-action（steps.meta）
+      # 只有 tags/labels/version 输出——引用它会使 digest 为空、Trivy 的
+      # image-ref 以 "@ " 结尾无法解析（2026-09-06 CI 实测 FATAL）。
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,6 +75,7 @@ jobs:
             org.opencontainers.image.title=SeedVR2
 
       - name: Build (and push on main/tags)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .

@@ -86,6 +86,11 @@ KNOWN_ORPHANS: dict[str, tuple[str, str]] = {
         "api-surface",
         "tests/test_output_provenance.py 消费的内部路径解析，供下载/缩略图链路使用",
     ),
+    "/api/system/history/{}/pin": (
+        "api-surface",
+        "tests/test_pinned_retention.py 专测 + test_api.py 消费的 retention 豁免端点"
+        "（pinned 标记/取消，历史 schema v3）；UI 历史页暂未接按钮，走 API/外部客户端",
+    ),
     "/api/system/gpu/system": (
         "api-surface",
         "tests/test_api.py 与 E2E api-mocks 消费的系统级 GPU 汇总，UI 走 /api/system/gpu",
