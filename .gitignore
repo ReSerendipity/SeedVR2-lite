@@ -303,3 +303,10 @@ desktop/src-tauri/*.txt
 desktop/**/*.log
 # Tauri 迁移指导与 AI-2 交付/交接文档（流程/规划文档，仅本地保留，按 LOCAL_RULES §4）
 docs/tauri-migration/
+
+# Tauri 更新签名私钥（绝不可提交，泄露则攻击者可伪造更新包）
+desktop/tauri.key
+
+# Runtime cache (contains machine-absolute paths, must NOT be committed)
+data/model_hash_cache.json
+*.bak.*

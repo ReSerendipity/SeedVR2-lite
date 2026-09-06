@@ -12,8 +12,8 @@ set "PYTHON_CMD="
 
 :: ============================================================
 :: 0. Prefer project-local .venv (consistent with start.bat / precheck.ps1)
-::    统一环境策略：安装目标 = 运行目标 = 检查目标，全部指向 .venv，
-::    消除"装进系统 Python、运行却用 .venv"的分裂（DX 评估 P1-5）。
+::    Environment policy: install target = run target = check target, all .venv;
+::    removes the "install into system Python, run with .venv" split (DX P1-5).
 :: ============================================================
 if exist "%~dp0.venv\Scripts\python.exe" (
     set "PYTHON_CMD=%~dp0.venv\Scripts\python.exe"
@@ -135,7 +135,7 @@ echo Using Python: %PYTHON_CMD%
 echo.
 
 :: ============================================================
-:: 4. Unify on project-local .venv（与 start.bat / precheck.ps1 同一优先级）
+:: 4. Unify on project-local .venv (same priority as start.bat / precheck.ps1)
 :: ============================================================
 if exist "%~dp0.venv\Scripts\python.exe" goto :venv_ready
 
@@ -168,8 +168,9 @@ if errorlevel 1 (
     echo     Run: VC_redist\VC_redist.x64.exe
     echo.
     set /p INSTALL_VC="Install now? (Y/N): "
-    :: 注意必须用 !INSTALL_VC!（延迟展开）：%VAR% 在整个 if 块解析时即展开，
-    :: 此时 set /p 还没执行，恒为空 → 选择 Y 永远不会触发安装（DX 评估 P1-5 修复）
+    :: Must use !INSTALL_VC! (delayed expansion): %VAR% expands when the whole
+    :: if-block is parsed - before set /p runs - so it would always be empty and
+    :: choosing Y would never launch the installer (DX P1-5 fix)
     if /i "!INSTALL_VC!"=="Y" (
         if exist "%~dp0VC_redist\VC_redist.x64.exe" (
             start "" "%~dp0VC_redist\VC_redist.x64.exe"
@@ -184,13 +185,27 @@ if errorlevel 1 (
     echo [OK] VC++ Runtime installed
 )
 
+:: [Check] FFmpeg (required by video restore; NOT bundled - see NOTICE item 4)
+echo.
+echo [Check] FFmpeg...
+where ffmpeg >nul 2>&1
+if errorlevel 1 (
+    echo [WARN] FFmpeg not found in PATH. Video restore REQUIRES FFmpeg but it is not
+    echo        bundled with this repository ^(license reasons, see NOTICE item 4^).
+    echo        Download the "release-full" build from: https://www.gyan.dev/ffmpeg/builds/
+    echo        Add its bin folder to PATH, or drop ffmpeg.exe/ffprobe.exe into app\.
+    echo        Install continues - image tasks work without it.
+) else (
+    echo [OK] FFmpeg found
+)
+
 :: Install PyTorch with CUDA support (auto-detect CUDA version)
 echo.
 echo [Check] Detecting CUDA version to pick a matching PyTorch build...
 set "TORCH_INDEX=https://download.pytorch.org/whl/cu128"
 set "CUDA_VER="
 for /f "tokens=9" %%v in ('nvidia-smi 2^>nul ^| findstr /i "CUDA Version"') do set "CUDA_VER=%%v"
-:: 新驱动格式 "CUDA UMD Version: 13.3" → token 9 是 "Version:"，要取 token 10
+:: New driver format "CUDA UMD Version: 13.3" -> token 9 is "Version:", use token 10
 echo !CUDA_VER! | findstr /i "Version" >nul 2>&1
 if not errorlevel 1 (
     for /f "tokens=10" %%v in ('nvidia-smi 2^>nul ^| findstr /i "CUDA Version"') do set "CUDA_VER=%%v"
@@ -237,21 +252,50 @@ if errorlevel 1 (
     echo [WARN] Some dependencies failed to install
 )
 
-:: Install git hooks (pre-push 快检) - best effort, 无 git 时跳过
+:: Install git hooks - two-layer chain per AGENTS.md "hook repro" clause:
+::   commit layer   = pre-commit (ruff/black/file hygiene)
+::   pre-push layer = precheck.ps1 fast checks (copy GIT_HOOK_PRE_PUSH.sh)
+:: NOTE: do NOT call scripts\install-hooks.ps1 - it repoints core.hooksPath to its
+::       own subfolder and silently disables BOTH layers (AGENTS.md v1.58+ warning).
 where git >nul 2>&1
 if not errorlevel 1 (
-    echo [Setup] Installing git hooks (pre-push fast checks)...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\install-hooks.ps1"
+    "%PYTHON_CMD%" -m pre_commit --version >nul 2>&1
+    if errorlevel 1 (
+        echo [SKIP] pre-commit not installed - enable with:
+        echo         "%PYTHON_CMD%" -m pip install pre-commit ^&^& "%PYTHON_CMD%" -m pre_commit install
+    ) else (
+        echo [Setup] Installing git hooks ^(pre-commit + pre-push fast checks^)...
+        "%PYTHON_CMD%" -m pre_commit install
+        if exist "%~dp0.git\" (
+            if exist "%~dp0docs\agents\GIT_HOOK_PRE_PUSH.sh" (
+                if not exist "%~dp0.git\hooks\" mkdir "%~dp0.git\hooks"
+                copy /Y "%~dp0docs\agents\GIT_HOOK_PRE_PUSH.sh" "%~dp0.git\hooks\pre-push" >nul
+                echo [OK] pre-push fast checks installed ^(precheck.ps1^)
+            ) else (
+                echo [SKIP] pre-push source is maintainer-local ^(not shipped in repo^) -
+                echo         commit layer installed; push gates are enforced by CI
+            )
+        )
+    )
 ) else (
     echo [SKIP] git not found - skipping git hooks installation
 )
 
-:: pre-commit runner（可选）：装了 pre-commit 才注册，否则给出提示
-"%PYTHON_CMD%" -m pre_commit --version >nul 2>&1
-if not errorlevel 1 (
-    "%PYTHON_CMD%" -m pre_commit install
+:: [Verify] Post-install smoke check: torch import + CUDA availability (DX P1-5)
+echo.
+echo [Verify] Smoke check: torch import + CUDA probe...
+"%PYTHON_CMD%" -c "import torch; print('[Verify] torch', torch.__version__)"
+if errorlevel 1 (
+    echo [WARN] torch import failed - review the pip output above, then reinstall:
+    echo        "%PYTHON_CMD%" -m pip install torch torchvision torchaudio --index-url %TORCH_INDEX%
+)
+"%PYTHON_CMD%" -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)"
+if errorlevel 1 (
+    echo [WARN] CUDA is NOT available - inference will stay disabled. Common causes:
+    echo        1^) nvidia-smi fails or the driver is too old  2^) torch build does not match driver
+    echo        Fix: https://pytorch.org/get-started/locally/  then re-run install.bat
 ) else (
-    echo [SKIP] pre-commit not installed (optional): pip install pre-commit ^&^& pre-commit install
+    echo [OK] CUDA available - GPU inference ready
 )
 
 echo.

@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from pathlib import Path
 
 import torch
 
@@ -252,11 +253,28 @@ def _hardware_context() -> dict[str, object]:
     return ctx
 
 
-def main() -> None:
-    """运行完整的 Flash Attention 基准测试套件。"""
+def _archive_report(report: dict[str, object]) -> Path:
+    """把基准报告写入项目根 .benchmarks/ 基线库，返回归档路径。
+
+    .benchmarks/ 是项目统一性能基线目录（在 outputs/ 之外，不受输出保留
+    策略清理影响）；没有硬件上下文的基准数字无法跨机器对比，归档始终
+    携带 _hardware_context() 环境信息。
+    """
     import json
     from datetime import datetime
-    from pathlib import Path
+
+    out_dir = Path(__file__).resolve().parents[2] / ".benchmarks"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    hw = report.get("hardware") or {}
+    gpu_tag = str(hw.get("gpu_name", "unknown")).replace(" ", "_").replace("/", "-")
+    out_path = out_dir / f"flash_attn_{gpu_tag}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    return out_path
+
+
+def main() -> None:
+    """运行完整的 Flash Attention 基准测试套件。"""
+    from datetime import datetime
 
     if not torch.cuda.is_available():
         print("❌ CUDA 不可用，无法运行基准测试")
@@ -292,7 +310,7 @@ def main() -> None:
                 f"VRAM Save={vram_save:.1f}% ({'✅' if vram_ok else '❌'} ≥80%)",
             )
 
-    # 结果 + 硬件上下文落盘 JSON，形成可跨机器对比的档案
+    # 结果 + 硬件上下文落盘 JSON，形成可跨机器对比的档案（统一归档到 .benchmarks/）
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "hardware": hw_ctx,
@@ -300,11 +318,7 @@ def main() -> None:
         "results": results,
         "precision": precision,
     }
-    out_dir = Path(__file__).resolve().parent / "results"
-    out_dir.mkdir(exist_ok=True)
-    gpu_tag = str(hw_ctx["gpu_name"]).replace(" ", "_").replace("/", "-")
-    out_path = out_dir / f"flash_attn_{gpu_tag}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    out_path = _archive_report(report)
     print(f"\n📄 结果已归档: {out_path}")
 
 

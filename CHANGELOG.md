@@ -1,5 +1,39 @@
 # Changelog
 
+## [未发布]
+
+> 本段收录 `[1.5.1]` 头写入（8609eeb，2026-09-03）之后累积的全部变更；v1.5.1 tag 的内容边界（是否合入本段）在打 tag 前由维护者定夺。
+
+### Added
+
+* **桌面壳（AI-2）**：Tauri v2 功能壳全量落地——托盘 / 窗口状态记忆 / 系统通知 / 文件拖拽 / 应用代码增量更新（换载保留重型目录 + 自定义命令 ACL + 更新签名公钥），便携启动入口与应用版本清单，发布打包与用户侧解包脚本，桌面版用户手册 / 开发者指南 / 发布检查清单（`ad0322c` `d816845` `c652bc4` `e9fc5bc` `2bead9b`）
+* **成本治理**：任务提交前显存预检门禁（P1-2）、磁盘水位触发的输出清理 + 删除前系统通知（P1-1）、视频帧级断点续跑——OOM 重试复用已写盘段帧（P2）与段级帧续跑落地（P2-6）、VAE tiling 语义统一（P1-3）（`f223ffd` `dd934d4` `b133baa` `5543b34` `949f2b6`）
+* **数据治理**：模型加载前 sha256 白名单校验 + 配置热改审计、ffmpeg 版本入血缘 + 输出元数据嵌入 + 水印验证 CLI、uploads 留存清理 + pinned 豁免 + 清理计划广播 + checkpoint TTL、历史 schema v3（pinned 保留标记）+ 迁移前自动备份、测试素材隔离到 data/test/（`6ce03d4` `6f102d5` `3d630ee` `dd8c309` `f9dfd1a`）
+* **服务与可观测**：`/api/system/ready` 增加 GPU 运行时健康探测（P2-4）、队列满快速拒绝 503 `TASK_QUEUE_FULL`（P2-1）、docs/redoc/openapi 端点显式开关 `SEEDVR2_ENABLE_DOCS`（P2-5）（`1b2177d` `0896d54` `fe4b7fa`）
+* **云原生副轨**：单机 GPU 双件套 `docker-compose.yml`、K8s 持久化三连 PVC 化 + 运行身份 UID/GID 1000 钉版、ServiceMonitor 样例接线 /metrics（`46dd518` `41b2b21` `f53e9c9`）
+* **DX**：ModelScope 直下通道 rich 进度显示、启动横幅 ffmpeg 预检 + 引擎层错误可操作化、安装/启动链路修复集（ffmpeg 预检 + CUDA 冒烟 + 钩子链对齐 + `--dev`）（`305af32` `4d2bf9b` `f792b71`）
+* **发布链路（发布版本管理评估落地）**：便携包 `manifest.json` 组件级 `version` 字段（`core`/`torch` 跟应用版本与 torch 钉版串，`model-*` 为权重内容 sha256 前 12 位，权重不变版本不变）+ 解包器 `-ExistingInstall` 增量解包（按组件归档 sha256 复用未变化组件、其分卷允许缺席，就地升级；解包成功写 `.seedvr2-unpack-state.json`；自测新增 §8 用例组）
+
+### Changed
+
+* formatter 统一为 black（提交 / 推送门禁同一工具，消除双 formatter 互斥）；lifespan 周期循环收敛到 lifecycle/background_tasks；基准归档统一 `.benchmarks/`；WinPython 下载多源兜底 + 本地路径离线支持 + 体积注释同源化（`b62d7b8` `35489f8` `b85d8ff` `d5eee76` `679381a`）
+* ⚠ 五精度贯通收尾：推荐/回退/降级链全栈接入，1.5.1 版本位与默认精度收紧（`231c11c`）
+* ⚠ 便携包 torch 交付轨统一 **cu132 / torch 2.13.0+cu132 / torchvision 0.28.0**（与开发环境 requirements-lock.txt 同轨，消除评估报告 P2-2 的 cu128/torch 2.11.0 双轨分叉，并越过其 Dependabot 漏洞告警线 ≤2.12.1；⚠ CUDA 13.2 运行时需较新 NVIDIA 驱动）；torchaudio 改从 PyPI 取 2.11.0 CPU 轮（cu132 索引实测无该轮子，其 METADATA 不声明 torch 依赖，不污染离线 wheels 目录）；随包 README-PORTABLE 与 Release notes 标注 torch 变体与增量升级用法；体积注释三处同源化（v1.5.1 core 预装依赖后 ~1.9 GB、全套约 8 GB，core 单卷余量 ~100 MB 已标注预警）
+
+### Fixed
+
+* firefox e2e reload 超时根因根治（SSE 重连风暴 + goto 原语）；中文 Windows icacls GBK 读线程崩溃（KNOWN_ISSUES #76）；QueueProvider 钉真实 TaskQueue 消 mypy 误报；权重完整性 SHA256 校验移入线程池消除提交期阻塞；K8s PDB 改 maxUnavailable=1（`6b08090` `28a9fed` `92b8d1a` `a8615d9` `bce2179` `5cdf0f9`）
+
+### Security
+
+* Tauri 更新签名私钥加入 .gitignore（`79eb342`）
+
+### CI / 杂务
+
+* 前后端契约审计提为显式 CI 一步；pre-commit 增 mypy 钩子 + semgrep 门禁语义纠偏；docker 镜像 Trivy CVE 扫描 job（报告不阻断）；移除 pyinstaller 锁；完整性清单随各修复批次重生成重签；文档与行尾空白清理（`94dbfe8` `c9bc772` `86d5ead` `4161fb8` `f0e9861` `ace5641` `19874c6` 等）
+* **GPU 真机验证与发布联动（评估 P1-2/R4）**：`gpu-smoke.yml` 新增 `workflow_run` 触发（Portable Release 成功后立即冒烟该 tag，通知级、不阻塞发布）；precheck 解析触发上下文；skip 由静默 notice 改为建/追加 `gpu-smoke skip-record` issue（GITHUB_TOKEN，不依赖 REPO_ADMIN_TOKEN），冒烟成功后自动关闭，消除连续 skip 静默盲区；加 concurrency 排队
+* **便携链路自测进 CI（评估 P2-6）**：`portable-release.yml` 新增 `selftest` 并行 job（Windows PowerShell 5.1 跑 `test_portable_bundle.ps1` 夹具端到端自测，无 needs 不占发布关键路径）
+
 ## [1.5.1] - 2026-09-03
 
 ### 修复：装饰字体外链导致整页加载挂起（CI E2E 红的根因，2026-09-03）

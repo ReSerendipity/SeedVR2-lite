@@ -33,6 +33,7 @@ export default defineConfig({
         text: '使用指南',
         items: [
           { text: '界面与功能', link: '/guide/usage' },
+          { text: '桌面版（Tauri）', link: '/guide/desktop' },
           { text: '工作流与 ComfyUI 对比', link: '/guide/workflow' },
           { text: '显存优化与 BlockSwap', link: '/guide/vram' },
           { text: '升级与回滚', link: '/guide/upgrade' },

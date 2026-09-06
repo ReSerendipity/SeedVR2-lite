@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SeedVR2 性能基准测试一键脚本
-# 
+#
 # 用法:
 #   ./run_benchmark.sh <test_image_or_video> [label]
 #

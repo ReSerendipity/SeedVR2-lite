@@ -169,6 +169,7 @@ retention:
   outputs_cleanup_interval_seconds: 3600
   outputs_max_age_days: 14
   outputs_max_files: 0
+  uploads_max_age_days: 7
 runtime:
   batch:
     max_retries: 2
@@ -202,6 +203,7 @@ runtime:
     auto_recover: false
     checkpoint_dir: data/checkpoints
     checkpoint_every: 1
+    checkpoint_ttl_minutes: 1440
     id_length: 16
     max_timeout_seconds: 86400
     progress_stall_timeout_minutes: 30
@@ -210,6 +212,7 @@ runtime:
   upload:
     chunk_size_bytes: 8192
     large_file_threshold_mb: 10
+  vram_preflight_enabled: true
 server:
   allowed_origins:
   - http://127.0.0.1:7870
@@ -244,4 +247,4 @@ user_preferences:
   slider_comparison_enabled: true
   step_execution_enabled: false
   vae_tile_size: 512
-  vae_tiling_enabled: false
+  vae_tiling_enabled: true

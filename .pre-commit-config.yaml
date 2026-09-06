@@ -24,3 +24,15 @@ repos:
       - id: check-added-large-files
       - id: check-merge-conflict
       - id: debug-statements
+
+  # mypy 走项目 .venv（pydantic 插件与第三方 stub 依赖项目环境，isolated env 会缺依赖报错）。
+  # 仅 app/integrated_app 下有 .py 改动时触发，口径与 run_checks.bat / ci.yml 一致。
+  # Linux 贡献者请把 entry 改为 .venv/bin/python。
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy app/integrated_app
+        entry: .venv/Scripts/python.exe -m mypy app/integrated_app
+        language: system
+        pass_filenames: false
+        files: ^app/integrated_app/.*\.py$

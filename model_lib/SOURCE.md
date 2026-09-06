@@ -85,5 +85,5 @@ To track changes in upstream model implementations:
 
 ---
 
-*Last updated*: 2026-08-17  
+*Last updated*: 2026-08-17
 *Baseline commit*: Not tracked locally (source extracted from official release package)

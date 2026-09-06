@@ -20,12 +20,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: "Semgrep Scan (block on ERROR)"
-        # 仅上报扫描结果，不作为失败门禁。
-        # 说明：semgrep 1.173.0 `semgrep ci` 在 OSS 模式下任何告警均视为 blocking，
-        # 若用 `--error` 会因发现 findings 而 exit 1，导致该 job 的 check-run 标红，
-        # 从而让 commit 状态显示红叉。为保持首页绿色，此处改为 `|| true` 仅上报不阻断，
-        # 真实告警仍通过下方 SARIF 上报（GitHub Security 告警区可见）。
+      - name: "Semgrep Scan (report-only, crash-blocking)"
+        # 显式软门禁（DX 评估 P2-2）：实测 semgrep 1.173.0 + `--config auto --severity ERROR`
+        # 在本仓有 10 条 ERROR findings（torch.load 系列已人工批注 nosemgrep、2 处 Actions
+        # 变量插值为维护者已知模式）。若加 `--error` 会立即把 main 打红，违反 CI 铁律。
+        # 当前策略：本步骤只验证 semgrep 自身可运行（工具 crash 才红），findings 一律经
+        # 下方 SARIF 上报 GitHub Security 告警区人工分诊。
+        # 升级为硬门禁的路径：先清零 ERROR findings（修复，或改用完整规则 ID 的 nosemgrep
+        # 且确认对多行匹配生效），再在命令末尾追加 `--error`。
         run: |
           python -m pip install semgrep==1.173.0
           semgrep scan --config auto --severity ERROR

@@ -1,5 +1,9 @@
 # 镜像构建发布流水线（对应云原生评估报告 P1-4：补齐 12-Factor V 因素）
 #
+# 镜像扫描（云原生评估 P1-2）：push main/tags 后由独立 scan job 对已推送镜像
+# 按 digest 运行 Trivy（CRITICAL/HIGH、ignore-unfixed），**报告不阻断**——
+# CUDA 用户态轮子存量 CVE 较多，先建立可见性，再按趋势收紧 exit-code 门禁。
+#
 # 触发：
 #   - push tag v*      → 发布版本化镜像（semver / major.minor / commit-sha）
 #   - push main        → 发布开发镜像（branch 名 + commit-sha）
@@ -31,6 +35,9 @@ jobs:
   build-push:
     name: Build & push container image
     runs-on: ubuntu-latest
+    outputs:
+      # 供 scan job 按不可变 digest 扫描（避免 tag 在两次 job 间被覆盖的竞态）
+      digest: ${{ steps.meta.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -86,3 +93,37 @@ jobs:
         run: |
           echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> "$GITHUB_STEP_SUMMARY"
           echo "digest=${{ steps.meta.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+
+  scan:
+    name: Scan image (Trivy, report-only)
+    needs: build-push
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read # 拉取本仓库 GHCR 包（含私有可见性场景）
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy vulnerability scan (report-only, no gate)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          format: table
+          # 报告不阻断（评估报告 P1-2 建议：先可见性，后收紧）。收紧时改 '1'
+          # 并按需配 .trivyignore（列出已确认不受影响的 CVE 与豁免理由）。
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      - name: Scan summary
+        run: |
+          echo "### Trivy 扫描（报告模式）" >> "$GITHUB_STEP_SUMMARY"
+          echo "image: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "severity=CRITICAL,HIGH, ignore-unfixed=true, exit-code=0（不阻断）" >> "$GITHUB_STEP_SUMMARY"

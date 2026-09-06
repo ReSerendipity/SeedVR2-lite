@@ -2,12 +2,12 @@
 
 ## Supported Versions
 
-SeedVR2 当前处于 v1.0.0 初始发布阶段。安全修复仅适用于以下版本：
+安全修复适用于以下版本（与 `pyproject.toml` 的当前版本保持同步）：
 
 | Version | Supported          |
 |---------|--------------------|
-| 1.0.x   | :white_check_mark: |
-| < 1.0   | :x:                |
+| 1.5.x   | :white_check_mark: |
+| < 1.5   | :x:                |
 
 ## Reporting a Vulnerability
 

@@ -18,8 +18,10 @@
        - total: 总耗时
     4. 自动处理 CSRF（Double Submit Cookie：先 GET 拿 cookie，POST 带 X-CSRF-Token）。
     5. 首次运行同一模型会触发 torch.compile（若开启），耗时偏大属正常，应以第 2 次（稳态）为准。
-    6. 结果自动归档到 outputs/benchmark-history/benchmarks.jsonl（JSONL 追加），
+    6. 结果自动归档到 .benchmarks/bench_restore_api.jsonl（JSONL 追加），
        支持跨次运行的趋势对比（--trend）；--no-archive 可跳过归档（P2-3）。
+       归档位置在 outputs/ 之外——outputs/ 受保留策略周期清理（见
+       docs/输出保留策略.md），基线档案放进去会被 14 天规则误删（成本治理 P1-1）。
 """
 
 import argparse
@@ -32,7 +34,9 @@ import requests
 
 BASE = "http://127.0.0.1:7870"
 TERMINAL = ("completed", "failed", "cancelled", "timeout")
-DEFAULT_ARCHIVE = Path("outputs/benchmark-history/benchmarks.jsonl")
+# 项目根/.benchmarks/：锚定脚本位置而非 cwd，任意工作目录启动均归档到同一基线库
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ARCHIVE = _PROJECT_ROOT / ".benchmarks" / "bench_restore_api.jsonl"
 
 
 def _fetch_gpu_info(session: requests.Session) -> dict:
@@ -166,7 +170,7 @@ def main() -> None:
     p.add_argument(
         "--archive-path",
         default=str(DEFAULT_ARCHIVE),
-        help="归档 JSONL 路径（默认 outputs/benchmark-history/benchmarks.jsonl）",
+        help="归档 JSONL 路径（默认 .benchmarks/bench_restore_api.jsonl）",
     )
     p.add_argument("--no-archive", action="store_true", help="跳过结果归档")
     args = p.parse_args()

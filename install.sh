@@ -105,6 +105,23 @@ fi
 echo ""
 
 # ============================================================
+# 3b. Check FFmpeg (required by video restore; NOT bundled - see NOTICE item 4)
+# ============================================================
+echo "[Check] FFmpeg..."
+if command -v ffmpeg &>/dev/null; then
+    echo "[OK] FFmpeg found: $(command -v ffmpeg)"
+else
+    echo "[WARN] FFmpeg not found in PATH. Video restore REQUIRES FFmpeg but it is not"
+    echo "       bundled with this repository (license reasons, see NOTICE item 4)."
+    echo "       Install it with one of:"
+    echo "         Ubuntu/Debian:     sudo apt-get install -y ffmpeg"
+    echo "         macOS (Homebrew):  brew install ffmpeg"
+    echo "         Fedora:            sudo dnf install -y ffmpeg"
+    echo "       Install continues - image tasks work without it."
+fi
+echo ""
+
+# ============================================================
 # 4. Install PyTorch with CUDA support
 # ============================================================
 echo "[Install] Installing PyTorch with CUDA support..."
@@ -156,6 +173,31 @@ echo "[Install] Installing Python dependencies..."
 $PYTHON_CMD -m pip install -r requirements.txt --timeout 300 --retries 3 || {
     echo "[WARN] Some dependencies failed to install"
 }
+
+# ============================================================
+# 6. Install git hooks - two-layer chain per AGENTS.md (parity with install.bat)
+#    commit layer = pre-commit; pre-push layer = precheck.ps1 (GIT_HOOK_PRE_PUSH.sh)
+# ============================================================
+if command -v git &>/dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
+    if ! "$PYTHON_CMD" -m pre_commit --version &>/dev/null; then
+        echo "[SKIP] pre-commit not installed - enable with:"
+        echo "       $PYTHON_CMD -m pip install pre-commit && $PYTHON_CMD -m pre_commit install"
+    else
+        echo "[Setup] Installing git hooks (pre-commit + pre-push fast checks)..."
+        "$PYTHON_CMD" -m pre_commit install
+        if [ -f "$SCRIPT_DIR/docs/agents/GIT_HOOK_PRE_PUSH.sh" ]; then
+            mkdir -p "$SCRIPT_DIR/.git/hooks"
+            cp "$SCRIPT_DIR/docs/agents/GIT_HOOK_PRE_PUSH.sh" "$SCRIPT_DIR/.git/hooks/pre-push"
+            chmod +x "$SCRIPT_DIR/.git/hooks/pre-push"
+            echo "[OK] pre-push fast checks installed (precheck.ps1)"
+        else
+            echo "[SKIP] pre-push source is maintainer-local (not shipped in repo) -"
+            echo "       commit layer installed; push gates are enforced by CI"
+        fi
+    fi
+else
+    echo "[SKIP] git not found - skipping git hooks installation"
+fi
 
 echo ""
 echo "============================================"
