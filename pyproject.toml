@@ -222,11 +222,11 @@ omit = [
     "*/optimization/gpu/cache_manager.py",
     # Inference & video optimization: DiT sampling, VAE tiled enhance, temporal
     # processing — all require a loaded model + CUDA tensors to exercise.
-    "*/optimization/inference/diffusion_sampling.py",
+    # MLOps P1-2：diffusion_sampling / post_processing / tile_blend 的纯计算面（CFG 调度、
+    # 小波/锐化/保真度混合、分块融合与时间分段）可 CPU 确定性验证，已移出 omit
+    # 并由 tests/test_{diffusion_sampling,post_processing,tile_blend}.py 覆盖。
     "*/optimization/inference/dit_optimization.py",
-    "*/optimization/inference/post_processing.py",
     "*/optimization/inference/temporal_processing.py",
-    "*/optimization/inference/tile_blend.py",
     "*/optimization/inference/vae_tiled_enhance.py",
     "*/optimization/video/video_processing_enhance.py",
     # Engine pipeline mixins — require real CUDA + model weights to exercise.
@@ -242,10 +242,11 @@ omit = [
 ]
 
 [tool.coverage.report]
-# 50 与 ci.yml（coverage.xml line-rate >= 50）及 precheck.ps1 的门禁一致。
+# 55 与 ci.yml（coverage.xml line-rate >= 55）及 precheck.ps1 的门禁一致
+# （MLOps 评估 P1-2 提档：50→55，HEAD 基线实测 65.06%，留出约 10 个百分点余量）。
 # 原 70 从未真实生效（HEAD 基线实测最高 ~68%，见 AGENTS.md 修订 v1.36 / KNOWN_ISSUES #34）；
 # 回升路线见 AGENTS.md §4.2（M1 目标 70）。
-fail_under = 50
+fail_under = 55
 show_missing = true
 
 [tool.coverage.xml]
