@@ -111,7 +111,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Trivy vulnerability scan (report-only, no gate)
-        uses: aquasecurity/trivy-action@0.28.0
+        # tag 必须带 v 前缀（aquasecurity/trivy-action 的发布 tag 均为 v0.x.y，
+        # 2026-09-06 实测：`0.28.0` 无此 tag，action 解析失败打红整条 workflow）。
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
           format: table
