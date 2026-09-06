@@ -199,6 +199,8 @@ class _VideoPipelineMixin:
             seed = inf["seed"]
             if seed == -1:
                 seed = random.randint(0, MAX_SEED)
+                # MLOps P1-1：随机抽签回写请求级 inf，实际种子就此物化（与图像链路对称）
+                inf["seed"] = seed
                 logger.info(f"随机种子: {seed}")
 
             sp_size = kwargs.get("sp_size", self.config.get("restore", {}).get("sp_size", 1))
@@ -867,6 +869,8 @@ class _VideoPipelineMixin:
                     "cache_model": cache_model,
                     "blockswap_active": self._blockswap_active,
                     "vram_peak_mb": vram_peak_mb,
+                    # MLOps P1-1：实际使用的种子（-1 已物化为抽签值），供服务层回写 history parameters
+                    "seed_effective": seed,
                     "processing_fps": output_frames / processing_time if processing_time > 0 else 0,
                     "avg_frame_time_ms": (processing_time / output_frames * 1000) if output_frames > 0 else 0,
                     # P3-2：it/s 仅以 DiT 采样耗时为分母；processing_fps 为端到端口径，二者不可混用
