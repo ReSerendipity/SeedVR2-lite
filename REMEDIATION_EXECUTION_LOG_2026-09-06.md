@@ -2,7 +2,8 @@
 
 > 执行模式：全自主 ｜ 执行日期：2026-09-06 ｜ 状态：**全部任务到达终态**
 > 回滚点：`remediation-baseline-20260906` → `remediation-p0-20260906` → `remediation-p1-20260906` → `remediation-p2-20260906`（tag 链）
-> 提交：`c8e73cd` `0e1e0be` `2d237cb`（P0）；`632a568` `ca2cc28`（P1）；`24fa248` `3067484` `b962346` `ad022a0`（P2）
+> 提交：`c8e73cd` `0e1e0be` `2d237cb`（P0）；`632a568` `ca2cc28`（P1）；`24fa248` `3067484` `b962346` `ad022a0`（P2）；CI 修复 `6987310` `3bb1499`；文档 `7ca921e`
+> **CI 终态：推送 HEAD（3bb1499）全部工作流 success**（Backend Gate 双平台 / E2E 7ca921e / SAST / Docs / docker-publish 含 Trivy）
 
 ## 0. 项目画像（阶段 0）
 
@@ -31,22 +32,28 @@
 | T10 | R8: CSP 收紧路线 + 字体披露 | ✅ 开放 | **已完成** `b962346` | docs/CSP_TIGHTENING_ROADMAP.md（四步收紧+report-only 发布策略+meta/头原子同改约束）；PRIVACY_POLICY 补 Google Fonts 披露 | **D10**：报告原文即「路线」，前端事件委托重构超范围不实施；字体自托管需下载外部资产，纳入路线 S3 而非本轮 |
 | T11 | R10: desktop 壳聚焦评估 | ✅ 无 desktop 安全文档 | **已完成** `b962346` | docs/SECURITY_REVIEW_DESKTOP_SHELL.md：更新链/IPC 白名单/拖拽白名单/回环绑定确认良好（无 Critical/High）；4 项建议（Tauri CSP null、withGlobalTauri、latest 端点漂移、拖拽大小上限）；确认容器 fail-closed 不影响桌面链路 | 聚焦评审定位（静态+配置面），完整渗透评估列后续 |
 
-## 2. 验证结果汇总（阶段 2）
+## 2. 验证结果汇总（阶段 2 + CI 终态）
 
 | 门禁 | 基线 | 改动后 | 判定 |
 |---|---|---|---|
-| pytest 全量 | 1379 passed, 1 skipped | **1436 passed, 1 skipped**（+57 用例，新增用例 100% 通过，零回归） | ✅ |
+| pytest 全量（本地） | 1379 passed, 1 skipped | **1436 passed, 1 skipped**（+57 用例，新增用例 100% 通过，零回归） | ✅ |
 | ruff check . | — | All checks passed（修复过程中出现并消除 2 项：F841 未用变量、SIM115 文件打开） | ✅ |
 | black --check . | — | 334 files unchanged（6 个本人改动文件已格式化） | ✅ |
 | mypy app/integrated_app | — | Success（112 文件，0 错误） | ✅ |
 | check_config_refs | PASS | PASS（7 键声明即消费，新增 watermark_on_failure 已接线） | ✅ |
 | check_spec_refs | — | exit 0（phantom=0 dead_links=0） | ✅ |
+| **CI Backend Quality Gate**（双平台） | 上个 main 绿 | 7ca921e 红（CLI 测试 windows 捕获异常）→ `3bb1499` 修复后 **success**（6m46s） | ✅ |
+| **CI E2E Playwright**（7ca921e，含全部代码变更） | — | **success**（13m33s） | ✅ |
+| **CI docker-publish** | 上个 main 绿 | 7ca921e 红（torch 无哈希触发自动 --require-hashes）→ `6987310` 补录实测哈希后 **success**（Build 18m47s + Trivy 1m28s；3bb1499 复跑 19m7s 亦绿） | ✅ |
+| **CI Security Scan (SAST) / Docs Consistency** | — | 两个提交均 success | ✅ |
 
 ## 3. 受阻与需人工决策
 
 - **无受阻任务**。两项降级决策（非受阻）：semgrep 硬门禁（D7，本地无法复现扫描）、容器锁哈希强制（cu132 索引无哈希元数据）——均已给出后续路径。
 
 ## 4. 报告外发现（只记录，未处理）
+
+6. **CI windows runner 捕获异常**：subprocess text=True 捕获下子进程退出码正确但 stdout 为 None（本地同平台无法复现）；已按 D14 加固测试，未深究 runner 层根因。
 
 1. 工作区在会话期间被「恢复未推送成果」系列提交整体更新，评估报告部分发现在开工前已被先行治理轨道修复（详见 §1 各行「开工核实」）。
 2. **uv.lock 项目版本元数据滞后**：lock 内 seedvr2-lite 版本停在 1.5.0（pyproject 已 1.5.1），uv export 重解析时暴露；已按 `ad022a0` 元数据对齐（无依赖变化）。
@@ -80,3 +87,5 @@
 | D10 | CSP 只出路线文档+字体披露 | 报告原文即「路线」；前端重构超范围 |
 | D11 | resolve_auth_settings env-only 快捷通道 | 容器部署免维护 config.yaml；fail-closed 默认不变 |
 | D12 | 报告重命名卷入事故以 pathspec 限定重提纠正 | 铁律 1 范围控制 + 恢复原暂存状态 |
+| D13 | torch 哈希取自 CI 构建日志实测值补录入锁（D7 修订：**全量哈希强制达成**，降级方案作废） | pip 在任一包带哈希时自动全量校验；CI 实测哈希来自官方 cu132 CDN 实际下载物，比降级更优 |
+| D14 | CLI 冒烟测试以退出码（文档化契约）为主断言，输出非空才校验文本标记 | CI windows 捕获层 stdout=None 环境异常本地无法复现；不放宽退出码主断言，符合诚实铁律 |
