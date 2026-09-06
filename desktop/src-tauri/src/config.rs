@@ -78,12 +78,17 @@ fn config_path() -> Result<PathBuf> {
     Ok(app_data_dir()?.join("config.json"))
 }
 
+/// 去除 UTF-8 BOM（记事本「另存为 UTF-8」默认带 BOM，serde_json 无法解析）。
+fn strip_bom(s: &str) -> &str {
+    s.strip_prefix('\u{feff}').unwrap_or(s)
+}
+
 impl AppConfig {
     /// 读取配置；文件不存在或解析失败时返回默认值（并记录日志）。
     pub fn load() -> Self {
         match config_path() {
             Ok(p) => match fs::read_to_string(&p) {
-                Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
+                Ok(s) => serde_json::from_str(strip_bom(&s)).unwrap_or_else(|e| {
                     log::warn!("解析 {} 失败，使用默认配置: {}", p.display(), e);
                     Self::default()
                 }),
@@ -151,7 +156,7 @@ impl WindowState {
     pub fn load() -> Option<Self> {
         let p = window_state_path().ok()?;
         let s = fs::read_to_string(&p).ok()?;
-        match serde_json::from_str::<WindowState>(&s) {
+        match serde_json::from_str::<WindowState>(strip_bom(&s)) {
             Ok(w) => Some(w),
             Err(e) => {
                 log::warn!("解析 {} 失败: {}", p.display(), e);
@@ -215,6 +220,17 @@ mod tests {
         let back: WindowState = serde_json::from_str(&json).unwrap();
         assert_eq!(back.width, 1280);
         assert!(back.maximized);
+    }
+
+    #[test]
+    fn strip_bom_handles_utf8_bom() {
+        // 记事本「另存为 UTF-8」会带 BOM，serde_json 直接解析会失败；strip_bom 后必须成功
+        let raw = "\u{feff}{\"close_to_tray\":false}";
+        assert_eq!(strip_bom(raw), "{\"close_to_tray\":false}");
+        let cfg: AppConfig = serde_json::from_str(strip_bom(raw)).unwrap();
+        assert!(!cfg.close_to_tray);
+        // 无 BOM 时应原样返回
+        assert_eq!(strip_bom("{\"a\":1}"), "{\"a\":1}");
     }
 
     #[test]

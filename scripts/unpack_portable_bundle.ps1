@@ -6,6 +6,8 @@
 #   powershell -ExecutionPolicy Bypass -File .\unpack_portable_bundle.ps1
 #   powershell -ExecutionPolicy Bypass -File .\unpack_portable_bundle.ps1 -TargetDir D:\SeedVR2
 #   ... -Component core,model-fp8 -SkipTorchInstall
+#   ... -TargetDir D:\SeedVR2 -ExistingInstall D:\SeedVR2   # 增量升级（P1-3c）：
+#       与现有安装一致的组件直接复用（其分卷允许不下载），只解包有变化的组件。
 #
 # 只依赖 Windows 自带的 PowerShell 与 tar.exe；若系统装有 7-Zip 则自动使用。
 
@@ -13,6 +15,7 @@
 param(
     [string]$BundleDir = '',
     [string]$TargetDir = '',
+    [string]$ExistingInstall = '',
     [string[]]$Component = @(),
     [string]$PortableRootName = 'SeedVR2-Portable',
     [switch]$SkipTorchInstall,
@@ -87,12 +90,38 @@ if ($Component.Count -gt 0) {
     }
 }
 
+# --------------------------------------------- 增量复用判定（P1-3c） ----
+# -ExistingInstall 指向此前由本脚本解包出的安装根（须与 -TargetDir 相同，就地升级）。
+# 旧安装的 .seedvr2-unpack-state.json 记录了各组件归档的 sha256；与本次 manifest
+# 一致的组件直接复用——其分卷允许缺席，用户只需下载有变化组件的分卷。
+$reusable = @{}
+if ($ExistingInstall) {
+    # 先校验调用姿势（目录相等），再校验数据（state 存在）——误用时报告最根本的问题。
+    if ((Resolve-Path -LiteralPath $ExistingInstall -ErrorAction SilentlyContinue).Path -ne $TargetDir) {
+        throw "-ExistingInstall 必须与 -TargetDir 相同（就地升级）：旧安装=$ExistingInstall，目标=$TargetDir"
+    }
+    $oldStatePath = Join-Path $ExistingInstall '.seedvr2-unpack-state.json'
+    if (-not (Test-Path -LiteralPath $oldStatePath)) {
+        throw "-ExistingInstall 目录里没有 .seedvr2-unpack-state.json：$ExistingInstall（旧安装必须由 unpack_portable_bundle.ps1 解包生成）"
+    }
+    $oldState = Read-SeedVR2Json -Path $oldStatePath
+    if ($oldState.components) {
+        foreach ($p in $oldState.components.PSObject.Properties) {
+            $reusable[$p.Name] = $p.Value
+        }
+    }
+}
+
 # ------------------------------------------------------ 磁盘空间预检 ----
 # 峰值 = 全部待解压载荷 + 当前正在合并的归档（每解完一个组件即删，故峰值再加最大者）。
+# 增量复用的组件不解压不占新空间，不计入。
 if (-not $VerifyOnly) {
     $needBytes = [long]0
     $maxArchive = [long]0
     foreach ($c in $selected) {
+        if ($reusable.ContainsKey($c.id) -and $reusable[$c.id].sha256 -eq $c.sha256.ToLowerInvariant()) {
+            continue
+        }
         $needBytes += [long]$c.raw_bytes
         if ([long]$c.raw_bytes -gt $maxArchive) {
             $maxArchive = [long]$c.raw_bytes
@@ -106,6 +135,13 @@ $installed = @()
 foreach ($c in $selected) {
     Write-Host ''
     Write-Host "[$($c.id)] $($c.title) —— $($c.volume_count) 个分卷" -ForegroundColor Yellow
+    # 增量复用：旧安装中该组件的归档 sha256 与本次 manifest 一致 → 跳过分卷与解压
+    # （分卷允许缺席）。落地核对仍会逐文件校验旧文件与本次清单一致，被改过必被发现。
+    if ($reusable.ContainsKey($c.id) -and $reusable[$c.id].sha256 -eq $c.sha256.ToLowerInvariant()) {
+        Write-Host ("  与现有安装一致（归档 sha256 {0}），增量复用，跳过解压" -f $c.sha256.Substring(0, 12)) -ForegroundColor Green
+        $installed += [pscustomobject]@{ Component = $c.id; Volumes = 0; Bytes = [long]$c.raw_bytes; State = 'reused' }
+        continue
+    }
     $missing = @()
     $bad = @()
     foreach ($v in $c.volumes) {
@@ -186,7 +222,9 @@ if ((Test-Path -LiteralPath $wheelsDir) -and -not $SkipTorchInstall) {
         '-c', "import torch;print('yes' if torch.cuda.is_available() else 'no')"
     )
     if ($cudaRes.Text.Trim() -ne 'yes') {
-        Write-Warning "torch.cuda.is_available() 为 False：本机可能缺 NVIDIA 驱动或 CUDA 版本不匹配（本包为 cu128）。CPU 仍可运行但极慢。"
+        $torchComp = $manifest.components | Where-Object { $_.id -eq 'torch' }
+        $torchLabel = if ($torchComp -and $torchComp.version) { "随包 $($torchComp.version)" } else { 'cu132' }
+        Write-Warning "torch.cuda.is_available() 为 False：本机可能缺 NVIDIA 驱动或 CUDA 版本不匹配（本包 $torchLabel wheels）。CPU 仍可运行但极慢。"
     }
 }
 elseif (-not (Test-Path -LiteralPath $wheelsDir)) {
@@ -231,6 +269,25 @@ if ($problems.Count -gt 0) {
 }
 Write-Host ("  本次解包的 {0} 个组件载荷已全部落地并核对通过" -f $selected.Count) -ForegroundColor Green
 Set-Content -LiteralPath (Join-Path $appRoot '.portable_ready') -Value (Get-Date).ToString('o') -Encoding ascii
+
+# 解包状态（P1-3c）：记录本次各组件归档 sha256，供下次发布用 -ExistingInstall
+# 做增量复用判定。放 TargetDir 根（不进 appRoot，避免混入应用完整性核对面）。
+$stateObj = [ordered]@{
+    schema      = 1
+    product     = 'SeedVR2-Portable'
+    version     = $manifest.version
+    updated_utc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    components  = [ordered]@{}
+}
+foreach ($rec in $installed) {
+    if ($rec.State -eq 'verified') { continue }
+    $c = $selected | Where-Object { $_.id -eq $rec.Component }
+    $stateObj.components[$rec.Component] = [ordered]@{
+        archive = $c.archive
+        sha256  = $c.sha256.ToLowerInvariant()
+    }
+}
+Write-SeedVR2Json -Object $stateObj -Path (Join-Path $TargetDir '.seedvr2-unpack-state.json')
 
 Write-Host ''
 Write-Host '==============================================' -ForegroundColor Green

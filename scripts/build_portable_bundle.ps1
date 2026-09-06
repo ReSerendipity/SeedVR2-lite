@@ -2,11 +2,13 @@
 # scripts/build_portable_bundle.ps1
 # 构建「分卷压缩包」离线便携包，产物直接上传 GitHub Release（单文件恒 < 2 GiB）。
 #
-# 四个组件（默认全建，合计 6 卷 = 1+2+1+2）：
-#   core          应用代码 + 便携 Python 运行时（torch 家族已摘除）      → 1 卷  ~0.2 GB
-#   torch         PyTorch cu128 wheels（首次解包时离线 pip --no-index）  → 2 卷  ~2.7 GB
-#   model-shared  ema_vae_fp16 + pos_emb + neg_emb                      → 1 卷  ~0.5 GB
-#   model-fp8     seedvr2_ema_3b_fp8_e4m3fn（唯一内置主模型，FP8）        → 2 卷  ~3.2 GB
+# 四个组件（默认全建；分卷体积仅供参考：torch/model 两行为 v1.5.0 Release zip 实测，
+# core 行为 v1.5.1 本地 7z(store) 实测——v1.5.1 起预装全部非 torch 依赖后大幅增长；
+# 最终以 portable-release.yml「体积门禁复核」步骤输出的 total_gb 为准）：
+#   core          应用代码 + 便携 Python 运行时（预装全部非 torch 依赖）  → 1 卷  ~1.9 GB
+#   torch         PyTorch cu132 wheels（首次解包时离线 pip --no-index）  → 2 卷  ~2.8 GB
+#   model-shared  ema_vae_fp16 + pos_emb + neg_emb                      → 1 卷  ~0.45 GB
+#   model-fp8     seedvr2_3b_mxfp8（唯一内置主模型，MXFP8）              → 2 卷  ~2.2 GB
 #
 # 用法：
 #   .\scripts\build_portable_bundle.ps1                       # 自动准备运行时并全量构建
@@ -30,11 +32,18 @@ param(
     # 官方 release 资产 digest（GitHub API 实测，2026-08-30），防下载损坏/上游篡改；
     # 升级 WinPython 版本时必须同步更新 URL 与哈希。
     [string]$WinPythonSha256 = '4061f0e936289ca1df48fc8e7357a4c30e6010f053ffd2f986f518a09bbf03e8',
-    [string]$TorchIndexUrl = 'https://download.pytorch.org/whl/cu128',
-    # torch 三件套钉版（P1-3 复现性）：cu128 索引当前最高版本，两次构建产出一致；
-    # 升级时先查 pip index versions torch --index-url <TorchIndexUrl> 再同步三处。
-    [string]$TorchVersion = '2.11.0',
-    [string]$TorchvisionVersion = '0.26.0',
+    # 上游单点兜底（云原生评估 P1-3）：官方 release 下线/网络不可达时，依次尝试
+    # 「前缀 + 官方 URL」改写的镜像地址（gh-proxy.com 前缀已在 gpu-smoke.yml 的
+    # 下载通道实测可用）。每个来源均须通过 WinPythonSha256 校验才会被采用，
+    # 镜像返回的 HTML 错误页会被哈希门禁拦下。也可把 -WinPythonUrl 直接指向
+    # 本地安装器文件（离线兜底），脚本会跳过下载、仍做哈希校验。
+    [string[]]$WinPythonMirrorPrefixes = @('https://gh-proxy.com/'),
+    [string]$TorchIndexUrl = 'https://download.pytorch.org/whl/cu132',
+    # torch 三件套钉版（P1-3 复现性；2026-09-06 起交付轨与开发/lock 环境统一为 cu132，
+    # 消除评估报告 P2-2 的双轨分叉）：升级时先查 pip index versions torch --index-url
+    # <TorchIndexUrl> 再同步三处，并保持与 requirements-lock.txt 一致。
+    [string]$TorchVersion = '2.13.0',
+    [string]$TorchvisionVersion = '0.28.0',
     [string]$TorchaudioVersion = '2.11.0',
     # 可选 Authenticode 代码签名（P3）：提供代码签名证书 .pfx 时，随包分发的
     # .ps1 助手在生成 SHA256SUMS.txt 之前完成签名（否则清单哈希会失配）。
@@ -54,6 +63,28 @@ $ErrorActionPreference = 'Stop'
 $PortableRootName = 'SeedVR2-Portable'
 $AllComponents = @('core', 'torch', 'model-shared', 'model-fp8')
 
+# ------------------------------------------------------- 组件内容版本 ----
+function Get-SeedVR2ContentVersion {
+    <#
+        组件内容版本（评估报告 P1-3a）：对一组文件做 sha256-of-sha256s，取前 12 位
+        十六进制。同一内容恒得同一版本、与发布 tag 无关——升级发布时由此判定
+        「哪些组件没变」（配合解包器 -ExistingInstall 的增量解包；后续 CI 侧按需
+        下载也是基于它）。对大权重文件哈希约需 10-30 秒，构建期可接受。
+    #>
+    param([Parameter(Mandatory = $true)][string[]]$Paths)
+    $parts = foreach ($p in $Paths) {
+        Get-SeedVR2FileSha256 -Path $p
+    }
+    $joined = [System.Text.Encoding]::UTF8.GetBytes(($parts -join "`n"))
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $sha.ComputeHash($joined)
+    } finally {
+        $sha.Dispose()
+    }
+    return (($digest | ForEach-Object { $_.ToString('x2') }) -join '').Substring(0, 12)
+}
+
 # ---------------------------------------------------------------- 组件规格 ----
 function Get-SeedVR2ComponentSpec {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -70,10 +101,10 @@ function Get-SeedVR2ComponentSpec {
         'torch' {
             return [pscustomobject]@{
                 Id          = 'torch'
-                Title       = 'PyTorch CUDA 12.8 离线 wheels'
+                Title       = 'PyTorch CUDA 13.2 离线 wheels'
                 Required    = $true
                 Level       = 0
-                Description = 'torch / torchvision / torchaudio 的 cu128 wheel。解包脚本用 pip --no-index 离线装入便携解释器，全程不联网。'
+                Description = 'torch / torchvision / torchaudio 的 cu132 wheel（与开发环境 requirements-lock.txt 同轨）。解包脚本用 pip --no-index 离线装入便携解释器，全程不联网。'
             }
         }
         'model-shared' {
@@ -193,7 +224,8 @@ function New-SeedVR2CorePayload {
         [Parameter(Mandatory = $true)][string]$PayloadDir,
         [Parameter(Mandatory = $true)][string]$ProjectRoot,
         [Parameter(Mandatory = $true)][string]$Runtime,
-        [Parameter(Mandatory = $true)][string]$Ver
+        [Parameter(Mandatory = $true)][string]$Ver,
+        [Parameter(Mandatory = $false)][string]$TorchLabel = ''
     )
     $appDir = Join-Path $PayloadDir $PortableRootName
     New-Item -ItemType Directory -Path $appDir -Force | Out-Null
@@ -228,7 +260,7 @@ function New-SeedVR2CorePayload {
     }
     Set-Content -LiteralPath (Join-Path $appDir 'VERSION.txt') -Value "SeedVR2 Portable $Ver" -Encoding ascii
     Write-SeedVR2StartScript -AppDir $appDir
-    Write-SeedVR2Readme -AppDir $appDir -Ver $Ver
+    Write-SeedVR2Readme -AppDir $appDir -Ver $Ver -TorchLabel $TorchLabel
     return [pscustomobject]@{ Files = $totalFiles; Bytes = $totalBytes }
 }
 
@@ -258,8 +290,14 @@ function Write-SeedVR2StartScript {
 function Write-SeedVR2Readme {
     param(
         [Parameter(Mandatory = $true)][string]$AppDir,
-        [Parameter(Mandatory = $true)][string]$Ver
+        [Parameter(Mandatory = $true)][string]$Ver,
+        [Parameter(Mandatory = $false)][string]$TorchLabel = ''
     )
+    $torchLine = if ($TorchLabel) {
+        "  3. torch_wheels\（若已解包 torch 组件；随包版本：$TorchLabel，需较新的 NVIDIA 驱动支持其 CUDA 运行时）"
+    } else {
+        '  3. torch_wheels\（若已解包 torch 组件）'
+    }
     $txt = @"
 SeedVR2 便携离线包 v$Ver
 ================================================================
@@ -267,8 +305,8 @@ SeedVR2 便携离线包 v$Ver
 本目录由分卷压缩包解包而来，包含：
   1. 应用代码与配置（config.yaml）
   2. 便携 Python 解释器 WPy64-*（已预装全部非 torch 依赖）
-  3. torch_wheels\（若已解包 torch 组件）
-  4. model\（ema_vae_fp16 + pos_emb + neg_emb + seedvr2_ema_3b_fp8_e4m3fn）
+$torchLine
+  4. model\（ema_vae_fp16 + pos_emb + neg_emb + 内置主模型）
 
 启动：双击 start-portable.bat，浏览器打开 http://127.0.0.1:7870
 
@@ -280,8 +318,8 @@ torch 通常无需手动处理：下载目录里的 unpack_portable_bundle.ps1 �
       --find-links .\torch_wheels torch torchvision torchaudio
 
 模型说明：
-  - 本包只内置 3B FP8 权重（显存 8 GB 即可运行）。config.yaml 默认精度是 fp16，
-    在只有 FP8 权重时 model_manager 会自动回退到 FP8，属预期行为（日志有一条 WARNING）。
+  - 本包只内置 3B MXFP8 权重（显存 8 GB 即可运行）。config.yaml 默认精度是 fp16，
+    在只有 MXFP8 权重时 model_manager 会自动回退，属预期行为（日志有一条 WARNING）。
   - 想要 FP16 或 7B 权重，需自行下载放入 model\，直链见 README.md。
   - 视频修复功能需要系统自行安装 FFmpeg 并置于 PATH（本包依 NOTICE 第 4 条不分发）。
 "@
@@ -359,15 +397,55 @@ function Start-SeedVR2RuntimePrepare {
     $sevenZip = Find-SeedVR2SevenZip
     $exePath = Join-Path $WorkDir 'WinPython.exe'
     if (-not (Test-Path -LiteralPath $exePath)) {
-        Write-Host "  下载 WinPython 便携解释器 ..."
-        Invoke-WebRequest -Uri $Url -OutFile $exePath -UseBasicParsing -TimeoutSec 900
-    }
-    if ($WinPythonSha256) {
-        $actual = (Get-SeedVR2FileSha256 -Path $exePath).ToLowerInvariant()
-        if ($actual -ne $WinPythonSha256.ToLowerInvariant()) {
-            throw ("WinPython 安装器 SHA256 不符（期望 {0}，实际 {1}）——下载损坏或上游被篡改" -f $WinPythonSha256, $actual)
+        # 多源兜底（云原生评估 P1-3）：-WinPythonUrl 指向本地安装器文件时直接采用
+        # （离线兜底，仍过哈希门禁）；否则按「官方 URL → 镜像前缀改写 URL」逐源
+        # 下载，每源下载后先过 SHA256 再采用，不符即删除换下一源（镜像可能返回
+        # HTML 错误页，靠哈希门禁识别）。
+        $verifiedInLoop = $false
+        if (Test-Path -LiteralPath $Url -PathType Leaf) {
+            Write-Host "  使用本地 WinPython 安装器：$Url"
+            Copy-Item -LiteralPath $Url -Destination $exePath -Force
+        } else {
+            $candidates = @($Url)
+            foreach ($prefix in $WinPythonMirrorPrefixes) {
+                if ($prefix) { $candidates += ($prefix.TrimEnd('/') + '/' + $Url) }
+            }
+            $lastError = '未尝试任何来源'
+            $chosen = ''
+            foreach ($candidate in $candidates) {
+                Write-Host "  下载 WinPython 便携解释器：$candidate"
+                try {
+                    Invoke-WebRequest -Uri $candidate -OutFile $exePath -UseBasicParsing -TimeoutSec 900
+                } catch {
+                    $lastError = $_.Exception.Message
+                    if (Test-Path -LiteralPath $exePath) { Remove-Item -LiteralPath $exePath -Force }
+                    Write-Host "    下载失败：$lastError —— 切换下一来源"
+                    continue
+                }
+                if (-not $WinPythonSha256) { $chosen = $candidate; break }
+                $actual = (Get-SeedVR2FileSha256 -Path $exePath).ToLowerInvariant()
+                if ($actual -eq $WinPythonSha256.ToLowerInvariant()) {
+                    $chosen = $candidate
+                    $verifiedInLoop = $true
+                    break
+                }
+                $lastError = "SHA256 不符（期望 {0}，实际 {1}）" -f $WinPythonSha256.ToLowerInvariant(), $actual
+                Remove-Item -LiteralPath $exePath -Force
+                Write-Host "    $lastError —— 切换下一来源"
+            }
+            if (-not (Test-Path -LiteralPath $exePath)) {
+                throw ("WinPython 便携解释器全部 {0} 个来源不可用。离线兜底：把安装器预先下载到本地，再以 -WinPythonUrl <本地路径> 重试。最后错误：{1}" -f $candidates.Count, $lastError)
+            }
+            Write-Host "  WinPython 安装器就绪（来源：$chosen）"
         }
-        Write-Host "  WinPython 安装器 SHA256 校验通过"
+        if (-not $verifiedInLoop -and $WinPythonSha256) {
+            # 本地路径采用 / 既有缓存文件的最终哈希门禁（循环内已验证的下载不重复哈希）
+            $actual = (Get-SeedVR2FileSha256 -Path $exePath).ToLowerInvariant()
+            if ($actual -ne $WinPythonSha256.ToLowerInvariant()) {
+                throw ("WinPython 安装器 SHA256 不符（期望 {0}，实际 {1}）——下载损坏或上游被篡改" -f $WinPythonSha256, $actual)
+            }
+            Write-Host "  WinPython 安装器 SHA256 校验通过"
+        }
     }
     $extractDir = Join-Path $WorkDir 'wp'
     if (-not (Test-Path -LiteralPath $extractDir)) {
@@ -431,13 +509,25 @@ function Start-SeedVR2TorchWheelPrepare {
     # 关键：不能加 --no-deps。离线安装用 pip --no-index --find-links，torch 的传递依赖
     # （filelock / fsspec / jinja2 / networkx / sympy / typing-extensions）必须一起落盘，
     # 否则解包端 pip 会因找不到依赖而失败（旧 exe 安装器正是踩了这个坑，已删除）。
-    $res = Invoke-SeedVR2Native -Exe $PythonExe -Arguments @(
+    # 双源（2026-09-06，T9 统一 cu132 时实测）：torch/torchvision 从 CUDA 索引取 +cu132
+    # 轮；torchaudio 从 PyPI 取 CPU 轮——cu132 索引实测无 torchaudio 轮子（pip index
+    # versions 报 No matching distribution，与 pyproject.toml [tool.uv.sources] 同口径），
+    # PyPI CPU 轮与 torch+cu132 搭配正常（本机 venv 与 requirements-lock.txt 同此组合），
+    # 且其 METADATA 不声明 torch 依赖，不会拉入第二个 torch 轮污染离线目录。
+    $resTorch = Invoke-SeedVR2Native -Exe $PythonExe -Arguments @(
         '-m', 'pip', 'download',
-        "torch==$TorchVersion", "torchvision==$TorchvisionVersion", "torchaudio==$TorchaudioVersion",
+        "torch==$TorchVersion", "torchvision==$TorchvisionVersion",
         '--index-url', $IndexUrl, '-d', $WheelDir, '--timeout', '300', '--retries', '3'
     )
-    if ($res.ExitCode -ne 0) {
-        throw "pip download torch wheels 失败：$($res.Text.Split("`n")[-8..-1] -join ' | ')"
+    if ($resTorch.ExitCode -ne 0) {
+        throw "pip download torch/torchvision wheels 失败：$($resTorch.Text.Split("`n")[-8..-1] -join ' | ')"
+    }
+    $resAudio = Invoke-SeedVR2Native -Exe $PythonExe -Arguments @(
+        '-m', 'pip', 'download', "torchaudio==$TorchaudioVersion",
+        '-d', $WheelDir, '--timeout', '300', '--retries', '3'
+    )
+    if ($resAudio.ExitCode -ne 0) {
+        throw "pip download torchaudio wheel 失败（PyPI 源）：$($resAudio.Text.Split("`n")[-8..-1] -join ' | ')"
     }
 }
 
@@ -592,7 +682,7 @@ function Get-SeedVR2PeakGbEstimate {
 $estimatedPeak = Get-SeedVR2PeakGbEstimate -Runtime $RuntimeDir -Wheels $TorchWheelDir `
     -ModelDirectory $ModelDir -Components $Component -ModelFiles $modelCfg
 # 自动准备模式下这两类来源此刻还不存在，按已知量补估，否则预检会严重低估：
-# WinPython 解压后约 2 GB、cu128 torch wheels 约 3 GB，且都会与产物同时驻留到构建结束。
+# WinPython 解压后约 2 GB、cu132 torch wheels 约 3 GB，且都会与产物同时驻留到构建结束。
 if ($Component -contains 'core' -and -not $RuntimeDir -and -not $SkipAutoPrepare) {
     $estimatedPeak += 2.0
 }
@@ -613,7 +703,7 @@ if ($needRuntime -and -not $RuntimeDir -and $SkipAutoPrepare) {
     throw "core 组件需要 -RuntimeDir（已解压且未装 torch 的便携解释器目录）"
 }
 if ($needWheels -and -not $TorchWheelDir -and $SkipAutoPrepare) {
-    throw "torch 组件需要 -TorchWheelDir（含 cu128 wheels 的目录）"
+    throw "torch 组件需要 -TorchWheelDir（含 cu132 wheels 的目录）"
 }
 
 $prepDir = Join-Path $StagingDir '_prepare'
@@ -653,7 +743,9 @@ foreach ($id in $Component) {
 
     switch ($id) {
         'core' {
-            $built = New-SeedVR2CorePayload -PayloadDir $payload -ProjectRoot $Root -Runtime $RuntimeDir -Ver $Version
+            $variant = if ($TorchIndexUrl -match '/whl/([^/]+)/?$') { $Matches[1] } else { 'cpu' }
+            $built = New-SeedVR2CorePayload -PayloadDir $payload -ProjectRoot $Root -Runtime $RuntimeDir -Ver $Version `
+                -TorchLabel "torch $TorchVersion+$variant"
         }
         'torch' {
             $built = New-SeedVR2TorchPayload -PayloadDir $payload -WheelDir $TorchWheelDir
@@ -723,8 +815,31 @@ foreach ($id in $Component) {
                 sha256 = $_.Sha256
             }
         })
+    # 组件内容版本（P1-3a）：core 跟应用版本；torch 跟「钉版 + 索引变体」；
+    # 模型组件跟权重内容（sha256-of-sha256s 前 12 位）——权重不变则版本不变，
+    # 升级时据此复用旧安装/旧分卷。纯增量字段，schema 保持 1。
+    $compVersion = switch ($id) {
+        'core' { $Version }
+        'torch' {
+            $variant = if ($TorchIndexUrl -match '/whl/([^/]+)/?$') { $Matches[1] } else { 'cpu' }
+            "$TorchVersion+$variant"
+        }
+        'model-shared' {
+            Get-SeedVR2ContentVersion -Paths @(
+                (Join-Path $payloadRoot "$PortableRootName/model/$($modelCfg.vae_checkpoint)"),
+                (Join-Path $payloadRoot "$PortableRootName/model/$($modelCfg.pos_emb)"),
+                (Join-Path $payloadRoot "$PortableRootName/model/$($modelCfg.neg_emb)")
+            )
+        }
+        'model-fp8' {
+            Get-SeedVR2ContentVersion -Paths @(
+                (Join-Path $payloadRoot "$PortableRootName/model/$($modelCfg.checkpoint_mxfp8)")
+            )
+        }
+    }
     $components += [pscustomobject]@{
         id                       = $spec.Id
+        version                  = $compVersion
         title                    = $spec.Title
         description              = $spec.Description
         required                 = $spec.Required

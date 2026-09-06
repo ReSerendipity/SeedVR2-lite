@@ -6,7 +6,8 @@
 #
 # 上线前必改项（搜索 "TODO"）：
 #   1. image: 替换为实际推送的 ghcr.io 镜像 + 版本化 tag（禁 latest）
-#   2. model-weights volume: 选择 PVC 或 hostPath（权重约数 GB，勿打入镜像）
+#   2. 预填充 model-weights PVC（镜像不含权重：用 scripts/download_model.py 下载后
+#      拷入；单节点实验可回退 hostPath，见 volumes 注释）
 #   3. resources: 按 3B / 7B 档位与 FP8 / FP16 精度调整显存与内存
 apiVersion: apps/v1
 kind: Deployment
@@ -29,7 +30,13 @@ spec:
     spec:
       terminationGracePeriodSeconds: 120 # ≥ 容器内 gunicorn --graceful-timeout 90（队列排空 + 模型卸载）
       securityContext:
-        runAsNonRoot: true # 与镜像内 appuser 对应（CWE-250）
+        # UID/GID 钉版 1000，与镜像内 appuser（Dockerfile groupadd --gid 1000）一致，
+        # 改动任一侧必须同步另一侧；fsGroup 让 PVC/emptyDir 卷对进程属组可写
+        # （非 root 容器写卷的标准解法，云原生评估 P2-5）。
+        runAsNonRoot: true # CWE-250
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
       nodeSelector:
@@ -52,8 +59,9 @@ spec:
                     values: ["true"]
       containers:
         - name: seedvr2
-          # TODO: 替换为实际镜像 tag（由 docker-publish.yml 产出，禁 latest）
-          image: ghcr.io/reserendipity/seedvr2-lite:1.0.0
+          # TODO: 替换为实际镜像 tag（由 docker-publish.yml 产出，禁 latest；
+          # 原 1.0.0 为过期示例，项目当前版本见 pyproject.toml）
+          image: ghcr.io/reserendipity/seedvr2-lite:REPLACE_ME
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -81,7 +89,9 @@ spec:
               memory: 32Gi # TODO: 7B/FP16 档位建议上调；limits 缺失会导致节点显存耗尽（反模式 #2）
           # 探针三件套（报告 2.3）：
           startupProbe:
-            # 慢初始化窗口：模型加载 + 权重 SHA256 校验 + 预热，最长容忍 300s
+            # 慢初始化窗口：模型加载 + 权重 SHA256 校验 + 预热，最长容忍 300s（60 × 5s）。
+            # 7B/FP16 或机械盘冷读实测超 300s 时，上调 failureThreshold 至 120（=600s）
+            # （云原生评估 P2-7 分档建议，勿动 periodSeconds 以免拉长未就绪探测间隔）。
             httpGet:
               path: /api/system/ready
               port: http
@@ -109,15 +119,25 @@ spec:
               readOnly: true
             - name: app-data
               mountPath: /app/data
+            - name: app-outputs
+              mountPath: /app/outputs
             - name: app-logs
               mountPath: /app/logs
       volumes:
-        # TODO: 生产环境建议 PVC（Read OnceMany）；hostPath 仅限单节点实验
+        # 云原生评估 P1-1：持久化三连——权重/数据/产物全部 PVC 化（清单见 pvc.yaml）。
+        # 单节点实验回退 hostPath 示例（目录属主需 1000:1000 或依赖 fsGroup 修正）：
+        #   hostPath:
+        #     path: /srv/seedvr2/model
+        #     type: Directory
         - name: model-weights
-          hostPath:
-            path: /srv/seedvr2/model
-            type: Directory
+          persistentVolumeClaim:
+            claimName: seedvr2-model-weights
         - name: app-data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: seedvr2-data
+        - name: app-outputs
+          persistentVolumeClaim:
+            claimName: seedvr2-outputs
+        # 日志为 stdout 结构化 JSON 的临时缓冲（LOG_FORMAT=json），无需持久化
         - name: app-logs
           emptyDir: {}

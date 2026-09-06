@@ -215,7 +215,16 @@ pub fn resolve_runtime_dir(app_dir: &Path) -> PathBuf {
 
 /// 解析应用代码目录
 pub fn resolve_app_dir() -> PathBuf {
-    // 开发模式：项目根目录
+    // 1. 打包后：优先当前可执行文件目录下的 app/（要求含 start_portable.py，
+    //    避免把无 payload 的裸壳目录误判为应用根）。
+    if let Ok(exe) = std::env::current_exe() {
+        let bundled = exe.parent().unwrap().join("app");
+        if bundled.join("start_portable.py").exists() {
+            return bundled;
+        }
+    }
+
+    // 2. 开发模式：CARGO_MANIFEST_DIR 上溯到项目根（desktop/src-tauri → 项目根）
     let dev_app = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -224,14 +233,6 @@ pub fn resolve_app_dir() -> PathBuf {
         .to_path_buf();
     if dev_app.join("start_portable.py").exists() {
         return dev_app;
-    }
-
-    // 打包后：当前可执行文件目录下的 app/
-    if let Ok(exe) = std::env::current_exe() {
-        let bundled = exe.parent().unwrap().join("app");
-        if bundled.exists() {
-            return bundled;
-        }
     }
 
     dev_app

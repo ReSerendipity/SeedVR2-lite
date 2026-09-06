@@ -1,0 +1,57 @@
+# SeedVR2 单机容器编排（云原生评估 P2-4：补齐本地容器化体验，2026-09-06）
+#
+# 用途：Linux/WSL2 单机 docker compose 快速起服务；k8s 编排见 deploy/kubernetes/。
+#
+# 设计要点：
+# - **named volumes 而非 bind mount**：卷初始化时继承镜像内目录属主（appuser,
+#   UID/GID 1000，见 Dockerfile），规避 bind mount 的宿主机属主不匹配写失败问题
+#   （云原生评估 P2-5）。权重不入镜像（.dockerignore 已排除 model/），首次使用
+#   先跑 model-download 一次性任务灌卷。
+# - GPU：需 NVIDIA 驱动 + nvidia-container-toolkit；无 GPU 删除 deploy 段即可
+#   （应用会走 CPU 回退档，速度显著下降）。
+# - 端口默认只绑 127.0.0.1（本机访问）；需局域网访问时改为 "7870:7870" 并自行
+#   评估鉴权（应用支持 BASIC_AUTH_* 环境变量）。
+# - 健康检查继承镜像 HEALTHCHECK（/api/system/ping，start-period 180s）。
+#
+# 常用命令：
+#   docker compose up -d --build                 # 构建并启动
+#   docker compose run --rm model-download --size 3b --precisions mxfp8   # 灌权重卷（默认精度同 config.yaml）
+#   docker compose logs -f seedvr2               # 跟踪日志
+#   docker compose down -v                       # 停止并清卷（含权重，慎用）
+services:
+  seedvr2:
+    build: .
+    image: seedvr2:local
+    ports:
+      - "127.0.0.1:7870:7870"
+    environment:
+      LOG_LEVEL: INFO
+      # LOG_FORMAT: json            # 结构化 JSON 日志（容器最佳实践）
+      # SEEDVR2_ALLOWED_ORIGINS: http://localhost:7870
+    volumes:
+      - seedvr2-model:/app/model
+      - seedvr2-data:/app/data
+      - seedvr2-outputs:/app/outputs
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # 一次性权重下载任务（profiles 隔离，不会随 up 启动）：
+  # 权重来源与镜像加速说明见 scripts/download_model.py（--endpoint / HF_ENDPOINT，
+  # mxfp8/nvfp4 等精度走 ModelScope 直下，无需 HF 凭据）。
+  model-download:
+    image: seedvr2:local
+    profiles: ["tools"]
+    volumes:
+      - seedvr2-model:/app/model
+    entrypoint: ["python", "scripts/download_model.py"]
+
+volumes:
+  seedvr2-model:
+  seedvr2-data:
+  seedvr2-outputs:

@@ -1,12 +1,14 @@
-# PodDisruptionBudget：节点维护（drain）时保证至少 1 个推理实例存活。
-# 注意：当前 replicas=1，minAvailable=1 会阻止自愿驱逐（维护前需人工扩容或接受中断），
-# 这是 GPU 推理单例语义下的有意保守选择；扩容到 N 副本后建议改为 minAvailable: 1。
+# PodDisruptionBudget：GPU 推理单例语义下的驱逐策略（云原生评估 P2-2）。
+# maxUnavailable=1：允许自愿驱逐（kubectl drain 不再被阻塞），配合 Deployment
+# strategy=Recreate 保证「先终止旧 Pod 释放 GPU，再启新 Pod」不产生副本重叠。
+# minAvailable=1 是语义相反的保守写法（replicas=1 时禁止一切自愿驱逐），
+# 仅在集群有「维护窗口必须人工介入」流程要求时才应改回。
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: seedvr2
 spec:
-  minAvailable: 1
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: seedvr2

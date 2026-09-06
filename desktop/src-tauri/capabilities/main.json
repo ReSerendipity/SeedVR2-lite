@@ -6,7 +6,24 @@
   "permissions": [
     "core:default",
     "notification:default",
-    "updater:default"
+    "updater:default",
+    "allow-read-dragged-file",
+    "allow-check-update",
+    "allow-get-pending-update",
+    "allow-get-update-state",
+    "allow-start-update",
+    "allow-dismiss-update",
+    "allow-open-update-dialog",
+    "allow-trigger-check-update",
+    "allow-show-notification",
+    "allow-set-window-busy",
+    "allow-get-app-config",
+    "allow-set-notification-sound",
+    "allow-set-close-to-tray",
+    "allow-retry-start",
+    "allow-restart-service",
+    "allow-show-main-window",
+    "allow-save-window-state"
   ],
   "remote": {
     "urls": [

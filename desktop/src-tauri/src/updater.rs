@@ -582,22 +582,25 @@ fn probe_writable(dir: &Path) -> bool {
     }
 }
 
-/// 删除目录；Windows 句柄释放有延迟，重试几次
+/// 删除目录；Windows 句柄释放有延迟（taskkill 后 kernel 异步清理，
+/// 句柄会在进程退出后短暂残留），重试更久；且先清只读属性
+/// （read-only .pyc 等文件会阻止删除）。
 fn remove_dir_all_retry(path: &Path) -> Result<()> {
-    for attempt in 0..5 {
+    for attempt in 0..10 {
         match fs::remove_dir_all(path) {
             Ok(()) => return Ok(()),
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(e) => {
-                if attempt == 4 {
+                if attempt == 9 {
                     return Err(e).with_context(|| format!("删除失败: {}", path.display()));
                 }
-                std::thread::sleep(Duration::from_millis(200));
+                std::thread::sleep(Duration::from_millis(500));
             }
         }
     }
     Ok(())
 }
+
 
 /// 带重试的重命名（Windows：防病毒/索引器可能短暂持有句柄导致瞬时失败）
 fn rename_with_retry(src: &Path, dst: &Path) -> Result<()> {
@@ -613,6 +616,48 @@ fn rename_with_retry(src: &Path, dst: &Path) -> Result<()> {
     }
     let e = last_err.expect("循环至少执行一次");
     Err(anyhow!(e).context(format!("重命名失败: {} -> {}", src.display(), dst.display())))
+}
+
+/// 递归复制目录（发布包内无符号链接；目录目标不存在时自动创建）
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    if !src.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(dst).with_context(|| format!("创建 {} 失败", dst.display()))?;
+    for entry in fs::read_dir(src).with_context(|| format!("读取 {} 失败", src.display()))? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else if ft.is_file() {
+            if let Err(e) = fs::copy(&from, &to) {
+                return Err(anyhow!(e).context(format!("复制 {} -> {} 失败", from.display(), to.display())));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 换载时从旧 `app/` 保留到新 `app/` 的顶层目录。
+/// 完整安装包提供 runtime/（侧载 Python，约 4 GB）、model/（模型权重，约 3.9 GB）与用户数据
+/// data/（处理历史）、logs/；增量更新包只含应用代码（约 13 MB）。若换载时整体替换 `app/`
+/// 而不保留这些目录，运行时与模型会丢失、用户历史会被清空——所以必须在 swap 前补进 `app.new/`。
+const PRESERVE_TOP_DIRS: &[&str] = &["runtime", "model", "data", "logs"];
+
+/// 解压 `app.new/` 后、原子换载前：把旧 `app/` 中需要保留的顶层目录补进 `app.new/`。
+/// 更新包自带同名目录（整包更新场景）时不覆盖，以更新包为准。
+fn preserve_heavy_dirs(app_dir: &Path, app_new: &Path, on_dir: &mut dyn FnMut(&str)) -> Result<()> {
+    for name in PRESERVE_TOP_DIRS {
+        let src = app_dir.join(name);
+        let dst = app_new.join(name);
+        if src.is_dir() && !dst.exists() {
+            on_dir(name);
+            copy_dir_recursive(&src, &dst)?;
+        }
+    }
+    Ok(())
 }
 
 /// 换载后回滚：丢弃新 `app/`，把 `app.bak/` 还原为 `app/`（用于新版本启动失败/不健康）。
@@ -749,10 +794,29 @@ async fn do_update_steps(app: &AppHandle, info: &UpdateInfo) -> Result<()> {
     };
     log::info!("解压完成: {entries} 个条目");
 
-    // 4. 校验 app.new/version.json
+    // 4. 停 Python（必须先停进程释放 runtime/model 句柄——被 torch 占用的模型
+    //     文件在进程存活时 fs::copy 会阻塞卡死：实测 3.4GB 模型复制数分钟停滞，
+    //     停进程后同样文件约 2 秒复制完（1.7GB/s））
+    emit_progress(app, "swap", 0, "停止服务并保留数据…");
+    let controller = state_controller(app);
+    (controller.stop)();
+
+    // 4.5 保留重型/用户目录（runtime、model、data、logs）：增量更新包不含这些，
+    //     必须在换载前从旧 app/ 补进 app.new/，否则换载后运行时/模型/历史会丢失。
+    //     放停进程之后复制，文件无占用才快；失败时重启旧版本保证服务可用。
+    emit_progress(app, "extract", 100, "保留运行时与用户数据…");
+    if let Err(e) = preserve_heavy_dirs(&paths.app_dir, &app_new, &mut |name| {
+        log::info!("保留顶层目录: {name}/");
+    }) {
+        let _ = (controller.restart)();
+        return Err(anyhow!("保留运行时/模型目录失败，已恢复服务: {e:#}"));
+    }
+
+    // 4.6 校验 app.new/version.json
     let new_version = load_app_version(&app_new).ok_or_else(|| anyhow!("更新包缺少 version.json"))?;
     if normalize_version(&new_version.version) != info.version {
         let _ = remove_dir_all_retry(&app_new);
+        let _ = (controller.restart)();
         return Err(anyhow!(
             "更新包版本不符（声明 {}，实际 {}），已丢弃",
             info.version,
@@ -760,13 +824,8 @@ async fn do_update_steps(app: &AppHandle, info: &UpdateInfo) -> Result<()> {
         ));
     }
 
-    // 5. 停 Python → 原子换载 → 重启
-    //（Windows 文件占用：不先停进程，app/ 下的 .py/.pyd 句柄未释放会导致 rename 失败）
-    emit_progress(app, "swap", 0, "停止服务并换载…");
-    let controller = state_controller(app);
-    (controller.stop)();
-    // 换载失败时 swap_app_directories 内部已把 app.bak/ 还原，app/ 保持旧版本；
-    // 此处只需尝试拉起旧版本保证服务可用。
+    // 5. 原子换载 → 重启（换载失败时 swap_app_directories 内部已把 app.bak/ 还原，
+    //    app/ 保持旧版本；此处只需尝试拉起旧版本保证服务可用）
     if let Err(e) = swap_app_directories(&paths.app_dir, &app_new, &bak) {
         let _ = (controller.restart)();
         return Err(anyhow!("换载更新失败（已恢复原版本）: {e:#}"));
@@ -798,6 +857,18 @@ async fn do_update_steps(app: &AppHandle, info: &UpdateInfo) -> Result<()> {
     let _ = fs::remove_file(&zip_path);
     log::info!("更新完成: {} -> {}", info.current, info.version);
     Ok(())
+}
+
+/// 启动时兜底清理上次更新失败残留的 app.bak（只删备份，不影响当前 app）。
+/// 更新成功收尾采用延迟 30s 异步删除，若仍被占用（杀毒/句柄延迟）则留待下次启动清理。
+pub fn cleanup_stale_backup(app_dir: &Path) {
+    let bak = app_dir.with_extension("bak");
+    if bak.exists() {
+        match remove_dir_all_retry(&bak) {
+            Ok(()) => log::info!("已清理残留更新备份: {}", bak.display()),
+            Err(e) => log::warn!("残留更新备份清理失败（忽略）: {e:#}"),
+        }
+    }
 }
 
 /// 更新执行主流程（后台异步任务）
@@ -1057,6 +1128,61 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn preserve_heavy_dirs_copies_heavy_dirs_into_new() {
+        // 旧 app/ 含 runtime、model、data（增量更新包不含），app.new/ 只有应用代码
+        let root = std::env::temp_dir().join(format!("seedvr2_preserve_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let app = root.join("app");
+        let app_new = root.join("app.new");
+        let runtime = app.join("runtime");
+        let model = app.join("model");
+        let data = app.join("data");
+        fs::create_dir_all(&runtime).unwrap();
+        fs::create_dir_all(&model).unwrap();
+        fs::create_dir_all(&data).unwrap();
+        fs::write(runtime.join("python.exe"), b"py").unwrap();
+        fs::write(model.join("seedvr.safetensors"), b"wt").unwrap();
+        fs::write(data.join("history.json"), b"[]").unwrap();
+        // app.new 只有应用代码
+        fs::create_dir_all(&app_new).unwrap();
+        fs::write(app_new.join("start_portable.py"), b"code").unwrap();
+
+        let mut preserved = Vec::new();
+        preserve_heavy_dirs(&app, &app_new, &mut |n| preserved.push(n.to_string())).unwrap();
+
+        assert!(app_new.join("runtime/python.exe").exists(), "runtime 应被保留");
+        assert!(app_new.join("model/seedvr.safetensors").exists(), "model 应被保留");
+        assert!(app_new.join("data/history.json").exists(), "data 应被保留");
+        assert!(app_new.join("start_portable.py").exists());
+        assert_eq!(preserved.len(), 3, "应报告保留 runtime/model/data 三个目录");
+        assert_eq!(preserved.iter().filter(|n| *n == "runtime").count(), 1);
+        // 旧 app/ 原封不动
+        assert!(runtime.join("python.exe").exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn preserve_heavy_dirs_respects_update_package_content() {
+        // 整包更新场景：app.new/ 自带 runtime → 不覆盖，以更新包为准
+        let root = std::env::temp_dir().join(format!("seedvr2_preserve2_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let app = root.join("app");
+        let app_new = root.join("app.new");
+        fs::create_dir_all(&app).unwrap();
+        fs::create_dir_all(&app_new).unwrap();
+        fs::create_dir_all(app.join("runtime")).unwrap();
+        fs::write(app.join("runtime/python.exe"), b"old").unwrap();
+        fs::create_dir_all(app_new.join("runtime")).unwrap();
+        fs::write(app_new.join("runtime/python.exe"), b"new").unwrap();
+
+        let mut preserved = Vec::new();
+        preserve_heavy_dirs(&app, &app_new, &mut |n| preserved.push(n.to_string())).unwrap();
+
+        assert_eq!(fs::read(app_new.join("runtime/python.exe")).unwrap(), b"new", "更新包自带时不应覆盖");
+        assert!(preserved.is_empty(), "不应报告保留");
+        let _ = fs::remove_dir_all(&root);
+    }
     #[test]
     fn flat_update_parses_when_newer() {
         let raw = serde_json::json!({

@@ -3,9 +3,9 @@
 //! 规则（对应指导文档任务 3）：
 //! - 应用窗口在前台（聚焦且未最小化）时**不发**通知，避免打扰；
 //! - 声音受 `AppConfig.notification_sound` 控制；
-//! - Windows 平台点击 Toast 会唤醒/激活本应用窗口（系统默认行为）；
-//!   若点击时窗口处于隐藏（托盘）状态，前端桥接会收到 `notification-clicked`
-//!   事件自行兜底调用 `show_main_window`。
+//! - Windows 平台点击 Toast 会激活本应用进程（系统默认行为）。注意：当前
+//!   **未实现** `notification-clicked` 前端兜底，若窗口处于隐藏（托盘）状态，
+//!   点击通知仅激活进程，窗口不会自动唤回（已知限制，见 AI-2 交接文档 §6）。
 
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};

@@ -218,6 +218,7 @@ fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
 
     // 解析目录
     let app_dir = resolve_app_dir();
+    updater::cleanup_stale_backup(&app_dir);
     let runtime_dir = resolve_runtime_dir(&app_dir);
     let log_dir = app_dir.join("logs");
     // 更新包下载缓存目录：放 APPDATA，避免污染应用树/仓库

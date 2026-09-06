@@ -1,0 +1,20 @@
+# SeedVR2 模型权重 PVC（云原生评估报告 P1-1：持久化三连修复，2026-09-06）
+#
+# 只读挂载到 /app/model；镜像不含权重（.dockerignore 已排除 model/），
+# 需管理员预填充：在能联网的机器跑 scripts/download_model.py，再拷入 PVC。
+# 单节点实验可回退 hostPath，见 deployment.yaml volumes 注释。
+# storageClassName 按集群实际提供方调整（local-path / rook-cephfs / ebs-sc 等）。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seedvr2-model-weights
+  labels:
+    app: seedvr2
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # 3B FP8 主权重约 3.4 GB；7B/FP16 档位建议 ≥ 权重体积 × 1.5
+      storage: 20Gi
+  # storageClassName: standard

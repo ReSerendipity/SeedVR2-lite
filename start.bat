@@ -11,7 +11,7 @@ echo.
 
 :: Python detection priority (user suggested):
 ::   1. Project virtual environment (.venv) - most isolated, recommended
-::   2. Bundled WinPython - second best, fully compatible  
+::   2. Bundled WinPython - second best, fully compatible
 ::   3. System Python - last resort, may have conflicts
 set "PYTHON_CMD="
 
@@ -146,6 +146,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: Dev mode: uvicorn auto-reload (edit a line, see the effect without restarting).
+:: Usage: start.bat --dev   (workers must stay 1 - single-GPU serial queue)
+if /i "%~1"=="--dev" (
+    echo [DEV] Starting with auto-reload ^(uvicorn --reload^)...
+    cd /d "%~dp0"
+    "%PYTHON_CMD%" -m uvicorn app.integrated_app.app_server:app --host 127.0.0.1 --port 7870 --workers 1 --reload
+    goto :end
+)
+
 :: Start application
 cd /d "%~dp0"
 "%PYTHON_CMD%" app\clean_launch.py
@@ -155,3 +164,5 @@ if errorlevel 1 (
     echo [ERROR] Failed to start. Check logs\app.log
     pause
 )
+
+:end

@@ -4,7 +4,8 @@
 #
 # 用「小夹具 + 1 MB 切片上限」等价复现真实 7 GB 构建的多卷路径，验证：
 #   切片/合并可逆、逐卷与逐归档 SHA256、2GiB 体积门禁、合规剥离（ffmpeg/密钥）、
-#   缺卷被拒、篡改被拒、-VerifyOnly 不落盘、部分组件解包不误报。
+#   缺卷被拒、篡改被拒、-VerifyOnly 不落盘、部分组件解包不误报、
+#   manifest 组件版本字段（P1-3a）、-ExistingInstall 增量复用与误用拒绝（P1-3c）。
 #
 # 用法：
 #   .\scripts\test_portable_bundle.ps1                 # 跑完自动清理
@@ -110,18 +111,29 @@ try {
     New-TextFile -Path (Join-Path $fx 'WPy64-FAKE\python-3.12.10.amd64\Lib\site-packages\numpy\num.py') -Text 'VALUE=1'
     # 必须被剥离的伪装 ffmpeg（文件名带版本后缀，精确名匹配会漏）
     New-RandomFile -Path (Join-Path $fx 'WPy64-FAKE\python-3.12.10.amd64\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win64-v7.1.exe') -Bytes 4096
-    New-RandomFile -Path (Join-Path $fx 'wheels\torch-2.11.0+cu128-cp312-cp312-win_amd64.whl') -Bytes 1.7MB
+    New-RandomFile -Path (Join-Path $fx 'wheels\torch-2.13.0+cu132-cp312-cp312-win_amd64.whl') -Bytes 1.7MB
     New-RandomFile -Path (Join-Path $fx 'wheels\filelock-3.13.0-py3-none-any.whl') -Bytes 200KB
-    New-RandomFile -Path (Join-Path $fx 'model\seedvr2_ema_3b_fp8_e4m3fn.safetensors') -Bytes 3MB
-    New-RandomFile -Path (Join-Path $fx 'model\ema_vae_fp16.safetensors') -Bytes 400KB
-    New-TextFile -Path (Join-Path $fx 'model\pos_emb.pt') -Text 'pos'
-    New-TextFile -Path (Join-Path $fx 'model\neg_emb.pt') -Text 'neg'
+    # 权重文件名与 config.yaml 同源：复用构建脚本的 -PrintModelFiles（CI 与构建共用
+    # 的单一事实来源），default_precision 切换（如 fp8→mxfp8）后夹具名自动跟随。
+    $modelNames = @(& (Join-Path $repo 'scripts\build_portable_bundle.ps1') -Root $repo -PrintModelFiles)
+    $modelNames = @($modelNames | Where-Object { $_ })
+    $mainWeights = @($modelNames | Where-Object { $_ -match '\.safetensors$' -and $_ -notmatch 'vae' })[0]
+    $vaeWeights = @($modelNames | Where-Object { $_ -match '\.safetensors$' -and $_ -match 'vae' })[0]
+    $posName = @($modelNames | Where-Object { $_ -match 'pos_emb' })[0]
+    $negName = @($modelNames | Where-Object { $_ -match 'neg_emb' })[0]
+    if (-not ($mainWeights -and $vaeWeights -and $posName -and $negName)) {
+        throw "无法从 -PrintModelFiles 解析权重文件名：$($modelNames -join ', ')"
+    }
+    New-RandomFile -Path (Join-Path $fx "model\$mainWeights") -Bytes 3MB
+    New-RandomFile -Path (Join-Path $fx "model\$vaeWeights") -Bytes 400KB
+    New-TextFile -Path (Join-Path $fx "model\$posName") -Text 'pos'
+    New-TextFile -Path (Join-Path $fx "model\$negName") -Text 'neg'
     # 真实仓库里 LICENSE/NOTICE 位于 model/ 的上一级，构建时会被复制进包内 model/；夹具需同构。
     New-TextFile -Path (Join-Path $fx 'LICENSE') -Text 'fake-apache-2.0-license'
     New-TextFile -Path (Join-Path $fx 'NOTICE') -Text 'fake-notice'
 
-    $srcFp8 = Join-Path $fx 'model\seedvr2_ema_3b_fp8_e4m3fn.safetensors'
-    $srcWheels = Join-Path $fx 'wheels\torch-2.11.0+cu128-cp312-cp312-win_amd64.whl'
+    $srcFp8 = Join-Path $fx "model\$mainWeights"
+    $srcWheels = Join-Path $fx 'wheels\torch-2.13.0+cu132-cp312-cp312-win_amd64.whl'
     $srcFp8Hash = (Get-FileHash -LiteralPath $srcFp8 -Algorithm SHA256).Hash.ToLower()
     $srcWheelsHash = (Get-FileHash -LiteralPath $srcWheels -Algorithm SHA256).Hash.ToLower()
 
@@ -149,6 +161,14 @@ try {
     $sharedC = $manifest.components | Where-Object { $_.id -eq 'model-shared' }
     $coreC = $manifest.components | Where-Object { $_.id -eq 'core' }
     Assert-True ($torchC.volume_count -ge 2) "torch 组件多卷（$($torchC.volume_count)）"
+    # 组件版本字段（P1-3a）：core 跟应用版本、torch 跟钉版+索引变体、模型组件跟权重内容哈希
+    foreach ($c in $manifest.components) {
+        Assert-True ($c.version -and $c.version.Length -ge 5) "$($c.id) manifest 含 version 字段（$($c.version)）"
+    }
+    Assert-True ($coreC.version -eq '9.9.9-test') "core 版本跟应用版本（$($coreC.version)）"
+    Assert-True ($torchC.version -eq '2.13.0+cu132') "torch 版本=钉版+索引变体（$($torchC.version)）"
+    Assert-True ($fp8C.version -match '^[0-9a-f]{12}$') "model-fp8 版本为权重内容哈希 12hex（$($fp8C.version)）"
+    Assert-True ($sharedC.version -match '^[0-9a-f]{12}$') "model-shared 版本为权重内容哈希 12hex（$($sharedC.version)）"
     $fp8Expect = [int][math]::Ceiling($fp8C.raw_bytes / $slice)
     Assert-True ($fp8C.volume_count -eq $fp8Expect) "model-fp8 卷数 = ceil(归档/切片) = $fp8Expect（实为 $($fp8C.volume_count)）"
     $sharedExpect = [int][math]::Ceiling($sharedC.raw_bytes / $slice)
@@ -184,8 +204,8 @@ try {
     Write-Host ''
     Write-Host '=== 4. 解包往返 ===' -ForegroundColor Cyan
     & (Join-Path $repo 'scripts\unpack_portable_bundle.ps1') -BundleDir $outBundle -TargetDir $installed -SkipTorchInstall
-    $dstFp8 = Join-Path $installed 'SeedVR2-Portable\model\seedvr2_ema_3b_fp8_e4m3fn.safetensors'
-    $dstWheels = Join-Path $installed 'SeedVR2-Portable\torch_wheels\torch-2.11.0+cu128-cp312-cp312-win_amd64.whl'
+    $dstFp8 = Join-Path $installed "SeedVR2-Portable\model\$mainWeights"
+    $dstWheels = Join-Path $installed 'SeedVR2-Portable\torch_wheels\torch-2.13.0+cu132-cp312-cp312-win_amd64.whl'
     $dstPy = Join-Path $installed 'SeedVR2-Portable\WPy64-FAKE\python-3.12.10.amd64\Lib\site-packages\numpy\num.py'
     $dstBat = Join-Path $installed 'SeedVR2-Portable\start-portable.bat'
     $dstFfmpeg = Join-Path $installed 'SeedVR2-Portable\WPy64-FAKE\python-3.12.10.amd64\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win64-v7.1.exe'
@@ -246,9 +266,73 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $WorkDir 'installed4\SeedVR2-Portable'))) 'VerifyOnly 不落盘解压内容'
     $partial = Join-Path $WorkDir 'installed5'
     & (Join-Path $repo 'scripts\unpack_portable_bundle.ps1') -BundleDir $outBundle -TargetDir $partial -Component 'model-fp8' -SkipTorchInstall
-    Assert-True (Test-Path -LiteralPath (Join-Path $partial 'SeedVR2-Portable\model\seedvr2_ema_3b_fp8_e4m3fn.safetensors')) '单独补解模型组件可用'
+    Assert-True (Test-Path -LiteralPath (Join-Path $partial "SeedVR2-Portable\model\$mainWeights")) '单独补解模型组件可用'
     $probe = Get-ChildItem -LiteralPath (Join-Path $fx 'WPy64-FAKE') -Recurse -File -Force
     Assert-True ($probe.Count -ge 3) '夹具未被构建过程破坏（硬链接删除不影响源）'
+
+    Write-Host ''
+    Write-Host '=== 8. 增量解包（-ExistingInstall，P1-3c）===' -ForegroundColor Cyan
+    # 8a. 全量解包（§4）已写 state
+    $statePath = Join-Path $installed '.seedvr2-unpack-state.json'
+    Assert-True (Test-Path -LiteralPath $statePath) '解包成功后写入 .seedvr2-unpack-state.json（TargetDir 根）'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $installed 'SeedVR2-Portable\.seedvr2-unpack-state.json'))) 'state 不混入 appRoot（不污染应用完整性核对面）'
+    $state = Read-SeedVR2Json -Path $statePath
+    Assert-True (@($state.components.PSObject.Properties).Count -eq 4) 'state 记录全部 4 个组件归档 sha256'
+
+    # 8b. 复用路径：隐藏全部分卷 → 增量重跑应整体复用成功（分卷允许缺席）
+    foreach ($v in $parts) {
+        Rename-Item -LiteralPath $v.FullName -NewName "$($v.Name).hidden"
+    }
+    $errText3 = ''
+    try {
+        & (Join-Path $repo 'scripts\unpack_portable_bundle.ps1') -BundleDir $outBundle -TargetDir $installed `
+            -ExistingInstall $installed -SkipTorchInstall -ErrorAction Stop | Out-Null
+    } catch {
+        $errText3 = $_.Exception.Message
+    }
+    Assert-True (-not $errText3) "分卷全部缺席时 -ExistingInstall 增量复用成功（$errText3）"
+    Assert-True ((Get-FileHash -LiteralPath $dstFp8 -Algorithm SHA256).Hash.ToLower() -eq $srcFp8Hash) '复用后权重文件原样保留且未被改动'
+
+    # 8c. state 不匹配（版本升级场景）→ 该组件需要分卷，缺席即被拒
+    $state2 = Read-SeedVR2Json -Path $statePath
+    $state2.components.'model-fp8'.sha256 = 'deadbeefdead'
+    Write-SeedVR2Json -Object $state2 -Path $statePath
+    $errText4 = ''
+    try {
+        & (Join-Path $repo 'scripts\unpack_portable_bundle.ps1') -BundleDir $outBundle -TargetDir $installed `
+            -ExistingInstall $installed -Component 'model-fp8' -SkipTorchInstall -ErrorAction Stop | Out-Null
+    } catch {
+        $errText4 = $_.Exception.Message
+    }
+    Assert-True ($errText4 -match '缺少分卷') 'state 不匹配的组件在分卷缺席时被拒绝（要求补下分卷）'
+
+    # 8d. -ExistingInstall 指向无 state 的目录 → 明确报错
+    $errText5 = ''
+    try {
+        & (Join-Path $repo 'scripts\unpack_portable_bundle.ps1') -BundleDir $outBundle -TargetDir (Join-Path $WorkDir 'installed6') `
+            -ExistingInstall (Join-Path $WorkDir 'installed6') -SkipTorchInstall -ErrorAction Stop | Out-Null
+    } catch {
+        $errText5 = $_.Exception.Message
+    }
+    Assert-True ($errText5 -match 'seedvr2-unpack-state') '旧安装无 state 文件时明确报错（须由本脚本解包生成）'
+
+    # 8e. -ExistingInstall 与 -TargetDir 不同目录 → 明确报错（仅支持就地升级）
+    $errText6 = ''
+    try {
+        & (Join-Path $repo 'scripts\unpack_portable_bundle.ps1') -BundleDir $outBundle -TargetDir $installed `
+            -ExistingInstall $outBundle -SkipTorchInstall -ErrorAction Stop | Out-Null
+    } catch {
+        $errText6 = $_.Exception.Message
+    }
+    Assert-True ($errText6 -match '就地升级') '跨目录复用被拒绝（-ExistingInstall 必须等于 -TargetDir）'
+
+    # 8f. 收尾恢复：分卷名字还原 + 干净重跑一次，把被 8c 篡改的 state 写回正确值
+    foreach ($v in $parts) {
+        Rename-Item -LiteralPath (Join-Path $outBundle "$($v.Name).hidden") -NewName $v.Name
+    }
+    & (Join-Path $repo 'scripts\unpack_portable_bundle.ps1') -BundleDir $outBundle -TargetDir $installed -SkipTorchInstall | Out-Null
+    $state3 = Read-SeedVR2Json -Path $statePath
+    Assert-True ($state3.components.'model-fp8'.sha256 -eq $fp8C.sha256.ToLowerInvariant()) '干净重跑后 state 恢复为 manifest 真值'
 } catch {
     Write-Host "  ERROR $($_.Exception.Message)" -ForegroundColor Red
     $failures += '脚本异常终止'

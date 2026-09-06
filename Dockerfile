@@ -57,9 +57,13 @@ COPY --from=builder /install /usr/local
 # 应用代码
 COPY . .
 
-# 创建运行时数据目录并切换非 root 用户（CWE-250）
+# 创建运行时数据目录并切换非 root 用户（CWE-250）。
+# UID/GID 钉版 1000（原 groupadd -r 自增系统 ID 在不同基础镜像上不可复现）：
+# k8s securityContext 的 runAsUser/runAsGroup/fsGroup 与 compose named volume
+# 的初始化属主都依赖该值，改动必须同步 deploy/kubernetes/deployment.yaml。
 RUN mkdir -p data/uploads data/logs model outputs && \
-    groupadd -r appuser && useradd -r -g appuser appuser && \
+    groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid 1000 --no-create-home appuser && \
     chown -R appuser:appuser /app
 
 USER appuser
@@ -70,6 +74,19 @@ EXPOSE 7870
 # start-period=180s 覆盖慢速 GPU 初始化 / 权重 SHA256 校验 / 模型预热
 HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7870/api/system/ping', timeout=4)"]
+
+# K8s 部署探针分工（评估报告 Q2 结论）：
+#   - livenessProbe 用 /api/system/ping（进程存活，三档中最轻）
+#   - readinessProbe 用 /api/system/ready（模型加载中 / GPU 运行时不健康返回
+#     503 + Retry-After，就绪语义由专用端点承载，避免接流到带病实例）
+#   示例片段（startupProbe 宽限期需覆盖 180s+ 的 GPU 初始化与权重校验）：
+#     readinessProbe:
+#       httpGet: { path: /api/system/ready, port: 7870 }
+#       periodSeconds: 10
+#     startupProbe:
+#       httpGet: { path: /api/system/ready, port: 7870 }
+#       periodSeconds: 10
+#       failureThreshold: 36
 
 # 显式声明停止信号（Docker/K8s 默认即 SIGTERM，写明以防基础镜像变更）
 STOPSIGNAL SIGTERM

@@ -105,8 +105,19 @@ def _resolve_source(filename: str, default_repo: str) -> tuple[str, str | None]:
 
 
 def _http_download(url: str, target: Path, chunk: int = 1 << 20) -> None:
-    """ModelScope 直连流式下载：.part 断点续传，完成后原子改名。"""
+    """ModelScope 直连流式下载：.part 断点续传，完成后原子改名。
+
+    进度用 rich.progress 展示（rich 为项目声明依赖）：从已有 .part 字节数续起；
+    服务端不支持 Range 时回退整文件重下，进度条同样回零。
+    """
     import requests
+    from rich.progress import (
+        BarColumn,
+        DownloadColumn,
+        Progress,
+        SpinnerColumn,
+        TransferSpeedColumn,
+    )
 
     part = target.with_name(target.name + ".part")
     start = part.stat().st_size if part.exists() else 0
@@ -116,10 +127,29 @@ def _http_download(url: str, target: Path, chunk: int = 1 << 20) -> None:
         mode = "wb"
         if start and r.status_code == 206:
             mode = "ab"  # 服务端支持续传才追加；否则重头下载
-        with open(part, mode) as f:
+        else:
+            start = 0
+        # Content-Length 在 Range 请求下是剩余字节数，进度总量要加回已续传部分
+        remaining = int(r.headers.get("Content-Length", 0))
+        total = start + remaining if remaining else 0
+        with (
+            open(part, mode) as f,
+            Progress(
+                SpinnerColumn(),
+                "[progress.description]{task.description}",
+                BarColumn(),
+                DownloadColumn(),
+                TransferSpeedColumn(),
+                transient=True,
+            ) as progress,
+        ):
+            task_id = progress.add_task(f"下载 {target.name}", total=total or None)
+            if start:
+                progress.advance(task_id, start)
             for blk in r.iter_content(chunk_size=chunk):
                 if blk:
                     f.write(blk)
+                    progress.advance(task_id, len(blk))
     os.replace(part, target)
 
 

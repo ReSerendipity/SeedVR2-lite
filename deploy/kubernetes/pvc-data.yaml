@@ -1,0 +1,20 @@
+# SeedVR2 运行态数据 PVC（云原生评估报告 P1-1：持久化三连修复，2026-09-06）
+#
+# 挂载到 /app/data：config.yaml history.db_path=data/history.db 任务历史
+# + data/checkpoints 断点 + data/uploads 上传缓存。
+# P1-1 前该目录挂 emptyDir，Pod 重建即丢任务历史与断点续跑能力。
+# storageClassName 按集群实际提供方调整。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seedvr2-data
+  labels:
+    app: seedvr2
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # history.db + checkpoints + uploads；按保留策略与任务量调整
+      storage: 10Gi
+  # storageClassName: standard

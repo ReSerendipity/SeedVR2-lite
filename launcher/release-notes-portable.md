@@ -17,11 +17,12 @@
 | 组件 | 内容 | 分卷数 |
 |---|---|:---:|
 | `core` | 应用代码 + 便携 Python 3.12 解释器（已预装全部非 torch 依赖）+ `start-portable.bat` | 1 |
-| `torch` | PyTorch / TorchVision / TorchAudio 的 CUDA 12.8 wheel（含传递依赖） | 2 |
+| `torch` | PyTorch / TorchVision 的 CUDA 13.2（cu132）wheel + TorchAudio 2.11.0（PyPI CPU 轮，与 cu132 搭配正常），含传递依赖 | 2 |
 | `model-shared` | `ema_vae_fp16.safetensors` + `pos_emb.pt` + `neg_emb.pt` | 1 |
-| `model-fp8` | `seedvr2_ema_3b_fp8_e4m3fn.safetensors`（内置主模型，FP8） | 2 |
+| `model-fp8` | `seedvr2_3b_mxfp8.safetensors`（内置主模型，MXFP8 量化） | 2 |
 
-准确的文件名、分卷数量与 SHA256 以本次 Release 里的 `manifest.json` / `SHA256SUMS.txt` 为准。
+准确的文件名、分卷数量、SHA256 与**各组件版本号**以本次 Release 里的 `manifest.json` / `SHA256SUMS.txt` 为准。
+`manifest.json` 中每个组件带 `version` 字段：`core`/`torch` 跟随应用版本与 torch 钉版，`model-*` 是权重内容哈希——**权重没变，版本号就不变**。
 
 ## 安装步骤
 
@@ -44,14 +45,27 @@ powershell -ExecutionPolicy Bypass -File .\unpack_portable_bundle.ps1 -VerifyOnl
 
 ## 运行要求
 
-- Windows 10/11 x64，NVIDIA 显卡，显存 ≥ 8 GB（内置的 3B FP8 权重）
+- Windows 10/11 x64，NVIDIA 显卡，显存 ≥ 8 GB（内置的 3B MXFP8 权重）
 - 磁盘预留 ≥ 15 GB（解压后约 12 GB，另需临时空间）
-- 已安装 NVIDIA 驱动（torch 为 cu128；驱动过旧时 `torch.cuda.is_available()` 会是 False，脚本会给出提示）
+- 已安装 NVIDIA 驱动（torch 为 cu132 / CUDA 13.2 运行时，需较新驱动；驱动过旧时 `torch.cuda.is_available()` 会是 False，脚本会给出提示）
 - **不内置 FFmpeg**：图片修复开箱即用；视频修复请自行安装 FFmpeg 并加入 PATH（许可证原因，见 `NOTICE` 第 4 条）
+
+## 从旧版本升级（增量解包）
+
+从本脚本解包出的旧安装升级到新版本时，**不需要重新下载没变化的组件**：
+
+1. 对比新旧两份 `manifest.json` 的组件 `version` 字段，只下载**有变化组件**的全部分卷（外加新的 `manifest.json`、`SHA256SUMS.txt`、`unpack_portable_bundle.ps1`、`portable_bundle_lib.ps1`）；
+2. 把它们放进一个文件夹，就地执行：
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\unpack_portable_bundle.ps1 -TargetDir D:\SeedVR2 -ExistingInstall D:\SeedVR2
+   ```
+
+   与现有安装一致的组件会被**增量复用**（分卷缺席也允许），只有变化的组件被重新解包；解包后按清单逐文件核对，旧文件被改动过会被发现。
 
 ## 模型说明
 
-- 本包只内置 **3B FP8** 权重。`config.yaml` 的默认精度是 `fp16`，在只有 FP8 权重时程序会自动回退到 FP8（日志里有一条 WARNING，属预期行为）。
+- 本包只内置 **3B MXFP8** 权重（Comfy-Org 量化格式）。`config.yaml` 的默认精度是 `fp16`，在只有 MXFP8 权重时程序会自动回退（日志里有一条 WARNING，属预期行为）。
 - 想要 FP16 或 7B 权重，按仓库 README 的直链自行下载放入 `SeedVR2-Portable\model\` 即可，无需重新打包。
 
 ## 与 exe 安装包的区别

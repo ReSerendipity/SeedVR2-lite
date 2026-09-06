@@ -1,0 +1,19 @@
+# SeedVR2 任务产物 PVC（云原生评估报告 P1-1：持久化三连修复，2026-09-06）
+#
+# 挂载到 /app/outputs：config.yaml retention 清单中的 outputs/。
+# P1-1 前该目录**完全未挂载**（容器内临时层），Pod 重建即丢全部任务产物。
+# 容量配合 outputs 保留策略（max_age_days=14 等）规划。
+# storageClassName 按集群实际提供方调整。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seedvr2-outputs
+  labels:
+    app: seedvr2
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName: standard
