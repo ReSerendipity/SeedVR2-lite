@@ -89,3 +89,42 @@
 | D12 | 报告重命名卷入事故以 pathspec 限定重提纠正 | 铁律 1 范围控制 + 恢复原暂存状态 |
 | D13 | torch 哈希取自 CI 构建日志实测值补录入锁（D7 修订：**全量哈希强制达成**，降级方案作废） | pip 在任一包带哈希时自动全量校验；CI 实测哈希来自官方 cu132 CDN 实际下载物，比降级更优 |
 | D14 | CLI 冒烟测试以退出码（文档化契约）为主断言，输出非空才校验文本标记 | CI windows 捕获层 stdout=None 环境异常本地无法复现；不放宽退出码主断言，符合诚实铁律 |
+
+
+---
+
+# 后续建议落地轮（2026-09-06 续，用户指令「继续后续建议」）
+
+> 回滚点：`remediation-followup-20260906`（锚定落地总结 HEAD fa1b96a）
+> 提交：`7a0d959`(R1) `2f1b711`(R2) `2a36bc8`(R3) `ee7e8b1`(R4a) `62646ff`(changelog)
+> 基线：本轮开始前全量 1436 passed → 本轮后 **1511 passed, 1 skipped 零失败**
+
+## F1. 任务终态
+
+| # | 建议项 | 终态 | 关键产出与证据 | 决策 |
+|---|---|---|---|---|
+| R1 | 水印抗转码算法增强 | **已完成** `7a0d959` | 根因实证：旧单通道嵌入经 RGB→YUV420 仅 0.299 入亮度通道、中频被色度下采样破坏——**与强度无关**（步长 33 仍 0/16）。修复：三通道等幅（纯亮度扰动，构造免疫）+ 连续重复码 + verify 候选探测。实验：视频档 (0.05,R3) CRF14/18/23 全帧存活 BER≈0；新增 test_watermark_transcode（生产 CRF18 回归）+ post-mux 抽样验证兜底 | **D15**：图像/视频分档参数（图像 PNG 无损保 alpha0.5/57dB；视频取鲁棒档，权衡 PSNR 37.5dB）；**D16**：verify 候选序列保历史产物兼容（不破坏已签发水印的可验证性） |
+| R2 | 孤儿 checkpoint 周期清扫 | **已完成** `2f1b711` | 发现启动扫描已由数据治理 P2-1 覆盖，真缺口仅「长驻进程期间不补扫」→ 注入既有 5min 循环（DI 参数 + 同一 TTL），2 测试 | **D17**：不新建周期任务，复用 periodic_stale_cleanup 循环保架构一致 |
+| R3 | 桌面壳 D-1~D-4 | **已完成** `2a36bc8` | D-4 实为「检查在 fs::read 之后」的 DoS 面，抽 validate_dragged_file 前移 metadata 判断 + Rust 单测；D-1/2/3 逐条核实后**关闭**（不适用/必需项/原建议无效），cargo 36 passed + clippy 零告警 | **D18**：评审自我修正——D-3 改固定 channel 名不解决 latest 漂移（撤回改名），回滚控制面在服务端 |
+| R4a | semgrep ERROR 抑制修复 | **已完成（report-only 阶段）** `ee7e8b1` | 根因：13 条 findings 均已有 nosemgrep 但用**短规则名**，semgrep 不认；改完整 rule.id + 多行注释移到匹配首行；4 处 yaml run-shell-injection 真修复（env 间接） | **D19**：不在抑制未经验证前翻 `--error`（避免已知红），待 CI SARIF 确认告警关闭后二次提交翻转 |
+| R5 | CSP S1-S4 / 字体本地化 | **不做（评估）** | 报告定位为「路线」，前端事件委托重构 + 外部字体资产下载+许可核查超出本轮可自主范围 | **D20**：维持路线文档现状，列人工决策 |
+
+## F2. CI 验证（R4a 抑制是否生效）
+- 首次 CI SAST（report-only）后 open ERROR 告警 13→**10**：4 处 yaml run-shell-injection 已关闭（env 化真修复），但 6 处 Python 侧「短名→完整 ID + 行锚定」未全生效——暴露独立 `# nosemgrep` 行只抑制紧邻下一行（seedvr2_engine 的 neg_emb 未覆盖）。
+- **本地实证**：`pip install semgrep==1.173.0` + 与 CI 完全同款 `semgrep scan --config auto --severity ERROR`，逐文件定位残留→补行内注释→全仓扫描 **ERROR = 0**（确定性证据，替代盲试 CI）。
+- 据此翻 `--error` 硬门禁（R4b）。semgrep 安装仅落在 gitignored 的 `.venv`，不触依赖清单。
+
+## F2b. 本轮决策（续 D14 之后）
+| ID | 决策 | 理由 |
+|---|---|---|
+| D15 | 图像/视频分档嵌入参数 | 图像 PNG 无损无需鲁棒档；视频经有损编码需三通道+重复码，权衡 PSNR 37.5dB |
+| D16 | verify 候选序列 (0.5,1)/(0.05,1..3) | 保持历史产物与新两档产物全部可验证（向后兼容） |
+| D17 | checkpoint 清扫复用 periodic_stale_cleanup 循环 | 不新建周期任务，架构一致 + DI 可单测 |
+| D18 | 桌面壳评审自我修正（D-3 撤回改名、D-1/2 核实关闭） | 改 channel 名不解决 latest 漂移；范围铁律下只动实际缺陷 D-4 |
+| D19 | 抑制未经验证前不翻 --error，本地装 semgrep 实证后再翻 | CI 铁律避免已知红；本地可复现优先于盲试 |
+| D20 | CSP S1-S4 / 字体本地化不做 | 超「路线」定位；前端重构 + 外部字体资产/许可核查需人工 |
+| D21 | semgrep 本地安装留在 .venv 不清除 | gitignored，不触 requirements；清除有扰动已钉依赖的风险 |
+
+## F3. 报告外发现（本轮新增，未处理）
+- `.github/scripts/check_layout.py`（用户未跟踪在制品，8 条 ruff 告警）与 `structure-guard.yml`、`layout-rules.yaml`：非本任务产物，未触碰；CI 检出无此文件不影响门禁。
+- 远端 main 在本轮开始前已前进（f5d6cc3，用户侧提交），本次推送 fast-forward 无冲突。
