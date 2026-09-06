@@ -23,6 +23,7 @@
 ### Fixed
 
 * firefox e2e reload 超时根因根治（SSE 重连风暴 + goto 原语）；中文 Windows icacls GBK 读线程崩溃（KNOWN_ISSUES #76）；QueueProvider 钉真实 TaskQueue 消 mypy 误报；权重完整性 SHA256 校验移入线程池消除提交期阻塞；K8s PDB 改 maxUnavailable=1（`6b08090` `28a9fed` `92b8d1a` `a8615d9` `bce2179` `5cdf0f9`）
+* **MLOps 评估落地（2026-09-06 评估报告）**：seed=-1 实际抽签种子经 `metadata.seed_effective` 回写历史 parameters（图像/视频管线物化 + 服务层 `merge_provenance_into_parameters`；视频重写 parameters 时重注入 ffmpeg 血缘防覆盖丢失）——默认随机种子记录不可复现的 P1 缺口根治；`download_model.py` SHA256 校验失败自动删除残缺文件（P2-5）；覆盖率偏科修复：`tile_blend`/`diffusion_sampling`/`post_processing` 移出 omit 并补 51 项 CPU 数值测试（P1-2），门禁 50→55；模型选择器 tooltip 五语言补「FP8/量化仅存储格式」澄清（三问①）；`model_lib/SOURCE.md` 勘误 dit_v2 非占位 + 导入 commit 锚定表 + 升级 SOP（P2-7）；`quant_quality_baseline.py` 量化质量基线跨精度 PSNR/SSIM 留档（P2-6）（`0c07f51` `03d5755` `5b1ea3e` `7819b3e` `9081d45` `eda8a11` `31a0221` `c7835f4` `f065930`）
 
 ### Security
 
