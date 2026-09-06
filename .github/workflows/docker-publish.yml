@@ -107,6 +107,14 @@ jobs:
       contents: read
       packages: read # 拉取本仓库 GHCR 包（含私有可见性场景）
     steps:
+      - name: Lowercase image ref (OCI 命名强制小写；metadata-action 只小写化构建 tags，
+          Trivy 的 image-ref 自行拼接须同样处理，大写名 FATAL "could not parse reference")
+        id: img
+        run: echo "ref=ghcr.io/${REPO,,}@${DIGEST}" >> "$GITHUB_OUTPUT"
+        env:
+          REPO: ${{ github.repository }}
+          DIGEST: ${{ needs.build-push.outputs.digest }}
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -119,7 +127,7 @@ jobs:
         # 2026-09-06 实测：`0.28.0` 无此 tag，action 解析失败打红整条 workflow）。
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-push.outputs.digest }}
+          image-ref: ${{ steps.img.outputs.ref }}
           format: table
           # 报告不阻断（评估报告 P1-2 建议：先可见性，后收紧）。收紧时改 '1'
           # 并按需配 .trivyignore（列出已确认不受影响的 CVE 与豁免理由）。
