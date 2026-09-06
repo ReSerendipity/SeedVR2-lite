@@ -67,25 +67,38 @@ def resolve_watermark_failure_policy(config: dict) -> str:
     return raw
 
 
-def embed_with_retry(image_np: np.ndarray, *, payload: str | None = None) -> tuple[np.ndarray, bool, str | None]:
+def embed_with_retry(
+    image_np: np.ndarray,
+    *,
+    payload: str | None = None,
+    alpha: float | None = None,
+    repeat: int = 1,
+) -> tuple[np.ndarray, bool, str | None]:
     """嵌入水印，失败自动重试 1 次。纯函数，无副作用。
 
     Args:
         image_np: 输入图像 (H x W x C, uint8)。
         payload: 水印载荷（约定绑定 task_id，见 P3-1）。
+        alpha: 嵌入强度；None 用模块默认（图像路径 0.5）。视频帧传 0.05。
+        repeat: 重复码次数；视频帧传 3（有损编码鲁棒档）。
 
     Returns:
         (image_np, embedded, error) 三元组：
         - embedded=True 时 error 为 None，image 为含水印结果；
         - embedded=False 时 image 为原图回传，error 为末次异常描述。
     """
-    from app.integrated_app.security.watermark import embed_watermark
+    from app.integrated_app.security import watermark as wm
 
+    kwargs: dict = {"payload": payload}
+    if alpha is not None:
+        kwargs["alpha"] = alpha
+    if repeat != 1:
+        kwargs["repeat"] = repeat
     try:
-        return embed_watermark(image_np, payload=payload), True, None
+        return wm.embed_watermark(image_np, **kwargs), True, None
     except Exception as first_err:  # noqa: BLE001 — 失败处置交由策略层
         try:
-            return embed_watermark(image_np, payload=payload), True, None
+            return wm.embed_watermark(image_np, **kwargs), True, None
         except Exception as second_err:  # noqa: BLE001
             return image_np, False, f"{type(second_err).__name__}: {second_err} (首次: {first_err})"
 

@@ -679,10 +679,15 @@ class _VideoPipelineMixin:
                             ).astype(np.uint8)
                         # 嵌入不可感知数字水印 (视频帧)
                         if enable_watermark:
+                            from app.integrated_app.security.watermark import _VIDEO_ALPHA, _VIDEO_REPEAT
                             from app.integrated_app.services.watermark_policy import embed_with_retry
 
                             # P3-1：逐帧水印绑定 task_id（视频按帧嵌入，payload 同源）
-                            frame, embedded, wm_error = embed_with_retry(frame, payload=watermark_payload)
+                            # 视频帧走鲁棒档（三通道等幅 + 步长 20 + 重复码 3）：
+                            # 经 ffmpeg 有损编码后签名验证可存活（2026-09-06 实验）
+                            frame, embedded, wm_error = embed_with_retry(
+                                frame, payload=watermark_payload, alpha=_VIDEO_ALPHA, repeat=_VIDEO_REPEAT
+                            )
                             if not embedded:
                                 watermark_failed_frames += 1
                                 watermark_last_error = wm_error
@@ -792,16 +797,53 @@ class _VideoPipelineMixin:
 
             logger.info(f"视频修复完成: {output_path} ({output_frames} 帧)")
 
-            # 水印缺失兜底（评估报告 R2）：mark_metadata 策略下写侧车元数据标识
-            if watermark_failed_frames and (watermark_policy or "mark_metadata") == "mark_metadata":
+            # 合成后抽样验证（评估报告 R2 跟进）：显式检查编码是否吃掉水印。
+            # 阈值 50%：鲁棒档方案实测存活率 100%（CRF14/18/23），低通过率
+            # 只会出现在编码参数异常/容量降档等真实缺失场景
+            mux_verify_passed: int | None = None
+            mux_verify_sampled: int | None = None
+            if enable_watermark and not watermark_failed_frames and os.path.exists(output_path):
+                mux_verify_passed = 0
+                mux_verify_sampled = 0
+                try:
+                    from app.integrated_app.security.watermark import verify_watermark
+
+                    cap = cv2.VideoCapture(output_path)
+                    total_frames_out = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or output_frames
+                    try:
+                        for k in range(4):
+                            pos = int(total_frames_out * (k + 0.5) / 4)
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, min(pos, total_frames_out - 1))
+                            ok, frame = cap.read()
+                            if not ok:
+                                break
+                            mux_verify_sampled += 1
+                            if verify_watermark(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)):
+                                mux_verify_passed += 1
+                    finally:
+                        cap.release()
+                    if mux_verify_sampled:
+                        logger.info(f"合成后水印抽样验证: {mux_verify_passed}/{mux_verify_sampled} 帧携带可信水印")
+                except Exception as e:
+                    logger.debug(f"合成后水印抽样验证跳过: {e}")
+                    mux_verify_passed = mux_verify_sampled = None
+
+            # 水印缺失兜底（评估报告 R2）：mark_metadata 策略下写侧车元数据标识。
+            # 触发条件：① 嵌入失败帧 > 0；② 合成后抽样验证通过率 < 50%
+            mux_lost = (
+                mux_verify_passed is not None and mux_verify_sampled and mux_verify_passed * 2 < mux_verify_sampled
+            )
+            if (watermark_failed_frames or mux_lost) and (watermark_policy or "mark_metadata") == "mark_metadata":
                 try:
                     from app.integrated_app.services.watermark_policy import write_provenance_sidecar
 
                     sidecar_path = write_provenance_sidecar(output_path, payload=watermark_payload)
-                    logger.warning(
-                        f"{watermark_failed_frames} 帧水印嵌入失败"
-                        f"（末次: {watermark_last_error}），已写溯源侧车: {sidecar_path}"
+                    reason = (
+                        f"{watermark_failed_frames} 帧水印嵌入失败（末次: {watermark_last_error}）"
+                        if watermark_failed_frames
+                        else f"合成后抽样验证仅 {mux_verify_passed}/{mux_verify_sampled} 帧携带水印"
                     )
+                    logger.warning(f"输出视频水印缺失，已写溯源侧车: {sidecar_path}（{reason}）")
                 except OSError as e:
                     logger.error(f"[SECURITY] 水印缺失且溯源侧车写入失败: {e}")
 

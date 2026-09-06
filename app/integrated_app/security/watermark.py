@@ -11,8 +11,11 @@
           利用人类视觉对中频不敏感的特性实现不可感知性。
 
 安全特性:
-    - 不可感知: 水印强度极低 (alpha=0.01)，PSNR > 42dB
-    - 鲁棒性: DCT 中频系数对 JPEG 压缩、缩放、裁剪有一定鲁棒性
+    - 不可感知: 图像路径 (alpha=0.5) PSNR > 50dB；视频鲁棒档 (alpha=0.05)
+      PSNR ≈ 37.5dB，属视觉透明档
+    - 鲁棒性: 三通道等幅嵌入（纯亮度扰动）+ 连续重复码（视频路径 repeat=3），
+      实测 H.264 CRF14/18/23 转码后签名验证存活（此前单通道嵌入转码后
+      全灭，见 scripts/experiment_watermark_transcode.py 实验记录）
     - 可溯源: 提取水印可验证 "SeedVR2" 归属标识
     - 不可移除: 攻击者不知道水印嵌入位置和强度，难以完全去除
 
@@ -38,8 +41,15 @@ _WATERMARK_BRAND = "SeedVR2_ReSerendipity"
 
 # 水印嵌入强度 (越小越不可感知，越大越鲁棒)
 # 对于 QIM 量化: quant_step = 1.0 / alpha
-# alpha=0.5 -> quant_step=2, 对 8bit 图像最大修改量 ~1, PSNR > 48dB
+# alpha=0.5 -> quant_step=2, 对 8bit 图像最大修改量 ~1, PSNR > 50dB
 _WATERMARK_ALPHA = 0.5
+
+# 视频帧路径的鲁棒档强度：quant_step=20，配合三通道等幅嵌入（纯亮度扰动）
+# 与 repeat=3 重复码，实测 H.264 CRF14/18/23 转码后位误码率 ≈ 0
+# （2026-09-06 转码实验，见 scripts/experiment_watermark_transcode.py）。
+# 代价：PSNR ≈ 37.5dB（仍属视觉透明档），仅用于经有损编码的产物。
+_VIDEO_ALPHA = 0.05
+_VIDEO_REPEAT = 3
 
 # ===== 密钥签名配置（v2）=====
 # 载荷格式: "<brand>_<timestamp>|<hmac-sha256 hex>"
@@ -146,6 +156,8 @@ def _verify_signature(signed_payload: str, key: bytes) -> str | None:
 
     解析规则：首个分隔符前的部分为载荷，其后固定 64 位 hex 为摘要；
     提取噪声不会影响解析（分隔符后的多余内容被忽略）。
+    比较以字节进行——提取噪声可能产生非 ASCII 字符，
+    hmac.compare_digest 对含非 ASCII 的 str 会抛 TypeError，此处必须免疫。
     """
     sep_pos = signed_payload.find(_HMAC_SEPARATOR)
     if sep_pos < 0:
@@ -155,7 +167,7 @@ def _verify_signature(signed_payload: str, key: bytes) -> str | None:
     if len(digest) != 64:
         return None
     expected = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
-    if hmac.compare_digest(expected, digest):
+    if hmac.compare_digest(expected.encode("ascii"), digest.encode("utf-8", errors="replace")):
         return payload
     return None
 
@@ -215,29 +227,40 @@ def embed_watermark(
     *,
     payload: str | None = None,
     alpha: float = _WATERMARK_ALPHA,
+    repeat: int = 1,
 ) -> np.ndarray:
     """在图像中嵌入不可感知 DCT 频域水印。
 
-    水印嵌入流程:
-        1. 生成水印载荷 (品牌标识 + 时间戳)
+    嵌入流程:
+        1. 生成水印载荷 (品牌标识 + 时间戳)，配置密钥时附加 HMAC 签名
         2. 将载荷转换为二进制位序列
-        3. 对图像每个通道分 8x8 块做 DCT 变换
-        4. 在中频系数中嵌入水印位 (QIM 量化索引调制)
-        5. 做 IDCT 变换回空间域
-        6. 裁剪到有效像素范围 [0, 255]
+        3. 对图像分 8x8 块做 DCT 变换，**三通道等幅嵌入**：每个通道在相同
+           系数位置做相同的 QIM 系数修改——三通道等幅扰动 = 纯亮度扰动
+           （ΔY=Δ、ΔCr=0），构造上免疫 H.264 4:2:0 色度下采样对单通道
+           嵌入的破坏（2026-09-06 转码实验确认的结构性根因，见
+           scripts/experiment_watermark_transcode.py）
+        4. 连续重复码：载荷位序列按 ``repeat`` 倍连续铺入块序列
+           （块 j 承载位 ``bits[j // repeat]``），提取端按多数投票恢复；
+           容量不足时自动降档（repeat 收敛到 B // len(bits)）
+        5. 做 IDCT 变换回空间域，裁剪到有效像素范围 [0, 255]
 
     Args:
         image_np: 输入图像 NumPy 数组 (H x W x C, uint8)。
         payload: 自定义水印载荷，None 时自动生成品牌标识+时间戳。
-        alpha: 水印嵌入强度，默认 0.01 (极低，不可感知)。
+        alpha: 水印嵌入强度（quant_step = 1/alpha）。图像路径用默认 0.5
+            （PNG 无损保存，高保真）；经有损编码的产物（视频帧）用 0.05
+            —— 实测 CRF14/18/23 转码后位误码率 ≈ 0（quant_step=20 承受
+            H.264 中频量化噪声）。
+        repeat: 重复码次数。视频路径建议 3；图像路径 1（PNG 无损无需冗余）。
 
     Returns:
         np.ndarray: 嵌入水印后的图像 (与输入相同 shape 和 dtype)。
 
     Note:
-        - 水印强度极低，PSNR > 42dB，肉眼不可感知
-        - 对 JPEG 压缩、缩放等常见操作有一定鲁棒性
-        - 即使 UI/代码标识全部被移除，输出图像仍可提取 "SeedVR2" 归属
+        - 图像路径 (alpha=0.5, repeat=1): PSNR > 50dB，视觉不可感知
+        - 视频路径 (alpha=0.05, repeat=3): PSNR ≈ 37.5dB，属视觉透明档
+          （DCT 中频 ±10 系数扰动分散到 8x8 块内 ±2-3 像素级变化）；
+          换取 H.264 转码后签名验证可存活
     """
     if image_np is None or image_np.size == 0:
         return image_np
@@ -262,60 +285,53 @@ def embed_watermark(
     if result.ndim == 2:
         result = result[:, :, np.newaxis]
 
-    # 只在第一个通道嵌入水印 (减少视觉影响)
-    channel_data = result[:, :, 0]
-
+    n_channels = result.shape[2]
     bit_idx = 0
     blocks_h = h // _BLOCK_SIZE
     blocks_w = w // _BLOCK_SIZE
+    total_blocks = blocks_h * blocks_w
+    # 容量不足时降档重复次数（至少 1 次完整嵌入）
+    repeat = max(1, min(int(repeat), total_blocks // len(bits)))
+    n_marked = min(total_blocks, len(bits) * repeat)
+    quant_step = 1.0 / alpha
 
     for bi in range(blocks_h):
         for bj in range(blocks_w):
-            if bit_idx >= len(bits):
+            if bit_idx >= n_marked:
                 break
 
             # 提取 8x8 块
             y0 = bi * _BLOCK_SIZE
             x0 = bj * _BLOCK_SIZE
-            block = channel_data[y0 : y0 + _BLOCK_SIZE, x0 : x0 + _BLOCK_SIZE].copy()
+            bit = bits[bit_idx // repeat]
 
-            # DCT 变换
-            dct_block = _dct_2d_block(block)
+            modified_blocks = []
+            for c in range(n_channels):
+                block = result[y0 : y0 + _BLOCK_SIZE, x0 : x0 + _BLOCK_SIZE, c].copy()
+                dct_block = _dct_2d_block(block)
 
-            # 在中频位置嵌入水印位 (QIM: Quantization Index Modulation)
-            # 每个块嵌入 1 位水印
-            bit = bits[bit_idx]
-            # 量化步长
-            quant_step = 1.0 / alpha
-
-            for py, px in _EMBED_POSITIONS:
-                coeff = dct_block[py, px]
-                if bit == 1:
-                    # 量化到奇数倍步长
+                # 在中频位置嵌入水印位 (QIM: Quantization Index Modulation)
+                # 三通道做相同的系数修改 → 扰动集中于亮度分量
+                for py, px in _EMBED_POSITIONS:
+                    coeff = dct_block[py, px]
                     quantized = round(coeff / quant_step)
-                    if quantized % 2 == 0:
+                    if quantized % 2 != bit:
                         quantized += 1
-                else:
-                    # 量化到偶数倍步长
-                    quantized = round(coeff / quant_step)
-                    if quantized % 2 == 1:
-                        quantized += 1
-                dct_block[py, px] = quantized * quant_step
+                    dct_block[py, px] = quantized * quant_step
 
-            # IDCT 变换回空间域
-            watermarked_block = _idct_2d_block(dct_block)
-            channel_data[y0 : y0 + _BLOCK_SIZE, x0 : x0 + _BLOCK_SIZE] = watermarked_block
+                modified_blocks.append(_idct_2d_block(dct_block))
+
+            for c in range(n_channels):
+                result[y0 : y0 + _BLOCK_SIZE, x0 : x0 + _BLOCK_SIZE, c] = modified_blocks[c]
 
             bit_idx += 1
-
-    result[:, :, 0] = channel_data
 
     # 裁剪到有效范围并恢复 dtype
     result = np.clip(result, 0, 255).astype(image_np.dtype)
     if image_np.ndim == 2:
         result = result[:, :, 0]
 
-    logger.debug(f"水印已嵌入: payload='{payload[:30]}...', {bit_idx}/{len(bits)} 位已写入")
+    logger.debug(f"水印已嵌入: payload='{payload[:30]}...', {bit_idx}/{n_marked} 块已标记 (repeat={repeat})")
     return result
 
 
@@ -324,6 +340,7 @@ def extract_watermark(
     *,
     expected_length: int = 256,
     alpha: float = _WATERMARK_ALPHA,
+    repeat: int = 1,
 ) -> str:
     """从图像中提取 DCT 频域水印。
 
@@ -333,6 +350,8 @@ def extract_watermark(
         image_np: 待检测的图像 NumPy 数组 (H x W x C, uint8)。
         expected_length: 期望提取的最大位数。
         alpha: 水印强度 (需与嵌入时一致)。
+        repeat: 嵌入时的重复码次数 (需与嵌入时一致)；
+            提取对每个位位置在 repeat 个连续块上做多数投票。
 
     Returns:
         str: 提取到的水印文本。如果包含 "SeedVR2" 则确认归属。
@@ -346,34 +365,47 @@ def extract_watermark(
 
     channel_data = data[:, :, 0]
     h, w = channel_data.shape
-
-    bits: list[int] = []
     blocks_h = h // _BLOCK_SIZE
     blocks_w = w // _BLOCK_SIZE
+    total_blocks = blocks_h * blocks_w
+    repeat = max(1, min(int(repeat), total_blocks))
+    groups = total_blocks // repeat  # 每组 repeat 个连续块投票出一个位
     quant_step = 1.0 / alpha
 
+    n_bits = min(expected_length, groups)
+    bits: list[int] = []
+    parity_flat: list[int] = []
+
+    # 先按块顺序读出每块的中频奇偶投票结果
     for bi in range(blocks_h):
         for bj in range(blocks_w):
-            if len(bits) >= expected_length:
-                break
-
-            y0 = bi * _BLOCK_SIZE
-            x0 = bj * _BLOCK_SIZE
-            block = channel_data[y0 : y0 + _BLOCK_SIZE, x0 : x0 + _BLOCK_SIZE]
+            block = channel_data[bi * _BLOCK_SIZE : (bi + 1) * _BLOCK_SIZE, bj * _BLOCK_SIZE : (bj + 1) * _BLOCK_SIZE]
             dct_block = _dct_2d_block(block)
 
-            # 从中频位置提取水印位
             votes = []
             for py, px in _EMBED_POSITIONS:
                 coeff = dct_block[py, px]
-                quantized = round(coeff / quant_step)
-                votes.append(quantized % 2)
+                votes.append(round(coeff / quant_step) % 2)
+            parity_flat.append(1 if sum(votes) > len(votes) // 2 else 0)
 
-            # 多数投票确定水印位
-            bit = 1 if sum(votes) > len(votes) // 2 else 0
-            bits.append(bit)
+    # 连续重复码反交织：位 j = 组 j（块 j*repeat .. j*repeat+repeat-1）多数投票
+    for j in range(n_bits):
+        group = parity_flat[j * repeat : (j + 1) * repeat]
+        bits.append(1 if sum(group) * 2 > len(group) else 0)
 
     return _bits_to_text(np.array(bits, dtype=np.uint8))
+
+
+# 验证候选方案 (alpha, repeat)：按嵌入路径枚举。
+# - (0.5, 1)：图像路径默认（PNG 无损）与历史产物
+# - (0.05, 1..3)：视频帧路径（有损编码鲁棒档，repeat 按容量可能降档）
+# 实测依据见 scripts/experiment_watermark_transcode.py（2026-09-06）。
+_VERIFY_SCHEMES: tuple[tuple[float, int], ...] = (
+    (_WATERMARK_ALPHA, 1),
+    (_VIDEO_ALPHA, 1),
+    (_VIDEO_ALPHA, 2),
+    (_VIDEO_ALPHA, 3),
+)
 
 
 def verify_watermark(image_np: np.ndarray, *, expected_length: int = 2048) -> bool:
@@ -382,6 +414,8 @@ def verify_watermark(image_np: np.ndarray, *, expected_length: int = 2048) -> bo
     - 配置了密钥时（推荐）：严格验证 HMAC 签名，仅持有密钥嵌入的水印通过；
       旧版未签名水印将验证失败（无法证明真伪）。
     - 未配置密钥时：退化为弱检测（品牌字符串包含检查），仅作参考。
+    - 依次尝试 :data:`_VERIFY_SCHEMES` 中的 (alpha, repeat) 组合，
+      图像路径与视频路径（含容量降档）的产物均可验证，历史产物保持兼容。
 
     Args:
         image_np: 待验证的图像。
@@ -390,14 +424,17 @@ def verify_watermark(image_np: np.ndarray, *, expected_length: int = 2048) -> bo
     Returns:
         bool: True 表示检测到可信水印。
     """
-    try:
-        extracted = extract_watermark(image_np, expected_length=expected_length)
-        if not extracted:
-            return False
-        key = _load_secret_key()
-        if key is not None:
-            return _verify_signature(extracted, key) is not None
-        return "SeedVR2" in extracted
-    except Exception as e:
-        logger.debug(f"水印验证失败: {e}")
-        return False
+    key = _load_secret_key()
+    for alpha, repeat in _VERIFY_SCHEMES:
+        try:
+            extracted = extract_watermark(image_np, expected_length=expected_length, alpha=alpha, repeat=repeat)
+            if not extracted:
+                continue
+            if key is not None:
+                if _verify_signature(extracted, key) is not None:
+                    return True
+            elif "SeedVR2" in extracted:
+                return True
+        except Exception as e:
+            logger.debug(f"水印验证失败 (alpha={alpha}, repeat={repeat}): {e}")
+    return False
