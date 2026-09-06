@@ -18,7 +18,7 @@ import pytest
 from app.integrated_app.exceptions import DiskSpaceError
 from app.integrated_app.history_db import HistoryDB, HistoryRecord
 from app.integrated_app.routes.restore.common import ensure_disk_space
-from app.integrated_app.services.output_retention import cleanup_outputs_once
+from app.integrated_app.services.output_retention import cleanup_outputs_once, cleanup_uploads_once
 
 
 def _make_file(path: str, mtime: float | None = None) -> None:
@@ -92,6 +92,97 @@ class TestCleanupOutputsOnce:
         removed, freed = cleanup_outputs_once(str(tmp_path / "nonexistent"), max_age_days=14, max_files=0)
         assert removed == 0
         assert freed == 0
+
+
+class TestCleanupUploadsOnce:
+    """data/uploads/ 留存策略清理（数据治理 P0-1）。
+
+    验收标准：原始上传按 uploads_max_age_days 判龄；restored/ 成品子树与
+    outputs 同策略单独判龄；.gitkeep 豁免；禁用时零操作；目录缺失零操作。
+    """
+
+    def test_disabled_when_both_rules_zero(self, tmp_path):
+        _make_file(str(tmp_path / "image" / "a.jpg"))
+        removed, _freed = cleanup_uploads_once(str(tmp_path), uploads_max_age_days=0, restored_max_age_days=0)
+        assert removed == 0
+        assert (tmp_path / "image" / "a.jpg").exists()
+
+    def test_age_rule_removes_only_old_uploads(self, tmp_path):
+        now = time.time()
+        old_upload = tmp_path / "image" / "old.jpg"
+        fresh_upload = tmp_path / "video" / "new.mp4"
+        _make_file(str(old_upload), mtime=now - 10 * 86400)
+        _make_file(str(fresh_upload), mtime=now)
+
+        removed, freed = cleanup_uploads_once(str(tmp_path), uploads_max_age_days=7, restored_max_age_days=14)
+
+        assert removed == 1
+        assert freed == 128
+        assert not old_upload.exists()
+        assert fresh_upload.exists()
+
+    def test_restored_subtree_uses_outputs_age(self, tmp_path):
+        """restored/ 成品子树按 outputs 策略（14 天）判龄，而非 uploads 的 7 天。"""
+        now = time.time()
+        raw_expired = tmp_path / "image" / "raw_old.jpg"  # 10 天前，超 uploads 7 天 → 删
+        restored_keep = tmp_path / "image" / "restored" / "mid.png"  # 10 天前，未超 outputs 14 天 → 留
+        restored_expired = tmp_path / "restored" / "very_old.png"  # 20 天前，超 14 天 → 删
+        _make_file(str(raw_expired), mtime=now - 10 * 86400)
+        _make_file(str(restored_keep), mtime=now - 10 * 86400)
+        _make_file(str(restored_expired), mtime=now - 20 * 86400)
+
+        removed, _freed = cleanup_uploads_once(str(tmp_path), uploads_max_age_days=7, restored_max_age_days=14)
+
+        assert removed == 2
+        assert not raw_expired.exists()
+        assert restored_keep.exists()
+        assert not restored_expired.exists()
+
+    def test_restored_subtree_untouched_when_restored_rule_disabled(self, tmp_path):
+        """outputs 策略禁用（restored_max_age_days=0）时，restored/ 成品不被 uploads 规则误删。"""
+        now = time.time()
+        restored_old = tmp_path / "image" / "restored" / "old.png"
+        _make_file(str(restored_old), mtime=now - 30 * 86400)
+
+        removed, _freed = cleanup_uploads_once(str(tmp_path), uploads_max_age_days=7, restored_max_age_days=0)
+
+        assert removed == 0
+        assert restored_old.exists()
+
+    def test_gitkeep_exempt(self, tmp_path):
+        now = time.time()
+        keep = tmp_path / "image" / ".gitkeep"
+        _make_file(str(keep), mtime=now - 365 * 86400)
+
+        cleanup_uploads_once(str(tmp_path), uploads_max_age_days=7, restored_max_age_days=14)
+
+        assert keep.exists()
+
+    def test_missing_dir_is_noop(self, tmp_path):
+        removed, freed = cleanup_uploads_once(str(tmp_path / "nonexistent"), uploads_max_age_days=7)
+        assert removed == 0
+        assert freed == 0
+
+
+class TestRetentionConfigUploads:
+    """uploads_max_age_days 配置契约（数据治理 P0-1）。"""
+
+    def test_default_is_shorter_than_outputs(self):
+        from app.integrated_app.config_models import RetentionConfig
+
+        cfg = RetentionConfig()
+        # 原始上传比修复产物更隐私敏感：默认留存必须短于 outputs
+        assert cfg.uploads_max_age_days == 7
+        assert cfg.uploads_max_age_days < cfg.outputs_max_age_days
+
+    def test_zero_disables_and_rejects_negative(self):
+        from pydantic import ValidationError
+
+        from app.integrated_app.config_models import RetentionConfig
+
+        assert RetentionConfig(uploads_max_age_days=0).uploads_max_age_days == 0
+        with pytest.raises(ValidationError):
+            RetentionConfig(uploads_max_age_days=-1)
 
 
 @pytest.mark.asyncio

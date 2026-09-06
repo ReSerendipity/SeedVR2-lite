@@ -259,6 +259,7 @@
     "batch_mode": "一括処理",
     "readonly_param_tip": "推奨値のため変更できません",
     "optimized_params": "最適化済み",
+    "vae_tiling_tier_hint": "現在のVRAM {gb}GB → VAEタイル推奨: tile {size} / overlap {overlap}",
     "tip_swap_io": "有効にするとモデル重みを必要に応じて VRAM とメモリ間で入れ替え、ピーク VRAM を大幅に抑えられますが、速度は若干低下します。VRAM がモデル容量より小さい場合は有効のままを推奨します。",
     "tip_cache_model": "有効にするとタスク間で読み込んだモデルを再利用して後続タスクを高速化しますがVRAMを消費します。無効の場合は各タスク後に解放します",
     "tip_tiled_encode": "分割エンコードを有効化：大图をブロックに分けて符号化し、一度の VRAM 使用量を抑えます。基本はオンのままで構いません。高解像度かつ VRAM に余裕がある場合のみオフがやや速くなることがあります。",

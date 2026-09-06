@@ -909,7 +909,11 @@ class UserPreferences:
     # 性能偏好
     blockswap_enabled: bool = False
     blocks_to_swap: int = 0
-    vae_tiling_enabled: bool = False
+    # VAE 分块编码偏好：作为修复页 encode_tiled 的默认值（解锁该参数组后可改）。
+    # 语义与引擎侧对齐（成本治理 P1-3）：引擎 tiled VAE 默认开启且带
+    # OOM 自动降档回退（_vae_pipeline.py），因此本偏好默认 True；
+    # 历史 False 默认只是面板展示值、从未接入链路（死字段），2026-09-06 复活。
+    vae_tiling_enabled: bool = True
     vae_tile_size: int = 512
 
     # 最近使用的模型路径

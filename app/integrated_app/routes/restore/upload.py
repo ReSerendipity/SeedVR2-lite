@@ -16,6 +16,7 @@ API 端点：
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import re
@@ -37,6 +38,7 @@ from app.integrated_app.dependencies import (
     get_model_manager,
     get_task_queue,
 )
+from app.integrated_app.exceptions import TaskQueueFullError
 from app.integrated_app.gpu_backend import gpu_manager
 from app.integrated_app.history_db import HistoryDB, HistoryRecord
 from app.integrated_app.model_manager import ModelManager
@@ -47,7 +49,9 @@ from app.integrated_app.services.restore_service import (
     model_size_from_dit_model,
     process_image_task,
     process_video_task,
+    vram_preflight_gate,
 )
+from app.integrated_app.spec import precision_from_dit_model
 from app.integrated_app.task_queue import TaskQueue
 from app.integrated_app.utils.hashing import compute_file_sha256
 from app.integrated_app.utils.response import respond_success
@@ -57,6 +61,35 @@ router = APIRouter(prefix="/api/restore", tags=["修复"])
 
 # P1-4：客户端幂等键合法格式（字母/数字/下划线/点/连字符，≤64 字符）
 _IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+
+
+def _lineage_parameters(params_json: str, task_type: str) -> str:
+    """任务参数 JSON 注入 ffmpeg 版本血缘（数据治理 P1-2）。
+
+    仅视频任务注入（图像链路不经过 ffmpeg）；ffmpeg 不可用时保持
+    原参数 JSON——血缘缺失可接受，绝不影响任务提交。
+
+    Args:
+        params_json: 参数模型序列化 JSON。
+        task_type: 任务类型（"image"/"video"）。
+
+    Returns:
+        注入 ffmpeg_version 后的 JSON 字符串（或原串）。
+    """
+    if task_type != "video":
+        return params_json
+    try:
+        from app.integrated_app.video_processor import get_ffmpeg_version
+
+        version = get_ffmpeg_version()
+        if not version:
+            return params_json
+        data = json.loads(params_json)
+        data["ffmpeg_version"] = version
+        return json.dumps(data, ensure_ascii=False)
+    except (ValueError, TypeError, ImportError) as e:
+        logger.debug(f"ffmpeg 版本血缘注入跳过: {e}")
+        return params_json
 
 
 def _resolve_idempotency_key(request: Request, form_key: str | None) -> str | None:
@@ -280,6 +313,20 @@ async def upload_and_restore(
 
     dit_model = raw_params.dit_model
     use_model_size = model_size_from_dit_model(dit_model)
+
+    # ============== 显存预检门禁（成本治理 P1-2） ==============
+    # 提交前估算所选配置的显存需求：超过可用预算直接拒绝（InsufficientVramError
+    # → 全局处理器 503，消息含降档建议），避免任务入队白跑数分钟后 OOM；
+    # medium 风险放行但把 warning 返回给前端并写入任务状态缓存
+    vram_preflight = vram_preflight_gate(
+        config,
+        use_model_size,
+        precision_from_dit_model(dit_model) or (config.get("model", {}) or {}).get("default_precision", "fp16"),
+        input_path,
+        task_type,
+    )
+    vram_warning = (vram_preflight or {}).get("warning", "")
+
     params: ImageRestoreParams | VideoRestoreParams
     if task_type == "image":
         image_fields = {k: v for k, v in raw_params.model_dump().items() if k in ImageRestoreParams.model_fields}
@@ -303,30 +350,39 @@ async def upload_and_restore(
         input_file=input_path,
         model_size=use_model_size,
         status="pending",
-        parameters=params.model_dump_json(),
+        parameters=_lineage_parameters(params.model_dump_json(), task_type),
         input_sha256=input_sha256,
     )
     record_id = await history_db.add_record(record)
     await common.create_task_state(task_id, record_id, history_db, task_type=task_type)
+    if vram_warning:
+        # medium 风险提示：仅写缓存（DB 白名单不含 warning），随进度查询/SSE 透出
+        common.get_task_cache().update(task_id, vram_warning=vram_warning)
     engine = model_registry.get_engine()
     on_cancel = engine.request_cancel if engine else None
 
-    if task_type == "image":
-        img_params = params if isinstance(params, ImageRestoreParams) else ImageRestoreParams()
-        await task_queue.submit(
-            task_id,
-            lambda: process_image_task(task_id, record_id, input_path, img_params, history_db, task_queue),
-            on_cancel=on_cancel,
-        )
-    else:
-        vid_params = params if isinstance(params, VideoRestoreParams) else VideoRestoreParams()
-        await task_queue.submit(
-            task_id,
-            lambda: process_video_task(
-                task_id, record_id, input_path, use_model_size, vid_params, history_db, task_queue
-            ),
-            on_cancel=on_cancel,
-        )
+    try:
+        if task_type == "image":
+            img_params = params if isinstance(params, ImageRestoreParams) else ImageRestoreParams()
+            await task_queue.submit(
+                task_id,
+                lambda: process_image_task(task_id, record_id, input_path, img_params, history_db, task_queue),
+                on_cancel=on_cancel,
+            )
+        else:
+            vid_params = params if isinstance(params, VideoRestoreParams) else VideoRestoreParams()
+            await task_queue.submit(
+                task_id,
+                lambda: process_video_task(
+                    task_id, record_id, input_path, use_model_size, vid_params, history_db, task_queue
+                ),
+                on_cancel=on_cancel,
+            )
+    except TaskQueueFullError as e:
+        # 评估 P2-1：队列满快速拒绝。任务未入队，回写失败账目避免残留 pending/processing 态
+        await common.update_task_state(task_id, history_db, status="failed", error_message=e.message)
+        await history_db.update_record(record_id, status="failed", error_message=e.message)
+        raise common.queue_full_rejection(e) from e
 
     return respond_success(
         {
@@ -334,6 +390,7 @@ async def upload_and_restore(
             "record_id": record_id,
             "task_type": task_type,
             "status": "pending",
+            "vram_warning": vram_warning,
             "message": "修复任务已创建并加入队列",
         }
     )

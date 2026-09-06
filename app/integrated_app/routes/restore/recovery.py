@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from app.integrated_app.config_models import ImageRestoreParams, VideoRestoreParams
+from app.integrated_app.exceptions import TaskQueueFullError
 from app.integrated_app.history_db import HistoryDB
 from app.integrated_app.model_registry import model_registry
 from app.integrated_app.routes.restore import common
@@ -96,15 +97,36 @@ async def recover_tasks(
                     t.task_id, r.id, r.input_file, p, history_db, task_queue
                 )
             )
-            await task_queue.submit(task_record.task_id, image_task, on_cancel=on_cancel)
+            try:
+                await task_queue.submit(task_record.task_id, image_task, on_cancel=on_cancel)
+            except TaskQueueFullError as e:
+                # 评估 P2-1：启动恢复遇队列满时停止恢复并回写失败账目，
+                # 剩余任务留待下次重启恢复（避免 pending 状态悬空）
+                logger.warning(f"恢复任务时队列已满，停止恢复（剩余任务保留 pending）: {e.message}")
+                await common.update_task_state(
+                    task_record.task_id, history_db, status="failed", error_message=e.message
+                )
+                await history_db.update_record(record.id, status="failed", error_message=e.message)
+                break
         else:
             p_vid: VideoRestoreParams = params  # type: ignore[assignment]
+            # 评估 P2-6：恢复任务启用段级帧续跑。恢复发生在启动期、任何新任务
+            # 提交之前，任务隔离帧目录 _frames_<task_id> 内的段帧必属本任务
+            # 崩溃前运行，跳过已完成段可把恢复成本从整条重跑降为剩余段
             video_task = (  # type: ignore[misc]  # mypy cannot infer lambda type with complex defaults  # noqa: E731
                 lambda t=task_record, r=record, p=p_vid, m=use_model_size, h=history_db, q=task_queue: process_video_task(
-                    t.task_id, r.id, r.input_file, m, p, h, q
+                    t.task_id, r.id, r.input_file, m, p, h, q, resume_frames=True
                 )
             )
-            await task_queue.submit(task_record.task_id, video_task, on_cancel=on_cancel)
+            try:
+                await task_queue.submit(task_record.task_id, video_task, on_cancel=on_cancel)
+            except TaskQueueFullError as e:
+                logger.warning(f"恢复任务时队列已满，停止恢复（剩余任务保留 pending）: {e.message}")
+                await common.update_task_state(
+                    task_record.task_id, history_db, status="failed", error_message=e.message
+                )
+                await history_db.update_record(record.id, status="failed", error_message=e.message)
+                break
         recovered += 1
     return recovered
 

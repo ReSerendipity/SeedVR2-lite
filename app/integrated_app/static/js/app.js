@@ -99,6 +99,7 @@ const SeedVR2 = (() => {
             'status.pending': '等待中',
             'restore.processing': '处理中...',
             'restore.completed': '修复完成',
+            'restore.vae_tiling_tier_hint': '当前显存 {gb}GB → VAE 分块推荐: tile {size} / overlap {overlap}',
             'restore.failed': '修复失败',
             'status.completed': '已完成',
             'status.failed': '失败',
@@ -155,6 +156,7 @@ const SeedVR2 = (() => {
             'status.pending': 'Pending',
             'restore.processing': 'Processing...',
             'restore.completed': 'Restore completed',
+            'restore.vae_tiling_tier_hint': 'VRAM {gb}GB available → recommended VAE tiling: tile {size} / overlap {overlap}',
             'restore.failed': 'Restore failed',
             'status.completed': 'Completed',
             'status.failed': 'Failed',
@@ -211,6 +213,7 @@ const SeedVR2 = (() => {
             'status.pending': '待機中',
             'restore.processing': '処理中...',
             'restore.completed': '修復完了',
+            'restore.vae_tiling_tier_hint': '現在のVRAM {gb}GB → VAEタイル推奨: tile {size} / overlap {overlap}',
             'restore.failed': '修復失敗',
             'status.completed': '完了',
             'status.failed': '失敗',
@@ -267,6 +270,7 @@ const SeedVR2 = (() => {
             'status.pending': 'En attente',
             'restore.processing': 'Traitement...',
             'restore.completed': 'Restauration terminée',
+            'restore.vae_tiling_tier_hint': 'VRAM {gb}GB dispo → tuilage VAE recommandé : tile {size} / overlap {overlap}',
             'restore.failed': 'Échec de la restauration',
             'status.completed': 'Terminé',
             'status.failed': 'Échoué',
@@ -967,6 +971,17 @@ const SeedVR2 = (() => {
                 updateStatusFromEvent(data);
             } catch (err) {
                 console.debug('SSE model_status parse error:', err);
+            }
+        });
+
+        // 系统通知事件（成本治理 P1-1：磁盘水位触发的输出清理等全局告警）
+        globalEventSource.addEventListener('system_notice', (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                const level = data.level === 'warning' ? 'warning' : 'info';
+                toast(data.message || t('system.notice') || 'System notice', level, 10000);
+            } catch (err) {
+                console.debug('SSE system_notice parse error:', err);
             }
         });
 

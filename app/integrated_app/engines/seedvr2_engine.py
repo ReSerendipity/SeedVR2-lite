@@ -22,6 +22,7 @@
 注意: SeedVR2 模型仅支持 NVIDIA CUDA GPU 推理，不支持 CPU 推理。
 """
 
+import asyncio
 import contextlib
 import gc
 import json
@@ -311,7 +312,10 @@ class SeedVR2Engine(
             # SHA256 完整性校验 (CWE-353 防御) — 在加载前验证权重文件哈希
             from app.integrated_app.security.integrity_check import verify_model_files
 
-            integrity_results = verify_model_files(pretrained_root_path, model_cfg, precision)
+            # 权重哈希对多 GB 文件耗时秒级（7B 可达数十秒），必须入线程池执行：
+            # 同步跑在事件循环上会阻塞全部请求，实测 3B mxfp8 阻塞 ping 4s+，
+            # 7B 可打爆 Docker HEALTHCHECK --timeout=5s 导致容器被判 unhealthy（评估 P1-1）
+            integrity_results = await asyncio.to_thread(verify_model_files, pretrained_root_path, model_cfg, precision)
             failed_checks = [k for k, v in integrity_results.items() if not v]
             if failed_checks:
                 raise RuntimeError(
@@ -543,6 +547,12 @@ class SeedVR2Engine(
                 "cache_model",
                 inf_cfg.get("cache_model", False),
             ),
+            # 帧级断点续跑（成本治理 P2）：重试场景复用上一轮已完整写盘的段帧，
+            # 仅 OOM 降级重试路径由编排层显式传入，全新任务恒为 False
+            "resume_frames": kwargs.get("resume_frames", False),
+            # 任务级帧目录覆写（评估 P2-6）：编排层传入 _frames_<task_id> 实现任务隔离，
+            # 消除共享 _frames 目录的跨任务帧污染，使崩溃恢复/重试的段级续跑安全
+            "frames_dir_override": kwargs.get("frames_dir_override", ""),
             # torch.compile 配置 (官方 SeedVR2 Torch Compile Settings 节点)
             "torch_compile": kwargs.get(
                 "torch_compile",

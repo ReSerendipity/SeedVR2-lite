@@ -353,7 +353,7 @@
                 <div class="sv-adv-locked-group">
                     <div class="sv-adv-locked-header">{{ t('restore.optimized_params') }}</div>
                     <div class="sv-param-group">
-                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_swap_io') }}"
+                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_swap_io') }}">
                             <input type="checkbox" name="swap_io_components" checked disabled>
                             <input type="hidden" name="swap_io_components" value="true">
                             <span>{{ t('video.swap_io_components') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
@@ -382,19 +382,21 @@
                     <input type="number" class="sv-param-input" id="decodeTileOverlap" name="decode_tile_overlap" value="512" min="0">
                 </div>
                 <div class="sv-adv-locked-group">
-                    <div class="sv-adv-locked-header">{{ t('restore.optimized_params') }}</div>
+                    <div class="sv-adv-locked-header">{{ t('restore.optimized_params') }}
+                        <span id="vaeTilingTierHint" class="sv-text-xs sv-text-muted" style="margin-left:8px;font-weight:400"></span>
+                    </div>
                     <div class="sv-param-group sv-param-checks-row">
-                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_tiled_encode') }}"
+                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_tiled_encode') }}">
                             <input type="checkbox" name="encode_tiled" checked disabled>
                             <input type="hidden" name="encode_tiled" value="true">
                             <span>{{ t('video.encode_tiled') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
                         </label>
-                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_tiled_decode') }}"
+                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_tiled_decode') }}">
                             <input type="checkbox" name="decode_tiled" checked disabled>
                             <input type="hidden" name="decode_tiled" value="true">
                             <span>{{ t('video.decode_tiled') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
                         </label>
-                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_tile_debug') }}"
+                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_tile_debug') }}">
                             <input type="checkbox" name="tile_debug" value="true" disabled>
                             <input type="hidden" name="tile_debug" value="false">
                             <span>{{ t('video.tile_debug') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
@@ -411,7 +413,7 @@
                 <div class="sv-adv-locked-group">
                     <div class="sv-adv-locked-header">{{ t('restore.optimized_params') }}</div>
                     <div class="sv-param-group">
-                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_uniform_batch') }}"
+                        <label class="sv-param-check" data-tooltip="{{ t('restore.tip_uniform_batch') }}">
                             <input type="checkbox" name="uniform_batch_size" checked disabled>
                             <input type="hidden" name="uniform_batch_size" value="true">
                             <span>{{ t('video.uniform_batch_size') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
@@ -431,7 +433,7 @@
                     <input type="hidden" name="latent_noise_scale" value="0.0">
                 </div>
                 <div class="sv-param-group">
-                    <label class="sv-param-check" data-tooltip="{{ t('restore.tip_debug_mode') }}"
+                    <label class="sv-param-check" data-tooltip="{{ t('restore.tip_debug_mode') }}">
                         <input type="checkbox" name="enable_debug" disabled>
                         <input type="hidden" name="enable_debug" value="false">
                         <span>{{ t('video.debug_mode') }} <i class="bi bi-lock-fill sv-text-xs sv-text-muted" title="{{ t('status.lock_hint_lock') }}"></i></span>
@@ -1577,6 +1579,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 { loadingText: I['restore.processing'] || 'Processing...' }
             );
             const taskData = (res && res.success && res.data) ? res.data : res;
+            if (taskData && taskData.vram_warning) {
+                // 显存预检 medium 风险提示（成本治理 P1-2）：任务已接受但推理可能明显变慢
+                SeedVR2.toast(taskData.vram_warning, 'warning', 10000);
+            }
             if (taskData && taskData.task_id) {
                 // 立即设置当前任务ID，供取消按钮使用
                 currentTaskId = taskData.task_id;
@@ -1647,6 +1653,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         { loadingText: I['common.processing'] || 'Processing...' }
                     );
                     const batchData = data.data || data;
+                    if (batchData.vram_warning) {
+                        // 显存预检 medium 风险提示（成本治理 P1-2）：任务已接受但推理可能明显变慢
+                        SeedVR2.toast(batchData.vram_warning, 'warning', 10000);
+                    }
                     currentBatchId = batchData.batch_id;
                     SeedVR2.saveRestoreSession({
                         taskId: 'batch_' + batchData.batch_id,
@@ -2318,6 +2328,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (legacy.default_color_correction) values.color_correction = legacy.default_color_correction;
                         if (legacy.default_batch_size != null) values.batch_size = legacy.default_batch_size;
                         if (legacy.vae_tile_size != null) values.encode_tile_size = legacy.vae_tile_size;
+                        // VAE 分块偏好（成本治理 P1-3）：历史死字段复活，迁移到表单 encode_tiled。
+                        // 仅覆盖值为 false 的旧偏好（true 与表单锁定默认一致，避免无谓改写）
+                        if (legacy.vae_tiling_enabled === false) values.encode_tiled = false;
                         if (legacy.default_max_resolution != null) values.max_resolution = legacy.default_max_resolution;
                     }
                 } catch (_) { /* ignore legacy migration */ }
@@ -2341,8 +2354,43 @@ document.addEventListener('DOMContentLoaded', () => {
                 syncResolutionUI({});
             }
 
+            // 7. VAE 分块生效档位提示（成本治理 P1-3）：按当前可用显存展示引擎推荐档位
+            _showVaeTilingTierHint();
+
         } catch (e) {
             console.debug('应用修复页偏好失败:', e);
+        }
+    }
+
+    /**
+     * @function _showVaeTilingTierHint
+     * @description 调用 recommend-params 按当前可用显存（mem_get_info）展示
+     *              VAE 分块推荐档位，让「当前生效值」在 UI 可见（引擎侧
+     *              tiled VAE 默认开启 + auto_tile_size 自动适配 + OOM 回退）。
+     *              获取失败静默跳过，不影响页面功能。
+     */
+    async function _showVaeTilingTierHint() {
+        const el = document.getElementById('vaeTilingTierHint');
+        if (!el || !SeedVR2 || !SeedVR2.api || typeof SeedVR2.api.get !== 'function') return;
+        try {
+            const ditModel = document.querySelector('#paramsSidebar [name="dit_model"]')?.value || '3b_fp16';
+            const modelName = ditModel.includes('sharp') ? '7b-sharp' : String(ditModel).split('_')[0];
+            const resInput = document.getElementById('resolution');
+            const res = parseInt(resInput && resInput.value, 10) || 2048;
+            const resp = await SeedVR2.api.get(
+                '/api/system/gpu/recommend-params?model_name=' + encodeURIComponent(modelName)
+                + '&width=' + res + '&height=' + res
+            );
+            const rec = (resp && resp.success && resp.data) ? resp.data : null;
+            if (!rec) return;
+            const tpl = I['restore.vae_tiling_tier_hint']
+                || '当前显存 {gb}GB → VAE 分块推荐: tile {size} / overlap {overlap}';
+            el.textContent = String(tpl)
+                .replace('{gb}', rec.available_vram_gb)
+                .replace('{size}', rec.tile_size)
+                .replace('{overlap}', rec.vram_tile_overlap);
+        } catch (e) {
+            console.debug('VAE 分块档位提示获取失败（静默忽略）:', e);
         }
     }
 

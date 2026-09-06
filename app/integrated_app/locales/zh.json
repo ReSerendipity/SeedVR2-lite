@@ -264,6 +264,7 @@
     "batch_mode": "批量修复",
     "readonly_param_tip": "此参数为推荐值，暂不支持修改",
     "optimized_params": "优化参数",
+    "vae_tiling_tier_hint": "当前显存 {gb}GB → VAE 分块推荐: tile {size} / overlap {overlap}",
     "tip_swap_io": "启用后，模型权重会按需在显存与内存之间交换，可显著降低峰值显存占用，换取少量速度损失。显存小于模型体积时强烈建议保持开启。",
     "tip_cache_model": "开启后在任务间复用已加载模型，加快后续任务但占用显存；关闭则每次任务结束后释放",
     "tip_tiled_encode": "开启分块编码：把大图切成小块再编码，避免单次显存占用过高。保持开启即可；仅在大分辨率且显存充裕时关闭可能略快。",

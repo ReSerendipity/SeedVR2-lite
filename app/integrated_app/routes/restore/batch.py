@@ -34,6 +34,7 @@ from app.integrated_app.dependencies import (
     get_model_manager,
     get_task_queue,
 )
+from app.integrated_app.exceptions import TaskQueueFullError
 from app.integrated_app.gpu_backend import gpu_manager
 from app.integrated_app.history_db import HistoryDB
 from app.integrated_app.model_manager import ModelManager
@@ -42,7 +43,9 @@ from app.integrated_app.routes.restore import common
 from app.integrated_app.services.restore_service import (
     model_size_from_dit_model,
     process_batch_background,
+    vram_preflight_gate,
 )
+from app.integrated_app.spec import precision_from_dit_model
 from app.integrated_app.task_queue import TaskQueue
 from app.integrated_app.utils.response import respond_success
 
@@ -191,6 +194,19 @@ async def batch_restore_from_folder(
     dit_model = raw_params.dit_model
     use_model_size = model_size_from_dit_model(dit_model)
 
+    # ============== 显存预检门禁（成本治理 P1-2） ==============
+    # 以首个文件为代表估算显存需求（批量内 OOM 差异由运行期批级降级重试兜底）：
+    # 超预算直接拒绝（InsufficientVramError → 全局处理器 503，消息含降档建议），
+    # medium 风险放行但把 warning 返回给前端并写入批量任务状态缓存
+    vram_preflight = vram_preflight_gate(
+        config,
+        use_model_size,
+        precision_from_dit_model(dit_model) or (config.get("model", {}) or {}).get("default_precision", "fp16"),
+        media_files[0][0],
+        actual_type,
+    )
+    vram_warning = (vram_preflight or {}).get("warning", "")
+
     params: ImageRestoreParams | VideoRestoreParams
     if actual_type == "image":
         image_fields = {k: v for k, v in raw_params.model_dump().items() if k in ImageRestoreParams.model_fields}
@@ -227,6 +243,7 @@ async def batch_restore_from_folder(
             "results": batch_results,
             "config": task_config,
             "use_model_size": use_model_size,
+            "vram_warning": vram_warning,
         },
     )
     await common.update_task_state(batch_id, history_db, status="processing")
@@ -236,27 +253,33 @@ async def batch_restore_from_folder(
     paths_only = [p for p, _ in media_files]
     # 传递两倍模式配置
     double_res_flag = raw_params.double_res
-    await task_queue.submit(
-        batch_id,
-        lambda: process_batch_background(
+    try:
+        await task_queue.submit(
             batch_id,
-            paths_only,
-            actual_type,
-            task_config,
-            use_model_size,
-            history_db,
-            task_queue,
-            config,
-            double_res=double_res_flag,
-        ),
-        on_cancel=on_cancel,
-    )
+            lambda: process_batch_background(
+                batch_id,
+                paths_only,
+                actual_type,
+                task_config,
+                use_model_size,
+                history_db,
+                task_queue,
+                config,
+                double_res=double_res_flag,
+            ),
+            on_cancel=on_cancel,
+        )
+    except TaskQueueFullError as e:
+        # 评估 P2-1：队列满快速拒绝。批量任务未入队，回写失败账目避免残留 processing 态
+        await common.update_task_state(batch_id, history_db, status="failed", error_message=e.message)
+        raise common.queue_full_rejection(e) from e
 
     return respond_success(
         {
             "batch_id": batch_id,
             "total": len(media_files),
             "media_type": actual_type,
+            "vram_warning": vram_warning,
             "status": "processing",
         }
     )
@@ -448,22 +471,31 @@ async def retry_failed_batch(
 
     engine = model_registry.get_engine()
     on_cancel = engine.request_cancel if engine else None
-    await task_queue.submit(
-        batch_id,
-        lambda: process_batch_background(
+    try:
+        await task_queue.submit(
             batch_id,
-            retry_files,
-            media_type,
-            task_config,
-            use_model_size,
-            history_db,
-            task_queue,
-            config,
-            results_to_update=retry_results,
-            double_res=double_res_flag,
-        ),
-        on_cancel=on_cancel,
-    )
+            lambda: process_batch_background(
+                batch_id,
+                retry_files,
+                media_type,
+                task_config,
+                use_model_size,
+                history_db,
+                task_queue,
+                config,
+                results_to_update=retry_results,
+                double_res=double_res_flag,
+            ),
+            on_cancel=on_cancel,
+        )
+    except TaskQueueFullError as e:
+        # 评估 P2-1：队列满快速拒绝。重试未入队，把已重置为 pending 的条目
+        # 恢复为 failed，缓存状态回退 completed，保持与 DB 账目一致
+        for _i, r in failed_items:
+            r["status"] = "failed"
+            r["error"] = e.message
+        common.get_task_cache().update(batch_id, status="completed", failed=len(failed_items))
+        raise common.queue_full_rejection(e) from e
 
     return respond_success(
         {

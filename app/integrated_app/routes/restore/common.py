@@ -25,6 +25,7 @@ from collections.abc import Sequence
 from fastapi import Form, HTTPException
 
 from app.integrated_app.config_models import UnifiedRestoreParams
+from app.integrated_app.exceptions import TaskQueueFullError
 from app.integrated_app.model_registry import model_registry
 from app.integrated_app.security.magic_check import validate_upload_magic
 from app.integrated_app.services.restore_service import (  # noqa: F401 — 再导出保持兼容
@@ -53,6 +54,22 @@ MAX_VIDEO_SIZE = 500 * 1024 * 1024
 MAX_RETRIES = 2
 
 logger = logging.getLogger(__name__)
+
+
+def queue_full_rejection(exc: TaskQueueFullError) -> HTTPException:
+    """TaskQueueFullError → HTTP 503 + Retry-After（提交类路由统一转换，评估 P2-1）。
+
+    Args:
+        exc: 任务队列已满领域异常。
+
+    Returns:
+        HTTPException: 携带 Retry-After 头的 503 响应异常。
+    """
+    return HTTPException(
+        status_code=503,
+        detail=exc.message,
+        headers={"Retry-After": "5"},
+    )
 
 
 async def ensure_model_loaded(model_manager, dit_model: str = "") -> None:

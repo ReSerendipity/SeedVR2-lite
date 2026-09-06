@@ -31,8 +31,10 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-# Runtime is the bundled WinPython 3.12 (see docs/CONSTRAINTS.md). Keep ruff /
-# black / mypy target versions aligned with this value to avoid tool drift.
+# Runtime uses the project-local .venv created by install.bat / install.sh (unified
+# with start.bat / precheck.ps1; bundled WinPython kept as legacy fallback - see
+# docs/project/CONSTRAINTS.md). Keep ruff / black / mypy target versions aligned
+# with this value to avoid tool drift.
 # 上界 <3.15：uv 需对区间内所有 Python 版本做通用解析，未发布的 3.15 无
 # torchaudio 轮子会导致解析不可满足（2026-08-30 Dependabot 重锁时发现）。
 requires-python = ">=3.12,<3.15"
@@ -94,8 +96,9 @@ dev = [
 # ── uv 配置 ────────────────────────────────────────────────────────────────
 # `uv sync` 即可安装全部运行依赖（默认含 dev 组）。
 # torch 系列从 cu132 源安装（与 install.bat 自动探测结果、requirements-lock.txt、
-# 本机运行环境 torch 2.13.0+cu132 三处一致；cu128 源最高只有 torch 2.11.0，
-# 已被 Dependabot 标记漏洞告警 ≤2.12.1，2026-08-30 对齐）。
+# 本机运行环境 torch 2.13.0+cu132 三处一致）。2026-09-06 起便携包交付轨也统一到
+# cu132（build_portable_bundle.ps1 同参数），双轨分叉消除；torch ≤2.12.1 曾被
+# Dependabot 标记漏洞告警，2.13.0 已在其之上。
 [[tool.uv.index]]
 name = "pytorch-cu132"
 url = "https://download.pytorch.org/whl/cu132"
@@ -132,7 +135,7 @@ ignore = ["E501", "B008", "SIM108"]
 "common/utils.py" = ["N812"]
 "app/integrated_app/optimization/**" = ["N801", "N802", "N803", "N806", "N812", "A001", "A002"]
 "app/clean_launch.py" = ["N806"]
-"data/image/**" = ["N802", "N812"]
+"data/test/image/**" = ["N802", "N812"]
 # Test module groups imports into commented sections by concern.
 "tests/test_refactor_e4_b2.py" = ["E402"]
 # Smoke-test script must set sys.path before importing project modules.

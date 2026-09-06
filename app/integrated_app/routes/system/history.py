@@ -9,7 +9,8 @@ API 端点：
 - GET /api/system/history: 获取历史记录列表（JSON）
 - GET /api/system/history/statistics: 获取历史统计数据
 - GET /api/system/history/resolve: 输出 → 任务反查（数据治理 P3-1）
-- DELETE /api/system/history/{record_id}: 删除单条历史记录
+- DELETE /api/system/history/{record_id}: 删除单条历史记录（连带清理输出文件与断点 JSON）
+- POST /api/system/history/{record_id}/pin: 标记/取消保留（retention 清理豁免）
 - POST /api/system/history/{record_id}/cancel: 取消关联的进行中任务
 - DELETE /api/system/history: 批量清除历史记录
 
@@ -18,18 +19,70 @@ API 端点：
 所属项目：SeedVR2 (SeedVR2 视频/图像修复工具)
 """
 
+import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
+from app.integrated_app.checkpoint import TaskCheckpoint
 from app.integrated_app.dependencies import get_config, get_history_db, get_task_queue
-from app.integrated_app.history_db import HistoryDB
+from app.integrated_app.history_db import HistoryDB, HistoryRecord
 from app.integrated_app.security.path_guard import build_default_path_guard
 from app.integrated_app.task_queue import TaskQueue
 from app.integrated_app.utils.response import respond_success
 
 router = APIRouter(prefix="/api/system/history", tags=["历史记录"])
+
+logger = logging.getLogger(__name__)
+
+
+class PinRequest(BaseModel):
+    """「标记保留」请求体。"""
+
+    pinned: bool = True
+
+
+async def remove_record_artifacts(records: list[HistoryRecord], history_db: HistoryDB, config: dict) -> int:
+    """删除历史记录关联的落盘产物（数据治理 P1-1：「历史可清」的彻底性）。
+
+    - 输出文件：经 PathGuard 白名单校验后删除。不删除用户上传的原始输入
+      （可能被其他任务/记录引用），原始上传由 uploads 留存策略统一治理。
+    - 断点续跑 JSON：按 tasks 表关联的全部 task_id 回收（批量任务失败残留，
+      之前只在批量成功后清理，失败路径会永久留存）。
+
+    Args:
+        records: 待删除产物的历史记录列表。
+        history_db: 历史数据库实例（查关联 task_id）。
+        config: 应用配置（PathGuard 白名单与断点目录）。
+
+    Returns:
+        实际删除的文件数（输出文件 + 断点 JSON）。
+    """
+    removed = 0
+    allowed_dirs = config.get("runtime", {}).get("security", {}).get("allowed_base_dirs", ["outputs/", "data/uploads/"])
+    path_guard = build_default_path_guard(os.getcwd(), allowed_dirs)
+    checkpoint_dir = os.path.join(
+        os.getcwd(), config.get("runtime", {}).get("task", {}).get("checkpoint_dir", "data/checkpoints")
+    )
+    checkpoint_mgr = TaskCheckpoint(checkpoint_dir)
+
+    for record in records:
+        output_path = record.output_file
+        if output_path and os.path.exists(output_path):
+            if path_guard.is_safe_path(output_path):
+                try:
+                    os.remove(output_path)
+                    removed += 1
+                except OSError as e:
+                    logger.warning(f"删除历史记录输出文件失败 {output_path}: {e}")
+            else:
+                logger.warning(f"输出文件不在 PathGuard 白名单内，跳过删除: {output_path}")
+        for task_id in await history_db.get_task_ids_by_record_id(record.id or 0):
+            if checkpoint_mgr.remove_checkpoint(task_id):
+                removed += 1
+    return removed
 
 
 @router.get("/resolve")
@@ -232,28 +285,39 @@ async def download_history_file(
 
 
 @router.delete("/{record_id}")
-async def delete_history_record(record_id: int, history_db: HistoryDB = Depends(get_history_db)):
+async def delete_history_record(
+    record_id: int,
+    history_db: HistoryDB = Depends(get_history_db),
+    config: dict = Depends(get_config),
+):
     """删除单条历史记录。
 
     API 端点：DELETE /api/system/history/{record_id}
+
+    数据治理 P1-1：删除记录时连带清理落盘产物（输出文件经 PathGuard
+    校验后删除 + 关联任务的断点续跑 JSON），落实隐私政策「历史可清」。
 
     路径参数：
     - record_id: 历史记录 ID
 
     返回格式（JSON）：
     {
-        "success": bool
+        "success": bool,
+        "removed_files": int
     }
 
     Args:
         record_id: 要删除的记录 ID。
         history_db: 历史数据库实例（通过依赖注入）。
+        config: 应用配置（通过依赖注入）。
 
     Returns:
         包含删除结果的字典。
     """
+    record = await history_db.get_record(record_id)
     success = await history_db.delete_record(record_id)
-    return {"success": success}
+    removed_files = await remove_record_artifacts([record], history_db, config) if record else 0
+    return {"success": success, "removed_files": removed_files}
 
 
 @router.post("/{record_id}/cancel")
@@ -308,15 +372,61 @@ async def cancel_history_record(
     return {"success": True, "task_id": task.task_id, "status": "cancelled"}
 
 
+@router.post("/{record_id}/pin")
+async def pin_history_record(
+    record_id: int,
+    req: PinRequest,
+    history_db: HistoryDB = Depends(get_history_db),
+):
+    """标记/取消记录「保留」（数据治理 P1-5）。
+
+    API 端点：POST /api/system/history/{record_id}/pin
+
+    pinned 记录的输出文件被 retention 年龄/数量/水位清理豁免，
+    用于把修复结果当长期资产的用户显式排除自动删除。
+
+    请求体（JSON）：
+    {
+        "pinned": bool  // true 标记保留，false 取消标记
+    }
+
+    返回格式（JSON）：
+    {
+        "success": bool,
+        "pinned": bool
+    }
+
+    错误响应：
+    - 404: 记录不存在
+
+    Args:
+        record_id: 历史记录 ID。
+        req: 标记请求体。
+        history_db: 历史数据库实例（通过依赖注入）。
+
+    Returns:
+        标记结果。
+    """
+    record = await history_db.get_record(record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    ok = await history_db.set_record_pinned(record_id, req.pinned)
+    return {"success": ok, "pinned": req.pinned}
+
+
 @router.delete("")
 async def clear_history(
     before_date: str | None = None,
     status: str | None = None,
     history_db: HistoryDB = Depends(get_history_db),
+    config: dict = Depends(get_config),
 ):
     """批量清除历史记录。
 
     API 端点：DELETE /api/system/history
+
+    数据治理 P1-1：清除记录前先取落盘路径，删除记录后连带清理
+    输出文件（PathGuard 校验）与断点续跑 JSON。
 
     查询参数：
     - before_date (optional): 清除此日期之前的记录。
@@ -325,16 +435,20 @@ async def clear_history(
 
     返回格式（JSON）：
     {
-        "deleted_count": int
+        "deleted_count": int,
+        "removed_files": int
     }
 
     Args:
         before_date: 截止日期，可选。
         status: 按状态过滤，可选。
         history_db: 历史数据库实例。
+        config: 应用配置（通过依赖注入）。
 
     Returns:
         包含删除数量的字典。
     """
+    records = await history_db.get_records_filtered(before_date, status=status)
     count = await history_db.clear_records(before_date, status=status)
-    return {"deleted_count": count}
+    removed_files = await remove_record_artifacts(records, history_db, config)
+    return {"deleted_count": count, "removed_files": removed_files}

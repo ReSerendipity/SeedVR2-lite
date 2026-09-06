@@ -257,3 +257,84 @@ class TestRetryLoop:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q", "-p", "no:cacheprovider"])
+
+
+# ---------------------------------------------------------------------------
+# 评估 P2-2：系统内存守卫错误分类与不重试语义
+# ---------------------------------------------------------------------------
+
+
+class TestRamGuardClassification:
+    """_memory_utils 内存守卫的 MemoryError 必须归类为 RAM（不可重试）"""
+
+    def test_ram_guard_usage_message(self):
+        msg = "内存使用率 96.8% 超过阈值 95%，可用: 1.0GB / 31.7GB。必须立即终止模型！"
+        has_failure, ftype, _reason = classify_failure(message=msg)
+        assert has_failure is True
+        assert ftype == FailureType.RAM
+
+    def test_ram_guard_memory_error_exception_not_oom(self):
+        """守卫异常类名为 MemoryError（命中 OOM 关键词），RAM 判定必须先行"""
+        err = MemoryError("内存使用率 96.8% 已超过阈值 95%，无法加载 DiT (4.5GB)。可用: 1.0GB")
+        has_failure, ftype, _reason = classify_failure(error=err)
+        assert has_failure is True
+        assert ftype == FailureType.RAM
+
+    def test_plain_memory_error_still_oom(self):
+        """普通 MemoryError（非守卫文案）保持 OOM 分类不回归"""
+        has_failure, ftype, _reason = classify_failure(error=MemoryError("alloc failed"))
+        assert has_failure is True
+        assert ftype == FailureType.OOM
+
+    def test_ram_no_degradation_on_adjust(self):
+        """RAM 类型不做 OOM 降级阶梯（blockswap 会加剧系统内存压力）"""
+        params = {"blocks_to_swap": 0, "resolution": 2160, "seed": 42}
+        adjusted = adjust_params_for_retry(params, FailureType.RAM, attempt=2)
+        assert adjusted["blocks_to_swap"] == 0
+        assert adjusted["resolution"] == 2160
+
+
+class TestRamGuardNoRetry:
+    """RAM 守卫失败在重试主循环中必须立即终止（不白烧重试）"""
+
+    @pytest.mark.asyncio
+    async def test_result_failure_ram_no_retry(self):
+        calls = {"n": 0}
+
+        async def _generate(**_kwargs):
+            calls["n"] += 1
+            return MagicMock(
+                success=False, error="内存使用率 96.8% 超过阈值 95%，可用: 1.0GB / 31.7GB。必须立即终止模型！"
+            )
+
+        result = await retry_with_bad_case_detection(_generate, {"config": None})
+        assert result.success is False
+        assert result.attempts == 1
+        assert calls["n"] == 1
+        assert "系统内存耗尽" in result.failure_reason
+
+    @pytest.mark.asyncio
+    async def test_exception_ram_no_retry(self):
+        calls = {"n": 0}
+
+        async def _generate(**_kwargs):
+            calls["n"] += 1
+            raise MemoryError("可用内存 0.8GB 低于下限 2.0GB，无法加载 VAE")
+
+        result = await retry_with_bad_case_detection(_generate, {"config": None})
+        assert result.success is False
+        assert result.attempts == 1
+        assert calls["n"] == 1
+
+    @pytest.mark.asyncio
+    async def test_oom_still_retries(self):
+        """OOM（GPU 显存）保持原有重试语义不回归"""
+        mock_fn = AsyncMock(
+            side_effect=[
+                MagicMock(success=False, error="CUDA out of memory"),
+                MagicMock(success=True),
+            ]
+        )
+        result = await retry_with_bad_case_detection(mock_fn, {"config": None})
+        assert result.success is True
+        assert result.attempts == 2

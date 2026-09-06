@@ -38,6 +38,7 @@ from app.integrated_app.dependencies import (
 )
 from app.integrated_app.i18n import I18n
 from app.integrated_app.model_manager import ModelManager
+from app.integrated_app.security.audit import audit_event
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/system", tags=["设置"])
@@ -183,12 +184,16 @@ async def get_settings(config: dict = Depends(get_config)):
 
 @router.post("/settings")
 async def update_settings(
+    request: Request,
     settings: SettingsUpdateRequest,
     config: dict = Depends(get_config),
 ):
     """更新系统设置并保存到配置文件。
 
     API 端点：POST /api/system/settings
+
+    数据治理 P1-4：变更成功后写入安全审计通道（CONFIG_UPDATE 事件），
+    allowed_base_dirs 等安全敏感键的修改可事后追溯。
 
     请求体（JSON，所有字段可选）：见 SettingsUpdateRequest。
 
@@ -199,30 +204,44 @@ async def update_settings(
     }
 
     Args:
+        request: 当前请求（审计元数据用）。
         settings: 设置更新请求体。
         config: 应用配置（通过依赖注入）。
 
     Returns:
         JSONResponse 确认更新成功。
     """
+    changed_keys: list[str] = []
     if settings.default_model_size is not None:
         config.setdefault("model", {})["default_size"] = settings.default_model_size
+        changed_keys.append("model.default_size")
     if settings.default_precision is not None:
         config.setdefault("model", {})["default_precision"] = settings.default_precision
+        changed_keys.append("model.default_precision")
     if settings.auto_load is not None:
         config.setdefault("model", {})["auto_load"] = settings.auto_load
+        changed_keys.append("model.auto_load")
     if settings.default_locale is not None:
         config.setdefault("i18n", {})["default_locale"] = settings.default_locale
+        changed_keys.append("i18n.default_locale")
     if settings.default_resolution_h is not None:
         config.setdefault("restore", {})["default_resolution_h"] = settings.default_resolution_h
+        changed_keys.append("restore.default_resolution_h")
     if settings.default_resolution_w is not None:
         config.setdefault("restore", {})["default_resolution_w"] = settings.default_resolution_w
+        changed_keys.append("restore.default_resolution_w")
     if settings.seed is not None:
         config.setdefault("restore", {})["seed"] = settings.seed
+        changed_keys.append("restore.seed")
     if settings.allowed_base_dirs is not None:
         config.setdefault("runtime", {}).setdefault("security", {})["allowed_base_dirs"] = settings.allowed_base_dirs
+        changed_keys.append("runtime.security.allowed_base_dirs")
 
     await run_in_threadpool(save_config, config)
+
+    # 数据治理 P1-4：配置热改审计（best-effort，绝不阻断业务）
+    if changed_keys:
+        audit_event("CONFIG_UPDATE", request=request, keys=changed_keys)
 
     try:
         from app.integrated_app.optimization.webui_enhancement import SettingsPersistence
@@ -397,6 +416,9 @@ async def set_locale(
 
     config.setdefault("i18n", {})["default_locale"] = locale
     await run_in_threadpool(save_config, config)
+
+    # 数据治理 P1-4：配置热改审计（语言切换同样落审计通道）
+    audit_event("CONFIG_UPDATE", request=request, keys=["i18n.default_locale"], value=locale)
 
     return JSONResponse(
         {

@@ -259,6 +259,7 @@
     "batch_mode": "Batch",
     "readonly_param_tip": "Recommended value, not editable",
     "optimized_params": "Optimized",
+    "vae_tiling_tier_hint": "VRAM {gb}GB available → recommended VAE tiling: tile {size} / overlap {overlap}",
     "tip_swap_io": "When enabled, model weights are swapped between VRAM and RAM as needed, greatly reducing peak VRAM at the cost of some speed. Keep it on whenever your VRAM is smaller than the model.",
     "tip_cache_model": "Keep loaded models in memory across tasks to speed up subsequent runs at the cost of VRAM; off releases them after each task",
     "tip_tiled_encode": "Tiled encoding: splits large images into tiles before encoding so a single pass never spikes VRAM. Leave it on; turning it off can be marginally faster only for large resolutions with plenty of VRAM.",

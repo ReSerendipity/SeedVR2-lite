@@ -21,6 +21,8 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 
+from app.integrated_app.exceptions import TaskQueueFullError
+
 logger = logging.getLogger(__name__)
 
 TaskFactory = Callable[[], Awaitable[None]]
@@ -51,7 +53,8 @@ class TaskQueue:
         """初始化任务队列。
 
         Args:
-            maxsize: 队列最大容量，满时 submit 将阻塞；<=0 表示无界（不推荐）
+            maxsize: 队列最大容量，满时 submit 立即抛 TaskQueueFullError（快速拒绝，评估 P2-1）；
+                <=0 表示无界（不推荐）
             task_timeout_seconds: 单个任务执行超时秒数，超时自动取消 (E6)
         """
         # E3: 有界队列，防止无界堆积导致内存溢出
@@ -114,9 +117,16 @@ class TaskQueue:
                 （对 to_thread 包装的同步代码无效，GPU 资源将持续占用至完成）。
 
         Raises:
-            asyncio.QueueFull: 当队列已满（maxsize 生效）时立即抛出（非 await 场景）。
+            TaskQueueFullError: 当队列已满（maxsize 生效）时立即抛出（快速拒绝语义，
+                评估 P2-1；由提交类路由转换为 HTTP 503 + Retry-After）。
         """
-        await self._queue.put((task_id, coro_factory, on_cancel))
+        try:
+            self._queue.put_nowait((task_id, coro_factory, on_cancel))
+        except asyncio.QueueFull as exc:
+            raise TaskQueueFullError(
+                f"任务队列已满（容量 {self._queue.maxsize}），请等待排队任务消化后重试",
+                detail={"queue_maxsize": self._queue.maxsize, "queue_size": self._queue.qsize()},
+            ) from exc
         self._cancelled_ids.discard(task_id)
         if on_cancel is not None:
             self._cancel_callbacks[task_id] = on_cancel

@@ -175,6 +175,10 @@ def harden_secret_file_permissions(path: str | os.PathLike) -> bool:
             try:
                 import subprocess
 
+                # KNOWN_ISSUES #76：icacls 在中文 Windows 输出 GBK 文本，而
+                # PYTHONUTF8=1 环境（本仓 WinPython 默认）的 text=True 会按
+                # UTF-8 解码 → _readerthread 崩线程、stdout 静默丢失。显式
+                # encoding + errors=replace 保证解码永不中断（输出仅作 debug 日志）
                 result = subprocess.run(
                     [
                         "icacls",
@@ -185,6 +189,8 @@ def harden_secret_file_permissions(path: str | os.PathLike) -> bool:
                     ],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=10,
                     check=False,
                 )

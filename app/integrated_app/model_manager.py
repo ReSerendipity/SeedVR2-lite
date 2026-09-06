@@ -26,6 +26,7 @@
 """
 
 import asyncio
+import json
 import logging
 import os
 
@@ -35,6 +36,7 @@ from app.integrated_app.engine_interface import RestoreEngine
 from app.integrated_app.engines.seedvr2_engine import SeedVR2Engine
 from app.integrated_app.gpu_utils import check_vram_available, clear_gpu_cache, estimate_model_vram
 from app.integrated_app.model_registry import model_registry
+from app.integrated_app.utils.hashing import compute_file_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +208,101 @@ class ModelManager:
         logger.warning(f"显存 {total_vram_gb:.1f}GB，可用精度 {available}，推荐 {available[0]}")
         return available[0]
 
+    # ==================== 权重完整性校验（数据治理 P1-3） ====================
+
+    _HASH_CACHE_REL_PATH = os.path.join("data", "model_hash_cache.json")
+
+    def _load_hash_cache(self, cache_path: str) -> dict:
+        """读取权重哈希缓存（JSON：绝对路径 → {size, mtime, sha256}）。"""
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _sha256_with_cache(self, path: str, cache_path: str, cache: dict) -> str:
+        """带缓存计算文件 sha256（size+mtime 命中免重算，GB 级权重二次加载近零开销）。
+
+        Args:
+            path: 权重文件路径。
+            cache_path: 缓存 JSON 落盘路径。
+            cache: 进程内缓存字典（会被原地更新并落盘）。
+
+        Returns:
+            hex 摘要；文件不可读时返回空串。
+        """
+        try:
+            stat = os.stat(path)
+        except OSError:
+            return ""
+        key = os.path.normcase(os.path.abspath(path))
+        entry = cache.get(key)
+        if isinstance(entry, dict) and entry.get("size") == stat.st_size and entry.get("mtime") == stat.st_mtime:
+            digest = entry.get("sha256")
+            if isinstance(digest, str) and len(digest) == 64:
+                return digest
+        digest = compute_file_sha256(path)
+        cache[key] = {"size": stat.st_size, "mtime": stat.st_mtime, "sha256": digest}
+        try:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            tmp_path = cache_path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(cache, f)
+            os.replace(tmp_path, cache_path)
+        except OSError as e:
+            logger.debug(f"权重哈希缓存写盘失败（不影响校验）: {e}")
+        return digest
+
+    async def verify_weight_hashes(self, model_size: str, precision: str) -> None:
+        """加载前权重 sha256 白名单校验（数据治理 P1-3）。
+
+        手动放置的任意权重文件此前「文件存在即加载」，构成恶意权重加载面。
+        本方法对即将加载的权重文件（checkpoint / vae / pos_emb / neg_emb）逐一比对
+        config.yaml 中配置的期望哈希：
+
+        - 已配置哈希且不匹配 → 拒绝加载（ValueError）
+        - 已配置哈希且匹配 → 放行（info 日志）
+        - 未配置期望哈希 → 告警放行（无法校验未知配置，兼容自定义权重场景）
+        - 文件不存在 → 跳过（存在性由 check_model_exists/引擎负责）
+
+        Args:
+            model_size: 模型大小标识（如 "3b"）。
+            precision: 已解析的最终精度（回退决策之后）。
+
+        Raises:
+            ValueError: 任一已配置哈希的权重文件校验不通过。
+        """
+        model_cfg = self.get_model_info(model_size)
+        if not model_cfg:
+            return
+        pretrained_dir = self.get_pretrained_dir()
+        candidates = [
+            (model_cfg.get(f"checkpoint_{precision}") or "", model_cfg.get(f"sha256_{precision}") or "", "checkpoint"),
+            (model_cfg.get("vae_checkpoint") or "", model_cfg.get("sha256_vae") or "", "vae"),
+            (model_cfg.get("pos_emb") or "", model_cfg.get("sha256_pos_emb") or "", "pos_emb"),
+            (model_cfg.get("neg_emb") or "", model_cfg.get("sha256_neg_emb") or "", "neg_emb"),
+        ]
+        cache_path = os.path.join(os.getcwd(), self._HASH_CACHE_REL_PATH)
+        cache = self._load_hash_cache(cache_path)
+        for filename, expected, label in candidates:
+            if not filename:
+                continue
+            path = os.path.join(pretrained_dir, filename)
+            if not os.path.exists(path):
+                continue
+            if not expected:
+                logger.warning(f"权重文件未配置期望哈希，跳过白名单校验: {filename}")
+                continue
+            digest = await asyncio.to_thread(self._sha256_with_cache, path, cache_path, cache)
+            if not digest or digest.lower() != expected.lower():
+                raise ValueError(
+                    f"权重文件 SHA256 校验失败: {filename}（{label}）。"
+                    f"文件可能损坏或被替换，请重新下载（python scripts/download_model.py）"
+                    f"或删除 {path} 后重试。"
+                )
+            logger.info(f"权重校验通过: {filename}（{label}）")
+
     async def load_model(
         self, model_size: str | None = None, device: str | None = None, precision: str | None = None
     ) -> dict:
@@ -319,6 +416,10 @@ class ModelManager:
                         f"已配置精度 {', '.join(configured) if configured else '无'} 均无对应文件。"
                         f"请下载模型权重到 {self.get_pretrained_dir()}/"
                     )
+
+        # 数据治理 P1-3：加载前权重 sha256 白名单校验
+        # （手动放置的任意权重不再「文件存在即加载」；校验失败拒绝加载）
+        await self.verify_weight_hashes(model_size, precision)
 
         required_vram = estimate_model_vram(model_size, precision=precision)
         can_load, available_vram = check_vram_available(required_vram)

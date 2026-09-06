@@ -45,7 +45,12 @@ from app.integrated_app.bad_case_retry import (
 )
 from app.integrated_app.checkpoint import TaskCheckpoint, _file_fingerprint
 from app.integrated_app.engines.seedvr2_engine import ImageInferenceConfig
-from app.integrated_app.exceptions import DiskSpaceError
+from app.integrated_app.exceptions import DiskSpaceError, InsufficientVramError
+from app.integrated_app.gpu_utils import (
+    estimate_vram_requirements,
+    get_gpu_memory_info,
+    recommend_params,
+)
 from app.integrated_app.history_db import HistoryDB, HistoryRecord
 from app.integrated_app.metrics import metrics_collector
 from app.integrated_app.model_registry import model_registry
@@ -77,9 +82,145 @@ def oom_breaker_remaining(app_config: dict | None = None) -> float:
     return oom_breaker.remaining_cooldown()
 
 
+def is_ram_exhaustion(error: str | None) -> bool:
+    """判定错误是否为系统内存守卫触发（评估 P2-2）。
+
+    RAM 守卫失败是确定性资源耗尽：重试只会重复白烧模型加载时间，
+    且 OOM 降级阶梯的 blockswap（换出到 CPU）会进一步加剧系统内存压力。
+
+    Args:
+        error: 引擎返回的错误消息。
+
+    Returns:
+        bool: True 表示系统内存耗尽，调用方应跳过重试。
+    """
+    _has_failure, failure_type, _reason = classify_failure(message=error or "")
+    return failure_type == FailureType.RAM
+
+
 # ---------------------------------------------------------------------------
 # 任务前预检与配置构建
 # ---------------------------------------------------------------------------
+
+
+def _probe_media_geometry(input_path: str, media_type: str) -> tuple[int, int, int] | None:
+    """探测输入媒体的宽高与帧数（显存预检估算输入）。
+
+    Args:
+        input_path: 媒体文件路径。
+        media_type: "image" 或 "video"。
+
+    Returns:
+        (width, height, num_frames) 元组；图片帧数恒为 1，视频取
+        ffprobe 帧数（缺失时按时长×帧率估算）。任何探测失败返回 None，
+        由门禁 fail-open 放行（OOM 由运行期降级重试兜底）。
+    """
+    try:
+        if media_type == "image":
+            from PIL import Image  # type: ignore
+
+            with Image.open(input_path) as im:  # noqa: S311 — 上游已完成魔数校验
+                width, height = im.size
+            if width <= 0 or height <= 0:
+                return None
+            return width, height, 1
+
+        from app.integrated_app.video_processor import FFmpegWrapper
+
+        info = FFmpegWrapper().get_video_info(input_path)
+        if info is None or info.width <= 0 or info.height <= 0:
+            return None
+        if info.frame_count and info.frame_count > 0:
+            num_frames = int(info.frame_count)
+        else:
+            num_frames = max(1, int((info.duration or 0.0) * (info.fps or 0.0)))
+        return info.width, info.height, max(1, num_frames)
+    except Exception as e:  # noqa: BLE001 — 预检探测失败不阻塞任务
+        logger.debug(f"显存预检媒体探测失败（fail-open 跳过门禁）: {input_path}: {e}")
+        return None
+
+
+def vram_preflight_gate(
+    app_config: dict | None,
+    model_size: str,
+    precision: str | None,
+    input_path: str,
+    media_type: str,
+) -> dict | None:
+    """任务提交前的显存预检门禁（成本治理 P1-2）。
+
+    估算「用户所选配置」的显存需求并与可用预算比较：
+
+    - 预算 = mem_get_info 驱动层可用显存 + 本进程已分配显存。模型已加载时
+      权重驻留显存会被 mem_get_info 计为不可用，需加回避免与估算公式中
+      的权重基线二次扣减导致误拒。
+    - 估算需求超预算，或 recommend_params 判定 risk=high（含 BlockSwap 在内
+      的任何降档组合都放不下）→ 抛出 InsufficientVramError（全局处理器转
+      HTTP 503），拒绝任务入队。
+    - risk=medium（需 BlockSwap 才能装下）→ 放行，返回 warning 供调用方
+      写入任务状态与响应，提示用户推理速度可能明显变慢。
+    - 开关关闭 / 无 GPU / 媒体探测失败 → fail-open 放行返回 None：
+      预检本身不成为阻塞点，OOM 由运行期批级降级重试兜底。
+
+    Args:
+        app_config: 应用配置（读取 runtime.vram_preflight_enabled）。
+        model_size: 模型尺寸标识（"3b" / "7b" / "7b_sharp"）。
+        precision: 精度标识（"fp16" / "fp8" / 量化变体）；None 时按 fp16 基线估算。
+        input_path: 输入媒体文件路径（用于探测宽高与帧数）。
+        media_type: "image" 或 "video"。
+
+    Returns:
+        dict | None: 放行时的预检结果（estimated_vram_gb / available_vram_gb /
+        risk / warning / input_width / input_height / num_frames）；
+        fail-open 跳过时返回 None。
+
+    Raises:
+        InsufficientVramError: 预估显存超过可用预算时抛出（HTTP 503）。
+    """
+    if not ((app_config or {}).get("runtime", {}) or {}).get("vram_preflight_enabled", True):
+        return None
+
+    geometry = _probe_media_geometry(input_path, media_type)
+    if geometry is None:
+        return None
+    width, height, num_frames = geometry
+
+    info = get_gpu_memory_info()
+    if info.get("total_mb", 0) <= 0:
+        return None
+    # 已加载权重/常驻张量计入 allocated：mem_get_info 把它们算作不可用，
+    # 而估算公式的权重基线又包含它们，直接用 available 会双重扣减
+    budget_gb = (info["available_mb"] + info["allocated_mb"]) / 1024.0
+
+    effective_precision = precision or "fp16"
+    estimated = estimate_vram_requirements(model_size, effective_precision, width, height, num_frames)
+    recommendation = recommend_params(model_size, width, height, num_frames, available_vram_gb=budget_gb)
+
+    if estimated > budget_gb or recommendation.get("risk") == "high":
+        raise InsufficientVramError(
+            f"预估显存 {estimated:.1f}GB 超过当前可用 {budget_gb:.1f}GB，任务大概率 OOM，已拒绝启动。"
+            "建议：① 切换更小模型或 FP8 精度；② 降低分辨率或帧数；③ 开启 BlockSwap（速度换显存）。",
+            detail={
+                "estimated_vram_gb": estimated,
+                "available_vram_gb": round(budget_gb, 2),
+                "model_size": model_size,
+                "precision": effective_precision,
+                "input_width": width,
+                "input_height": height,
+                "num_frames": num_frames,
+                "recommendation": recommendation,
+            },
+        )
+
+    return {
+        "estimated_vram_gb": estimated,
+        "available_vram_gb": round(budget_gb, 2),
+        "risk": recommendation.get("risk", "low"),
+        "warning": recommendation.get("warning", "") if recommendation.get("risk") == "medium" else "",
+        "input_width": width,
+        "input_height": height,
+        "num_frames": num_frames,
+    }
 
 
 def ensure_disk_space(target_dir: str, min_free_gb: float) -> None:
@@ -335,9 +476,10 @@ async def run_task_with_state(
                 model_size=model_size,
                 input_type=input_type,
             )
-            # P2-12：OOM 失败计入熔断（非 OOM 失败重置连续计数）
+            # P2-12：OOM 失败计入熔断（非 OOM 失败重置连续计数）；
+            # 系统内存守卫（RAM）同属资源耗尽，同样计入熔断（评估 P2-2）
             _has_failure, failure_type, _reason = classify_failure(message=error)
-            oom_breaker.record_failure(is_oom=(failure_type == FailureType.OOM))
+            oom_breaker.record_failure(is_oom=(failure_type in (FailureType.OOM, FailureType.RAM)))
             logger.error(f"任务失败: {task_id}, 错误: {result.error}")
 
     except asyncio.CancelledError:
@@ -463,6 +605,7 @@ async def process_video_task(
     params,
     history_db: HistoryDB,
     task_queue,
+    resume_frames: bool = False,
 ):
     """后台单视频修复任务（服务层编排）。
 
@@ -476,6 +619,9 @@ async def process_video_task(
         params: 视频修复参数（VideoRestoreParams）。
         history_db: 历史数据库实例。
         task_queue: 任务队列实例。
+        resume_frames: 启用段级帧续跑（评估 P2-6）。崩溃恢复（recovery）以
+            True 调用：任务自有帧目录中已完整写盘的段帧将被跳过复用。
+            帧目录始终为任务隔离的 ``_frames_<task_id>``，跨任务无污染。
     """
 
     async def _do_infer(engine):
@@ -511,10 +657,17 @@ async def process_video_task(
 
         # OOM 坏案例自动重试（成本治理 P0-2）：降级阶梯 blocks_to_swap↑ → resolution↓ → 种子轮换
         force_reload = {"flag": False}
+        # 帧级断点续跑（成本治理 P2 + 评估 P2-6）：任务级帧目录隔离后，
+        # 续跑意图=崩溃恢复传入 or 自动重试已启用。意图为 True 时引擎在
+        # 失败路径保留段帧，重试/恢复才能跳过已完成段（否则退化为整体重跑）
+        resume_frames_flag = {"flag": bool(resume_frames) or build_retry_config().max_retries > 0}
+        # 任务隔离帧目录：段级续跑只在任务自有目录判定帧完整性，杜绝跨任务污染
+        frames_dir_override = os.path.join(output_dir, f"_frames_{task_id}")
 
         def _on_retry(attempt: int, max_attempts: int, reason: str) -> None:
             if attempt > 0:
                 force_reload["flag"] = True
+                resume_frames_flag["flag"] = True
                 logger.warning(f"[{task_id}] 视频推理失败，自动重试 {attempt}/{max_attempts}: {reason}")
 
         async def _generate(**kwargs):
@@ -532,6 +685,8 @@ async def process_video_task(
                 blocks_to_swap=merged["blocks_to_swap"],
                 batch_size=merged["batch_size"],
                 force_reload_dit=merged["force_reload_dit"],
+                resume_frames=resume_frames_flag["flag"],
+                frames_dir_override=frames_dir_override,
                 # P3-1：水印 payload 绑定 task_id
                 watermark_payload=task_id,
             )
@@ -691,6 +846,38 @@ def merge_degradation_into_parameters(parameters_json: str, metadata: dict | Non
         data = {"raw": parameters_json}
     data["degradation"] = metadata
     return json.dumps(data, ensure_ascii=False)
+
+
+def apply_ffmpeg_lineage(parameters_json: str, media_type: str) -> str:
+    """视频任务把 ffmpeg 版本写入 parameters JSON（数据治理 P1-2 编码器血缘）。
+
+    同一输出在多年后仍能回答「当时用什么编码器编码」。仅视频链路注入
+    （图像链路不经过 ffmpeg）；版本探测失败或 JSON 异常时原样返回——
+    血缘缺失可接受，绝不影响批量主流程。
+
+    Args:
+        parameters_json: 原始 parameters JSON 字符串（可能为空串）。
+        media_type: 媒体类型（"image"/"video"）。
+
+    Returns:
+        注入 ffmpeg_version 后的 JSON 字符串（或原串）。
+    """
+    if media_type != "video":
+        return parameters_json
+    try:
+        from app.integrated_app.video_processor import get_ffmpeg_version
+
+        version = get_ffmpeg_version()
+        if not version:
+            return parameters_json
+        data = json.loads(parameters_json) if parameters_json else {}
+        if not isinstance(data, dict):
+            data = {"raw": parameters_json}
+        data["ffmpeg_version"] = version
+        return json.dumps(data, ensure_ascii=False)
+    except (ValueError, TypeError, ImportError) as e:
+        logger.debug(f"ffmpeg 版本血缘注入跳过: {e}")
+        return parameters_json
 
 
 async def process_batch_background(
@@ -952,6 +1139,10 @@ async def process_batch_background(
                     }
                     if "blocks_to_swap" in current_config:
                         infer_kwargs["blocks_to_swap"] = current_config["blocks_to_swap"]
+                    if attempt > 0:
+                        # 帧级断点续跑（成本治理 P2）：同文件重试复用上一轮已写盘的段帧
+                        # （分辨率降档时引擎侧尺寸校验会自动放弃复用，整段重算）
+                        infer_kwargs["resume_frames"] = True
                     result = await engine.infer_video(
                         video_path=media_path,
                         output_dir=output_dir,
@@ -1014,7 +1205,7 @@ async def process_batch_background(
                     break
                 else:
                     last_error = result.error or "未知错误"
-                    if attempt < max_retries:
+                    if attempt < max_retries and not is_ram_exhaustion(last_error):
                         task_item["status"] = "retrying"
                         logger.warning(
                             f"批量处理 {media_type} {i+1}/{len(media_files)} 第{attempt+1}次失败，重试中：{media_path}, {last_error}"
@@ -1045,6 +1236,10 @@ async def process_batch_background(
                             input_type=media_type,
                         )
                         task_state_store.update_cached(batch_id, failed=failed)
+                        if is_ram_exhaustion(last_error):
+                            # 评估 P2-2：RAM 守卫属资源耗尽，跳过重试并计入熔断
+                            logger.error(f"批量处理遇系统内存耗尽，跳过该文件重试：{media_path}")
+                            oom_breaker.record_failure(is_oom=True)
 
             except asyncio.CancelledError:
                 task_item["status"] = "cancelled"
@@ -1052,7 +1247,7 @@ async def process_batch_background(
                 raise
             except Exception as e:
                 last_error = str(e)
-                if attempt < max_retries:
+                if attempt < max_retries and not is_ram_exhaustion(last_error):
                     task_item["status"] = "retrying"
                     logger.warning(
                         f"批量处理 {media_type} {i+1}/{len(media_files)} 第{attempt+1}次异常，重试中：{media_path}, {e}"
@@ -1081,6 +1276,10 @@ async def process_batch_background(
                         input_type=media_type,
                     )
                     task_state_store.update_cached(batch_id, failed=failed)
+                    if is_ram_exhaustion(last_error):
+                        # 评估 P2-2：RAM 守卫属资源耗尽，跳过重试并计入熔断
+                        logger.error(f"批量处理遇系统内存耗尽，跳过该文件重试：{media_path}")
+                        oom_breaker.record_failure(is_oom=True)
                     logger.error(f"批量处理 {media_type} {i+1}/{len(media_files)} 最终失败：{media_path}, {e}")
 
         # P1-7：每个文件处理完成后立即落库（原实现攒到批末一次性插入，
@@ -1100,6 +1299,9 @@ async def process_batch_background(
                 },
                 ensure_ascii=False,
             )
+        # 数据治理 P1-2：视频任务把 ffmpeg 版本写入 parameters（编码器血缘，
+        # 进程级缓存；置于降级合并之后，避免被覆盖）
+        batch_parameters_json = apply_ffmpeg_lineage(batch_parameters_json, media_type)
         await history_db.add_record(
             HistoryRecord(
                 task_type=media_type,

@@ -58,6 +58,47 @@ class VideoInfo:
     audio_codec: str = ""
 
 
+_FFMPEG_VERSION_CACHE: dict[str, str] = {}
+
+
+def get_ffmpeg_version(ffmpeg_path: str | None = None) -> str:
+    """获取 ffmpeg 版本串（进程级缓存一次，数据治理 P1-2 血缘字段）。
+
+    执行 ``ffmpeg -version`` 取首行（如 ``ffmpeg version 7.1-full_build-www.gyan.dev``），
+    供历史库 parameters 记录输出编码器血缘——同一输出在多年后仍能回答
+    「当时用什么编码器编码」。结果按可执行文件路径缓存，进程内只探测一次。
+
+    Args:
+        ffmpeg_path: ffmpeg 可执行文件路径；None 时复用 FFmpegWrapper 的查找顺序
+            （项目 app/ 目录优先 → 系统 PATH）。
+
+    Returns:
+        版本首行字符串（截断至 200 字符）；探测失败返回空串——
+        血缘缺失可接受，绝不允许影响推理主流程。
+    """
+    if ffmpeg_path is None:
+        ffmpeg_path = FFmpegWrapper().ffmpeg_path
+    cached = _FFMPEG_VERSION_CACHE.get(ffmpeg_path)
+    if cached is not None:
+        return cached
+
+    version = ""
+    try:
+        result = subprocess.run(
+            [ffmpeg_path, "-version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        if result.returncode == 0 and result.stdout:
+            version = result.stdout.splitlines()[0].strip()[:200]
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.debug(f"ffmpeg 版本探测失败（血缘字段留空）: {e}")
+    _FFMPEG_VERSION_CACHE[ffmpeg_path] = version
+    return version
+
+
 class FFmpegWrapper:
     """FFmpeg/FFprobe 命令行工具封装类。
 
@@ -256,6 +297,7 @@ class FFmpegWrapper:
         fps: float = 30.0,
         source_video: str | None = None,
         include_audio: bool = True,
+        comment: str | None = None,
     ) -> bool:
         """将帧合成为视频
 
@@ -265,6 +307,8 @@ class FFmpegWrapper:
             fps: 帧率
             source_video: 源视频（用于提取音频）
             include_audio: 是否包含音频
+            comment: 写入容器 comment 元数据的内容（数据治理 P2-5：
+                生成参数血缘，随输出文件走；None 不写入）
         """
         # 检测帧格式
         frame_files = [f for f in os.listdir(frames_dir) if f.startswith("frame_")]
@@ -305,9 +349,12 @@ class FFmpegWrapper:
                 "yuv420p",
                 "-movflags",
                 "+faststart",
-                output_path,
             ]
         )
+        # 数据治理 P2-5：生成参数血缘写入容器 comment 元数据
+        if comment:
+            cmd.extend(["-metadata", f"comment={comment}"])
+        cmd.append(output_path)
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)

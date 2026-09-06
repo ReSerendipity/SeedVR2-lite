@@ -5,11 +5,13 @@
 与 health.py 的 /ping（liveness 语义）互补：
 
 API 端点：
-- GET /api/system/ready: 就绪探针（模型预热中返回 503）
+- GET /api/system/ready: 就绪探针（模型预热中 / GPU 不健康时返回 503）
 
-设计语义（对应云原生评估报告 P1-3）：
+设计语义（对应云原生评估报告 P1-3 + 后端设计评估 P2-4）：
 - ``load_in_progress=True`` → 503（模型正在加载/权重 SHA256 校验中，暂不接流）
-- 其余情况 → 200（含 model_loaded / gpu_available 供编排层诊断）
+- GPU 能力可用但运行时健康探测失败 → 503（CUDA 上下文损坏属假阳性健康，
+  继续接流只会让所有任务失败；探测本身永不抛异常）
+- 其余情况 → 200（含 model_loaded / gpu_available / gpu_healthy 供编排层诊断）
 - 采用独立端点而非改造 /health：/health 的信息性契约已被测试与前端锁定，
   readiness 的 503 语义必须由专用端点承载，避免破坏既有契约
 
@@ -46,9 +48,10 @@ async def readiness_probe(
     请求参数：无
 
     返回格式（JSON）：
-        200: {"status": "ready", "model_loaded": bool, "gpu_available": bool}
-        503: {"status": "unavailable", "reason": "model_loading",
-              "model_loaded": bool, "gpu_available": bool}（附 Retry-After 头）
+        200: {"status": "ready", "model_loaded": bool, "gpu_available": bool, "gpu_healthy": bool | null}
+        503: {"status": "unavailable", "reason": "model_loading" | "gpu_unhealthy",
+              "model_loaded": bool, "gpu_available": bool, "gpu_healthy": bool | null}
+             （附 Retry-After 头）
 
     Args:
         request: FastAPI 请求对象。
@@ -68,6 +71,9 @@ async def readiness_probe(
     model_loaded = bool(status.get("model_loaded", status.get("loaded", False)))
     load_in_progress = bool(status.get("load_in_progress", False))
     gpu_available = bool(gpu_backend.is_gpu_available)
+    # 评估 P2-4：能力可用 ≠ 上下文健康。仅在声明可用时探测；
+    # 降级模式（无 GPU）下探针不参与判定（None），保持既有 200 语义
+    gpu_healthy: bool | None = gpu_backend.check_health() if gpu_available else None
 
     if load_in_progress:
         return JSONResponse(
@@ -76,6 +82,20 @@ async def readiness_probe(
                 "reason": "model_loading",
                 "model_loaded": model_loaded,
                 "gpu_available": gpu_available,
+                "gpu_healthy": gpu_healthy,
+            },
+            status_code=503,
+            headers={"Retry-After": "5"},
+        )
+
+    if gpu_healthy is False:
+        return JSONResponse(
+            {
+                "status": "unavailable",
+                "reason": "gpu_unhealthy",
+                "model_loaded": model_loaded,
+                "gpu_available": gpu_available,
+                "gpu_healthy": False,
             },
             status_code=503,
             headers={"Retry-After": "5"},
@@ -86,5 +106,6 @@ async def readiness_probe(
             "status": "ready",
             "model_loaded": model_loaded,
             "gpu_available": gpu_available,
+            "gpu_healthy": gpu_healthy,
         }
     )

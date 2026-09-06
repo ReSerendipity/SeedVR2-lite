@@ -363,6 +363,13 @@ async def lifespan(app: FastAPI):
         ckpt_dir = task_cfg.get("checkpoint_dir", "data/checkpoints")
         project_root_for_ckpt = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         checkpoint_mgr = TaskCheckpoint(os.path.join(project_root_for_ckpt, ckpt_dir))
+        # 启动孤儿扫描（数据治理 P2-1）：失败/中断任务残留的 checkpoint JSON
+        # 超过 TTL 即清理；仅处理 *.json，不触碰同目录下训练子系统的 .pt 快照
+        ckpt_ttl_minutes = int(task_cfg.get("checkpoint_ttl_minutes", 1440) or 0)
+        if ckpt_ttl_minutes > 0:
+            stale_removed = checkpoint_mgr.remove_stale_checkpoints(ckpt_ttl_minutes * 60)
+            if stale_removed:
+                logger.info(f"启动孤儿 checkpoint 扫描: 清理 {stale_removed} 个超过 {ckpt_ttl_minutes} 分钟的残留 JSON")
         pending_checkpoints = checkpoint_mgr.list_checkpoints()
         if pending_checkpoints:
             logger.info(f"发现 {len(pending_checkpoints)} 个待恢复的批量任务 checkpoint")
@@ -374,127 +381,208 @@ async def lifespan(app: FastAPI):
     file_cache: FileCache = app.state.file_cache
     file_cache.start_cleanup_task(interval=3600)
 
-    # 启动定期清理卡死任务的后台任务（每5分钟检查一次，阈值 runtime.task.stale_threshold_minutes）
-    async def _periodic_stale_cleanup():
-        stale_threshold = int(config.get("runtime", {}).get("task", {}).get("stale_threshold_minutes", 30) or 0)
-        effective_threshold = stale_threshold if stale_threshold > 0 else 10**9
-        while True:
-            try:
-                await asyncio.sleep(300)  # 每5分钟
-                cleaned = await unified_routes.cleanup_stale_tasks(
-                    history_db, threshold_minutes=effective_threshold, task_queue=app.state.task_queue
-                )
-                if cleaned:
-                    logger.info(f"定期清理：已清理 {cleaned} 个卡死的 processing 任务")
-                # P2-11：顺带清理事件总线过期的最终状态缓存（TTL 60s，5min 扫一次足够）
-                task_event_bus.cleanup_expired()
-                _last_progress_publish.clear()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"定期清理卡死任务失败: {e}")
+    # 周期性后台循环体收敛在 lifecycle/background_tasks.py（依赖注入，可单测）；
+    # 本处只保留装配职责：解析配置阈值 + create_task + 挂载 app.state
+    from app.integrated_app.lifecycle.background_tasks import (
+        periodic_model_idle_unload,
+        periodic_stale_cleanup,
+        progress_stall_watchdog,
+    )
 
-    stale_cleanup_task = asyncio.create_task(_periodic_stale_cleanup())
+    # 启动定期清理卡死任务的后台任务（每5分钟检查一次，阈值 runtime.task.stale_threshold_minutes）
+    stale_cleanup_task = asyncio.create_task(
+        periodic_stale_cleanup(
+            history_db,
+            get_queue=lambda: app.state.task_queue,
+            last_progress_publish=_last_progress_publish,
+            threshold_minutes=int(config.get("runtime", {}).get("task", {}).get("stale_threshold_minutes", 30) or 0),
+        )
+    )
     app.state.stale_cleanup_task = stale_cleanup_task
 
     # 进度停滞看门狗（P1-8）：唯一 worker 被单个挂死的推理任务无限占用时，
-    # 依据任务状态缓存中 (progress, message, current_frame/current_index/current_file)
-    # 的签名是否变化判定停滞，超过阈值自动 request_cancel（引擎在阶段检查点协作退出）。
-    # progress 回调由推理线程逐帧/逐阶段驱动，真实推理即使整帧计算很慢，
-    # current_frame/current_progress 也会持续变化，误杀窗口极大（默认 30 分钟）。
+    # 依据任务状态缓存签名 (progress, message, current_frame/current_index/current_file)
+    # 是否变化判定停滞，超过阈值自动 request_cancel（引擎在阶段检查点协作退出）。
     stall_minutes = int(config.get("runtime", {}).get("task", {}).get("progress_stall_timeout_minutes", 30) or 0)
     if stall_minutes > 0:
-
-        async def _progress_stall_watchdog():
-            last_signature = None
-            last_change_monotonic = time.monotonic()
-            while True:
-                await asyncio.sleep(60)
-                try:
-                    current = app.state.task_queue.current_task_id
-                    running_id = current() if callable(current) else current
-                    if not running_id:
-                        last_signature = None
-                        continue
-                    state = task_state_store.get_cached(running_id) or {}
-                    signature = (
-                        state.get("progress"),
-                        state.get("message", ""),
-                        state.get("current_frame"),
-                        state.get("current_index"),
-                        state.get("current_file", ""),
-                    )
-                    if signature != last_signature:
-                        last_signature = signature
-                        last_change_monotonic = time.monotonic()
-                        continue
-                    if time.monotonic() - last_change_monotonic >= stall_minutes * 60:
-                        logger.warning(f"任务 {running_id} 进度停滞超过 {stall_minutes} 分钟，看门狗自动取消")
-                        app.state.task_queue.request_cancel(running_id)
-                        last_change_monotonic = time.monotonic()  # 防止重复触发刷日志
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    logger.warning(f"进度停滞看门狗检查失败: {e}")
-
-        app.state.progress_watchdog_task = asyncio.create_task(_progress_stall_watchdog())
+        app.state.progress_watchdog_task = asyncio.create_task(
+            progress_stall_watchdog(get_queue=lambda: app.state.task_queue, stall_minutes=stall_minutes)
+        )
         logger.info(f"进度停滞看门狗已启用（阈值 {stall_minutes} 分钟）")
 
     # outputs/ 保留策略清理（P0-1）：启动先执行一次回收残留，再挂周期任务。
     # 推理任务运行期间跳过，避免与活动任务的临时帧写入竞争
     try:
-        from app.integrated_app.services.output_retention import cleanup_outputs_once, periodic_output_cleanup
+        from app.integrated_app.services.output_retention import (
+            cleanup_outputs_once,
+            cleanup_watermark_dirs,
+            periodic_output_cleanup,
+        )
 
         retention_cfg = config.get("retention", {}) or {}
         outputs_dir = os.path.join(os.getcwd(), "outputs")
         max_age_days = int(retention_cfg.get("outputs_max_age_days", 14) or 0)
         max_files = int(retention_cfg.get("outputs_max_files", 0) or 0)
+        # 水位清理（成本治理 P1-1）：默认输出模板可能把成品写到 outputs/ 之外
+        # （如 {input_dir}/restored/），磁盘剩余低于 disk_min_free_gb 时对历史
+        # 任务实际输出目录按同样年龄规则触发清理，删除前经全局 SSE 广播通知
+        watermark_min_free = float(retention_cfg.get("disk_min_free_gb", 5.0) or 0)
+
+        # pinned 豁免清单（数据治理 P1-5）：用户「标记保留」的输出文件被
+        # 年龄/数量/水位清理共同豁免
+        async def _pinned_keep_paths() -> set[str]:
+            return await app.state.history_db.get_pinned_output_paths()
+
+        pinned_paths: set[str] | None = None
+        try:
+            pinned_paths = await _pinned_keep_paths()
+        except Exception as e:
+            logger.warning(f"启动时获取 pinned 豁免清单失败（本轮不豁免）: {e}")
+
         if max_age_days > 0 or max_files > 0:
-            removed, freed = await asyncio.to_thread(cleanup_outputs_once, outputs_dir, max_age_days, max_files)
+            removed, freed = await asyncio.to_thread(
+                cleanup_outputs_once, outputs_dir, max_age_days, max_files, pinned_paths
+            )
             if removed:
                 logger.info(f"启动 outputs 清理: 删除 {removed} 个过期文件，释放 {freed / (1024 * 1024):.1f}MB")
-            cleanup_interval = int(retention_cfg.get("outputs_cleanup_interval_seconds", 3600) or 0)
 
             def _outputs_busy() -> bool:
                 current = app.state.task_queue.current_task_id
                 return (current() if callable(current) else current) is not None
 
+            # SSE 广播通道（水位通知 + 清理计划广播共用；线程安全 publish）
+            from app.integrated_app.routes.system.sse import event_bus as sse_event_bus
+
+            watermark_notify = None
+            list_output_dirs = None
+            if watermark_min_free > 0 and max_age_days > 0:
+
+                def _notify_watermark(dir_path: str, info: dict) -> None:
+                    """水位清理删除前广播系统通知（SSE event_bus 线程安全发布）。"""
+                    sse_event_bus.publish(
+                        "system_notice",
+                        {
+                            "level": "warning",
+                            "kind": "retention_watermark",
+                            "message": (
+                                f"磁盘剩余 {info.get('free_gb', 0):.1f}GB 低于水位 "
+                                f"{info.get('min_free_gb', 0):.1f}GB，将按保留策略清理输出目录 "
+                                f"{dir_path} 中超过 {max_age_days} 天的旧文件"
+                            ),
+                            "dir": dir_path,
+                            **info,
+                        },
+                    )
+
+                watermark_notify = _notify_watermark
+
+                async def _list_output_dirs() -> list[str]:
+                    return await app.state.history_db.distinct_output_dirs()
+
+                list_output_dirs = _list_output_dirs
+
+                # 启动时先做一次水位清理，避免带压接受新任务
+                try:
+                    wm_dirs = await _list_output_dirs()
+                    if wm_dirs:
+                        wm_removed, wm_freed = await asyncio.to_thread(
+                            cleanup_watermark_dirs, wm_dirs, watermark_min_free, max_age_days, _notify_watermark
+                        )
+                        if wm_removed:
+                            logger.info(
+                                f"启动水位清理: 删除 {wm_removed} 个超龄输出文件，"
+                                f"释放 {wm_freed / (1024 * 1024):.1f}MB（水位 {watermark_min_free:.1f}GB）"
+                            )
+                except Exception as e:
+                    logger.warning(f"启动水位清理失败（不影响服务启动）: {e}")
+
+            cleanup_interval = int(retention_cfg.get("outputs_cleanup_interval_seconds", 3600) or 0)
+
+            def _notify_cleanup_plan(victims: list[str]) -> None:
+                """outputs 周期清理删除前广播「即将清理清单」（数据治理 P1-5，SSE 线程安全发布）。"""
+                sse_event_bus.publish(
+                    "system_notice",
+                    {
+                        "level": "warning",
+                        "kind": "retention_cleanup_plan",
+                        "message": f"保留策略即将清理 {len(victims)} 个过期输出文件（可在历史页标记保留以免除）",
+                        "total": len(victims),
+                        "files": victims[:50],
+                    },
+                )
+
             output_cleanup_task = asyncio.create_task(
-                periodic_output_cleanup(outputs_dir, max_age_days, max_files, cleanup_interval, is_busy=_outputs_busy)
+                periodic_output_cleanup(
+                    outputs_dir,
+                    max_age_days,
+                    max_files,
+                    cleanup_interval,
+                    is_busy=_outputs_busy,
+                    watermark_min_free_gb=watermark_min_free,
+                    list_output_dirs=list_output_dirs,
+                    notify=watermark_notify,
+                    keep_paths_provider=_pinned_keep_paths,
+                    notify_plan=_notify_cleanup_plan,
+                )
             )
             app.state.output_cleanup_task = output_cleanup_task
             logger.info(
                 f"outputs 保留策略已启用: max_age_days={max_age_days}, max_files={max_files}, "
-                f"interval={cleanup_interval}s"
+                f"interval={cleanup_interval}s, watermark_min_free_gb={watermark_min_free:.1f}"
             )
     except Exception as e:
         logger.warning(f"outputs 保留策略清理初始化失败（不影响服务启动）: {e}")
+
+    # uploads/ 留存策略清理（数据治理 P0-1）：原始上传按 uploads_max_age_days
+    # （默认 7 天，隐私敏感面比产物更短），restored/ 成品子树与 outputs 同策略；
+    # 启动先补清一次（覆盖服务关闭期间的漏清），再挂周期任务（与 outputs 共用
+    # 清理间隔与忙碌跳过，避免与活动任务的文件写入竞争）。
+    try:
+        from app.integrated_app.services.output_retention import cleanup_uploads_once, periodic_uploads_cleanup
+
+        retention_cfg = config.get("retention", {}) or {}
+        uploads_age_days = int(retention_cfg.get("uploads_max_age_days", 7) or 0)
+        restored_age_days = int(retention_cfg.get("outputs_max_age_days", 14) or 0)
+        if uploads_age_days > 0 or restored_age_days > 0:
+            uploads_dir = os.path.join(os.getcwd(), "data", "uploads")
+            removed, freed = await asyncio.to_thread(
+                cleanup_uploads_once, uploads_dir, uploads_age_days, restored_age_days
+            )
+            if removed:
+                logger.info(f"启动 uploads 清理: 删除 {removed} 个过期文件，释放 {freed / (1024 * 1024):.1f}MB")
+
+            def _uploads_busy() -> bool:
+                current = app.state.task_queue.current_task_id
+                return (current() if callable(current) else current) is not None
+
+            uploads_cleanup_task = asyncio.create_task(
+                periodic_uploads_cleanup(
+                    uploads_dir,
+                    uploads_age_days,
+                    restored_age_days,
+                    int(retention_cfg.get("outputs_cleanup_interval_seconds", 3600) or 0),
+                    is_busy=_uploads_busy,
+                )
+            )
+            app.state.uploads_cleanup_task = uploads_cleanup_task
+            logger.info(
+                f"uploads 保留策略已启用: uploads_max_age_days={uploads_age_days}, "
+                f"restored_max_age_days={restored_age_days}"
+            )
+    except Exception as e:
+        logger.warning(f"uploads 保留策略清理初始化失败（不影响服务启动）: {e}")
 
     # 模型空闲超时自动卸载（P1-2）：cache_model 驻留模型时，
     # 空闲超过阈值自动卸载释放 GPU/CPU 资源，兼顾跨任务复用与资源可用性
     idle_unload_minutes = int(config.get("model", {}).get("idle_unload_minutes", 15) or 0)
     if idle_unload_minutes > 0:
-
-        async def _periodic_model_idle_unload():
-            while True:
-                await asyncio.sleep(60)
-                try:
-                    current = app.state.task_queue.current_task_id
-                    task_running = (current() if callable(current) else current) is not None
-                    if model_registry.should_idle_unload(
-                        model_loaded=model_registry.model_loaded,
-                        seconds_idle=model_registry.seconds_since_activity,
-                        idle_minutes=idle_unload_minutes,
-                        task_running=task_running,
-                    ):
-                        logger.info(f"模型已空闲超过 {idle_unload_minutes} 分钟，自动卸载释放资源")
-                        await app.state.model_manager.unload_model()
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    logger.warning(f"模型空闲卸载失败: {e}")
-
-        app.state.model_idle_unload_task = asyncio.create_task(_periodic_model_idle_unload())
+        app.state.model_idle_unload_task = asyncio.create_task(
+            periodic_model_idle_unload(
+                get_queue=lambda: app.state.task_queue,
+                model_manager=app.state.model_manager,
+                idle_minutes=idle_unload_minutes,
+            )
+        )
         logger.info(f"模型空闲自动卸载已启用: {idle_unload_minutes} 分钟无任务即卸载")
 
     backend_value = gpu_manager.backend.value if gpu_manager.backend else "unavailable"
@@ -538,6 +626,13 @@ async def lifespan(app: FastAPI):
         output_cleanup.cancel()
         with suppress(asyncio.CancelledError):
             await output_cleanup
+
+    # 停止 uploads 保留策略周期清理任务（数据治理 P0-1）
+    uploads_cleanup = getattr(app.state, "uploads_cleanup_task", None)
+    if uploads_cleanup:
+        uploads_cleanup.cancel()
+        with suppress(asyncio.CancelledError):
+            await uploads_cleanup
 
     # 停止进度停滞看门狗
     progress_watchdog = getattr(app.state, "progress_watchdog_task", None)
@@ -606,11 +701,19 @@ def create_app(config: dict | None = None) -> FastAPI:
     if config is None:
         config = load_config()
 
+    # P2-5（后端设计评估 2026-09-06）：docs/redoc/openapi 端点显式开关。
+    # FastAPI 默认暴露 /docs /redoc /openapi.json，本地工具场景可接受；
+    # 公网部署经 SEEDVR2_ENABLE_DOCS=0 关闭，避免框架指纹与 API 面暴露
+    enable_docs = os.environ.get("SEEDVR2_ENABLE_DOCS", "1").strip().lower() not in ("0", "false", "no", "off")
+
     app = FastAPI(
         title="SeedVR2",
         description="SeedVR2 - AI-powered video & image super-resolution toolkit",
         version=get_app_version(),
         lifespan=lifespan,
+        docs_url="/docs" if enable_docs else None,
+        redoc_url="/redoc" if enable_docs else None,
+        openapi_url="/openapi.json" if enable_docs else None,
     )
 
     allowed_origins = config.get("server", {}).get(

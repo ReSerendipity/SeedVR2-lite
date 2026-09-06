@@ -11,6 +11,7 @@ import contextlib
 
 import pytest
 
+from app.integrated_app.exceptions import TaskQueueFullError
 from app.integrated_app.task_queue import (
     DEFAULT_QUEUE_MAXSIZE,
     DEFAULT_TASK_TIMEOUT_SECONDS,
@@ -312,7 +313,7 @@ class TestTaskQueueMaxsize:
 
     @pytest.mark.asyncio
     async def test_maxsize_bounds_queue(self, started_queue):
-        """maxsize=10 时，第 11 个 submit 应阻塞"""
+        """maxsize=10 时，第 11 个 submit 应立即抛 TaskQueueFullError（快速拒绝，评估 P2-1）"""
         blocker_done = asyncio.Event()
 
         async def blocker():
@@ -324,10 +325,34 @@ class TestTaskQueueMaxsize:
         # 填满队列（maxsize=10）
         for i in range(10):
             await started_queue.submit(f"q-{i}", blocker)
-        # 队列已满；submit 应阻塞
-        slow_put = asyncio.create_task(started_queue.submit("overflow", blocker))
-        await asyncio.sleep(0.1)
-        assert not slow_put.done()
-        # 释放 blocker，让 overflow 入队
+        # 队列已满；submit 快速拒绝而非阻塞挂起
+        with pytest.raises(TaskQueueFullError) as exc_info:
+            await started_queue.submit("overflow", blocker)
+        assert exc_info.value.detail["queue_maxsize"] == 10
+        assert exc_info.value.detail["queue_size"] == 10
+        # 溢出任务未入队，队列深度不变
+        assert started_queue.queue_size == 10
+        # 释放 blocker，队列恢复正常消化
         blocker_done.set()
-        await asyncio.wait_for(slow_put, timeout=2.0)
+
+    @pytest.mark.asyncio
+    async def test_submit_rejects_fast_without_waiting(self, started_queue):
+        """队列满时 submit 必须在极短时间内返回（不得阻塞等待队列消化）"""
+        blocker_done = asyncio.Event()
+
+        async def blocker():
+            await blocker_done.wait()
+
+        await started_queue.submit("blocker", blocker)
+        await asyncio.sleep(0.05)
+        for i in range(10):
+            await started_queue.submit(f"q-{i}", blocker)
+
+        async def must_fail_fast():
+            await started_queue.submit("overflow", blocker)
+
+        start = asyncio.get_event_loop().time()
+        with pytest.raises(TaskQueueFullError):
+            await asyncio.wait_for(must_fail_fast(), timeout=0.5)
+        assert asyncio.get_event_loop().time() - start < 0.5
+        blocker_done.set()

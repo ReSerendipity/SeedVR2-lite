@@ -427,6 +427,22 @@ class _ImagePipelineMixin:
             save_kwargs["quality"] = 90
             save_kwargs["lossless"] = False
 
+        # 数据治理 P2-5：生成参数 + 源图 EXIF 合并进同一次编码保存
+        # （避免 JPEG 二次有损压缩，也避免与 copy_exif 的相互覆盖）
+        metadata_kwargs: dict = {}
+        try:
+            from app.integrated_app.utils.output_metadata import build_save_metadata_kwargs
+
+            metadata_kwargs = build_save_metadata_kwargs(
+                ext=ext,
+                params=dict(inf),
+                source_path=image_path,
+                copy_source_exif=bool(postprocess_cfg.get("copy_exif", True)),
+            )
+            save_kwargs.update({k: v for k, v in metadata_kwargs.items() if k != "exif_merged"})
+        except Exception as e:
+            logger.debug(f"生成参数元数据构建失败（跳过嵌入）: {e}")
+
         pil_img = PILImage.fromarray(result_np)
         # JPEG/WebP 不支持透明通道，需要转换为 RGB
         if requested_format in ("jpg", "jpeg") and pil_img.mode in ("RGBA", "LA", "P"):
@@ -441,9 +457,10 @@ class _ImagePipelineMixin:
 
         pil_img.save(output_path, **save_kwargs)
 
-        # 复制 EXIF 元数据 (upscayl inspired)
+        # 复制 EXIF 元数据 (upscayl inspired)——保存时已合并源图 EXIF 的情况下跳过
+        # （copy_exif 的二次保存会用源图 EXIF 覆盖输出，抹掉生成参数元数据）
         enable_exif_copy = postprocess_cfg.get("copy_exif", True)
-        if enable_exif_copy:
+        if enable_exif_copy and not metadata_kwargs.get("exif_merged"):
             try:
                 copy_exif_metadata(image_path, output_path)
             except Exception as e:

@@ -333,3 +333,53 @@ class DiskSpaceError(RestoreError):
     @classmethod
     def http_status(cls) -> int:
         return 507
+
+
+class InsufficientVramError(RestoreError):
+    """显存可用量不足以承载本次任务（成本治理 P1-2 显存预检门禁）。
+
+    任务提交前由 services.restore_service.vram_preflight_gate 抛出，
+    全局异常处理器转换为 HTTP 503，消息携带可执行的降档建议
+    （切换更小模型/精度、降低分辨率或帧数、开启 BlockSwap），
+    避免任务入队后白跑数分钟才 OOM（时间与电力浪费）。
+    """
+
+    code = "INSUFFICIENT_VRAM"
+
+    def __init__(self, message: str = "显存可用量不足", *, detail: dict | None = None):
+        """初始化显存不足异常。
+
+        Args:
+            message: 面向用户的错误消息（含降档建议）。
+            detail: 结构化上下文（estimated_vram_gb / available_vram_gb / 推荐参数等）。
+        """
+        super().__init__(message, detail=detail)
+
+    @classmethod
+    def http_status(cls) -> int:
+        return 503
+
+
+class TaskQueueFullError(RestoreError):
+    """任务队列已满（评估 P2-1 快速拒绝语义）。
+
+    TaskQueue 的有界队列（runtime.task.queue_maxsize，默认 100）已满时，
+    submit 立即抛出本异常而非阻塞等待——单 worker 串行消化分钟级任务期间，
+    阻塞语义会让后续提交请求静默挂起（可达分钟/小时级）且无任何反馈。
+    由提交类路由捕获并转换为 HTTP 503 + Retry-After。
+    """
+
+    code = "TASK_QUEUE_FULL"
+
+    def __init__(self, message: str = "任务队列已满，请稍后重试", *, detail: dict | None = None):
+        """初始化队列已满异常。
+
+        Args:
+            message: 面向用户的错误消息。
+            detail: 结构化上下文（如 queue_maxsize / queue_size）。
+        """
+        super().__init__(message, detail=detail)
+
+    @classmethod
+    def http_status(cls) -> int:
+        return 503

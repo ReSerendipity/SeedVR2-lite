@@ -167,6 +167,36 @@ class TaskCheckpoint:
             return True
         return False
 
+    def remove_stale_checkpoints(self, max_age_seconds: float) -> int:
+        """启动孤儿扫描：清理超过 TTL 的残留 checkpoint JSON（数据治理 P2-1）。
+
+        批量任务失败/中断后 checkpoint 保留以便续跑，但用户可能永远不恢复——
+        残留 JSON 含本机绝对路径与文件指纹，且长期累积。本方法按文件 mtime
+        清理超期条目。**仅处理 ``*.json``**：data/checkpoints 同时被训练子系统
+        用作快照目录（``checkpoint_step_*.pt`` / epoch 快照），训练快照由
+        trainer 自身的滚动保留策略（keep_last_checkpoints）管理，此处绝不触碰。
+
+        Args:
+            max_age_seconds: 最长保留秒数；<=0 时直接跳过（禁用）。
+
+        Returns:
+            删除的 checkpoint JSON 文件数。
+        """
+        if max_age_seconds <= 0:
+            return 0
+        cutoff = time.time() - max_age_seconds
+        removed = 0
+        for p in self.checkpoint_dir.glob("*.json"):
+            try:
+                if p.stat().st_mtime < cutoff:
+                    p.unlink()
+                    removed += 1
+            except OSError:
+                continue
+        if removed:
+            logger.info(f"孤儿 checkpoint 清理: 删除 {removed} 个超过 {int(max_age_seconds)} 秒的残留 JSON")
+        return removed
+
     def list_checkpoints(self) -> list[dict[str, Any]]:
         """列出所有未完成的 checkpoint。
 

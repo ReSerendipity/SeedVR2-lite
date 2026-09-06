@@ -79,6 +79,61 @@ class _VideoPipelineMixin:
             **kwargs,
         )
 
+    @staticmethod
+    def _segment_frames_complete(
+        frames_dir: str, seg_start: int, seg_end: int, expected_hw: tuple[int, int] | None = None
+    ) -> bool:
+        """判断某段的输出帧是否已全部完整在盘（帧级断点续跑判定）。
+
+        Args:
+            frames_dir: 输出帧目录。
+            seg_start: 段起始帧号（含）。
+            seg_end: 段结束帧号（不含）。
+            expected_hw: 期望帧尺寸 (h, w)。传入时校验帧尺寸与本次推理
+                输出分辨率一致——OOM 降级阶梯可能降低分辨率，尺寸不一致
+                的残留帧必须整段重算，否则 ffmpeg 合成会得到混尺寸帧序列。
+
+        Returns:
+            True 表示该段可跳过推理直接复用。
+        """
+        for idx in range(seg_start, seg_end):
+            path = os.path.join(frames_dir, f"frame_{idx:06d}.png")
+            try:
+                if os.path.getsize(path) <= 0:
+                    return False
+            except OSError:
+                return False
+        if expected_hw is not None:
+            import cv2
+
+            img = cv2.imread(os.path.join(frames_dir, f"frame_{seg_start:06d}.png"))
+            if img is None or (img.shape[0], img.shape[1]) != expected_hw:
+                return False
+        return True
+
+    @staticmethod
+    def _rebuild_tail_from_disk(frames_dir: str, seg_start: int, overlap_n: int):
+        """从盘上重建上一段的处理后尾帧（帧级续跑的段间混合上下文）。
+
+        盘上帧与原运行写入内容等价（均为段末未与下段混合的成品帧），
+        以此恢复 prev_tail_out，保证续跑段的重叠混合与连续运行一致。
+
+        Returns:
+            uint8 HWC RGB 数组；任一帧缺失/不可读或 overlap_n<=0 时返回 None。
+        """
+        if overlap_n <= 0 or seg_start <= 0:
+            return None
+        import cv2
+        import numpy as np
+
+        frames = []
+        for idx in range(max(0, seg_start - overlap_n), seg_start):
+            img = cv2.imread(os.path.join(frames_dir, f"frame_{idx:06d}.png"))
+            if img is None:
+                return None
+            frames.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        return np.array(frames) if frames else None
+
     def _infer_video_impl(
         self,
         video_path: str,
@@ -116,6 +171,9 @@ class _VideoPipelineMixin:
         # 临时帧目录引用：创建前为 None，供失败/取消路径统一回收。
         # 长视频帧文件可达数十 GB，任何退出路径泄漏都会写满磁盘
         frames_dir: str | None = None
+        # 续跑意图在 except 中也要可判定（inf 可能在赋值前就抛错，如内存守卫），
+        # 直接取调用方 kwargs，与 inf["resume_frames"] 同源
+        resume_intent = bool(kwargs.get("resume_frames", False))
 
         try:
             os.makedirs(output_dir, exist_ok=True)
@@ -164,6 +222,8 @@ class _VideoPipelineMixin:
             uniform_batch_size = bool(inf.get("uniform_batch_size", True))
             # prepend_frames: 视频开头反转预填充, 减少起始伪影 (自动移除)
             prepend_frames = max(0, int(inf.get("prepend_frames", 0) or 0))
+            # 帧级断点续跑（成本治理 P2）：重试场景复用上一轮已完整写盘的段帧
+            resume_frames = bool(inf.get("resume_frames", False))
             # cache_model: 是否缓存 DiT/VAE 模型跨任务复用 (12GB 默认关闭)
             cache_model = bool(inf.get("cache_model", False))
 
@@ -256,8 +316,11 @@ class _VideoPipelineMixin:
             # 构建变换 (所有段复用同一流水线)
             video_transform = self._build_video_transform(res_h, res_w)
 
-            # 输出帧目录 (供 ffmpeg 合成)
-            frames_dir = os.path.join(output_dir, "_frames")
+            # 输出帧目录 (供 ffmpeg 合成)。frames_dir_override（评估 P2-6）为
+            # 任务级隔离目录 _frames_<task_id>：段级续跑只在任务自有目录内判定
+            # 帧完整性，杜绝共享 _frames 目录的跨任务帧污染
+            frames_dir_override = str(inf.get("frames_dir_override") or "")
+            frames_dir = frames_dir_override if frames_dir_override else os.path.join(output_dir, "_frames")
             os.makedirs(frames_dir, exist_ok=True)
 
             # VAE 常驻, 仅在编码/解码阶段切换到 GPU (DiT 采样阶段在 CPU)
@@ -296,6 +359,8 @@ class _VideoPipelineMixin:
 
             cap = None
             total_written = 0
+            resumed_segments = 0  # 帧级续跑复用的段数（写入 metadata 供可观测）
+            pending_read_pos = 0  # 跳段后下一处理段的顺序读取目标位置（含 prepend 偏移）
             prev_prop_frame = None  # FeaturePropagation 跨段传播 (torch 张量)
             prev_tail_out = None  # 上一段处理后尾帧 (uint8 HWC), 用于重叠混合
             raw_buf: list[torch.Tensor] = []  # 原始帧缓冲, 复用重叠帧避免回退读取
@@ -313,6 +378,53 @@ class _VideoPipelineMixin:
                     logger.info(
                         f"处理段 {seg_idx + 1}/{len(temporal_segments)}: " f"帧 {seg_start}-{seg_end} ({seg_len}帧)"
                     )
+
+                    # ---- 帧级断点续跑判定（成本治理 P2）----
+                    # 该段帧已全部完整在盘（上一轮同任务重试前写盘）→ 跳过推理直接复用。
+                    # 仅 resume_frames=True 时启用（编排层 OOM 重试路径），全新任务恒不跳，
+                    # 防止把其他历史任务的残留帧误当成断点
+                    if resume_frames and self._segment_frames_complete(
+                        frames_dir, seg_start, seg_end, expected_hw=(res_h, res_w)
+                    ):
+                        logger.info(
+                            f"断点续跑: 段 {seg_idx + 1}/{len(temporal_segments)} 帧 {seg_start}-{seg_end} "
+                            f"已在盘, 跳过推理复用现有帧"
+                        )
+                        total_written += seg_len
+                        resumed_segments += 1
+                        # 顺序读取位置失配：记录目标位置（cap 从头打开未消费），
+                        # 下一处理段前用 grab 精确推进（不解码像素，代价远低于推理）
+                        pending_read_pos = seg_end + prepend_frames
+                        # 段间混合尾帧延迟到下一处理段从盘上重建
+                        prev_tail_out = None
+                        if self._progress_callback is not None:
+                            try:
+                                current = min(seg_end, total_frames)
+                                self._progress_callback(
+                                    current_frame=current,
+                                    total_frames=total_frames,
+                                    progress=(current / total_frames * 100.0) if total_frames > 0 else 100.0,
+                                )
+                            except Exception as e:
+                                logger.debug(f"Progress callback 调用失败: {e}")
+                        continue
+
+                    # 跳段后重新对齐顺序读取位置：grab 逐帧推进到目标（不做 retrieve/解码转换）
+                    if pending_read_pos > 0:
+                        target_pos = pending_read_pos
+                        while cap.isOpened() and cap.get(cv2.CAP_PROP_POS_FRAMES) < target_pos:
+                            if not cap.grab():
+                                break
+                        raw_buf = []
+                        # 从盘上重建段间混合尾帧（与原运行写入的尾帧等价，均为段末未混合帧）
+                        if seg_start > 0 and segment_overlap > 0:
+                            prev_tail_out = self._rebuild_tail_from_disk(
+                                frames_dir, seg_start, min(segment_overlap, seg_start)
+                            )
+                            if prev_tail_out is None:
+                                logger.debug("断点续跑: 尾帧重建失败, 本段首重叠帧将不与上段混合（仅影响衔接质量）")
+                        # FeaturePropagation 上下文不重建（仅影响续跑段首帧传播细节）
+                        pending_read_pos = 0
 
                     # ---- 读取本段帧 (顺序读取, 重叠帧由 raw_buf 复用) ----
                     # prepend_frames: 首段前置反转帧作为时序上下文 (官方语义, 输出自动移除)
@@ -627,18 +739,33 @@ class _VideoPipelineMixin:
 
             # ==================== ffmpeg 合成视频 + 音轨 ====================
             self._check_cancelled("video:compose")
+            # 数据治理 P2-5：生成参数写入容器 comment 元数据（随输出文件走的血缘）
+            compose_comment = ""
+            try:
+                import json as _json
+
+                compose_comment = _json.dumps(dict(inf), ensure_ascii=False, default=str)[:4000]
+            except Exception:
+                compose_comment = ""
             composed_ok = self._ffmpeg.compose_video(
                 frames_dir=frames_dir,
                 output_path=output_path,
                 fps=float(out_fps),
                 source_video=video_path,
                 include_audio=True,
+                comment=compose_comment or None,
             )
             if not composed_ok:
                 logger.error(f"视频合成失败: {output_path}")
                 if frames_dir:
                     shutil.rmtree(frames_dir, ignore_errors=True)
-                return RestoreResult(success=False, error="ffmpeg 视频合成失败")
+                # DX P2-8：报错给出可操作修复路径，而不是一句话让用户无从下手
+                ffmpeg_hint = (
+                    "ffmpeg 视频合成失败：请确认 FFmpeg 已安装（命令行执行 ffmpeg -version 应成功）。"
+                    "未安装时从 https://www.gyan.dev/ffmpeg/builds/ 下载 release-full 并加入 PATH，"
+                    "或将 ffmpeg.exe/ffprobe.exe 放到项目 app/ 目录（见 NOTICE 第 4 条）；详情见服务端日志。"
+                )
+                return RestoreResult(success=False, error=ffmpeg_hint)
 
             logger.info(f"视频修复完成: {output_path} ({output_frames} 帧)")
 
@@ -698,6 +825,7 @@ class _VideoPipelineMixin:
                     "segment_size": segment_size,
                     "segment_overlap": segment_overlap,
                     "num_segments": len(temporal_segments),
+                    "resumed_segments": resumed_segments,
                     "batch_size": batch_size,
                     "uniform_batch_size": uniform_batch_size,
                     "temporal_overlap": temporal_overlap,
@@ -721,6 +849,7 @@ class _VideoPipelineMixin:
             logger.warning(f"视频推理被取消: {e}")
             self._cleanup_after_error()
             if frames_dir:
+                # 取消即放弃：即便 resume_frames 也清理（取消的任务不会进入崩溃恢复）
                 shutil.rmtree(frames_dir, ignore_errors=True)
             return RestoreResult(
                 success=False,
@@ -731,7 +860,10 @@ class _VideoPipelineMixin:
         except Exception as e:
             logger.error(f"视频修复失败: {e}", exc_info=True)
             self._cleanup_after_error()
-            if frames_dir:
+            if frames_dir and not resume_intent:
+                # 评估 P2-6：resume_frames=True 表示调用方将重试/崩溃恢复续跑，
+                # 失败后必须保留段帧，否则续跑退化为整体重跑。残留目录由
+                # outputs 保留策略（年龄/水位清理）兜底回收
                 shutil.rmtree(frames_dir, ignore_errors=True)
             return RestoreResult(success=False, error=str(e), processing_time=time.time() - start_time)
 

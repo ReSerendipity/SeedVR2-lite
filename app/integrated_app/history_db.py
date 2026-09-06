@@ -35,7 +35,22 @@ logger = logging.getLogger(__name__)
 # 历史库 schema 当前版本（数据治理 P0-2）。
 # 约定：新增列/索引等结构变更时 +1，并在 _MIGRATIONS 登记对应迁移步骤（v0 表示
 # 未打版本标记的历史旧库）。首次建表即包含全部列，因此新库从 v0 一步推进到最新版。
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+
+
+async def _migrate_v2_to_v3(db: aiosqlite.Connection) -> None:
+    """v2 → v3：history 表新增 pinned 列（数据治理 P1-5 用户「标记保留」）。
+
+    pinned=1 的记录，其输出文件被 retention 年龄/数量清理豁免。
+    必须幂等：列已存在时 no-op。
+
+    Args:
+        db: aiosqlite 连接。
+    """
+    cursor = await db.execute("PRAGMA table_info(history)")
+    existing_cols = {row[1] for row in await cursor.fetchall()}
+    if existing_cols and "pinned" not in existing_cols:
+        await db.execute("ALTER TABLE history ADD COLUMN pinned INTEGER DEFAULT 0")
 
 
 async def _migrate_v1_to_v2(db: aiosqlite.Connection) -> None:
@@ -75,6 +90,7 @@ async def _migrate_v0_to_v1(db: aiosqlite.Connection) -> None:
 _MIGRATIONS: tuple[tuple[int, str, Callable[[aiosqlite.Connection], Awaitable[None]]], ...] = (
     (1, "补列 output_size_bytes / vram_peak_mb（旧库兼容）", _migrate_v0_to_v1),
     (2, "补列 input_sha256（源文件内容寻址血缘，P1-1）", _migrate_v1_to_v2),
+    (3, "补列 pinned（用户标记保留，retention 清理豁免，数据治理 P1-5）", _migrate_v2_to_v3),
 )
 
 
@@ -99,6 +115,8 @@ class HistoryRecord:
         vram_peak_mb: 本次推理的 VRAM 峰值（MB），无监控数据时为 0（P2-1）。
         input_sha256: 源输入文件内容 SHA-256（hex），内容寻址血缘（数据治理 P1-1）；
             空串表示未计算（如内存数据库/测试桩场景）。
+        pinned: 用户「标记保留」。置位后该记录的输出文件被 retention
+            年龄/数量清理豁免（数据治理 P1-5）。
     """
 
     id: int | None = None
@@ -114,6 +132,7 @@ class HistoryRecord:
     output_size_bytes: int = 0
     vram_peak_mb: float = 0.0
     input_sha256: str = ""
+    pinned: bool = False
 
 
 @dataclass
@@ -197,6 +216,11 @@ class HistoryDB:
             f"PRAGMA busy_timeout={int(self.timeout * 1000)}"
         )  # nosemgrep: sqlalchemy-execute-raw-query - int 转型的配置常量（timeout 恒为默认值），无注入面
 
+        # 数据治理 P2-4：建表前先探测是否为已存在数据的旧库——
+        # CREATE TABLE IF NOT EXISTS 之后探测会把全新空库误判为旧库
+        cursor_probe = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='history'")
+        history_table_existed = await cursor_probe.fetchone() is not None
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -211,7 +235,8 @@ class HistoryDB:
                 error_message TEXT DEFAULT '',
                 output_size_bytes INTEGER DEFAULT 0,
                 vram_peak_mb REAL DEFAULT 0.0,
-                input_sha256 TEXT DEFAULT ''
+                input_sha256 TEXT DEFAULT '',
+                pinned INTEGER DEFAULT 0
             )
         """)
 
@@ -223,6 +248,8 @@ class HistoryDB:
                 f"可能是程序回滚，跳过迁移"
             )
         else:
+            # 数据治理 P2-4：升级前自动备份（空库/同版本不备份，失败不阻断迁移）
+            await self._backup_before_migration(db, current_version, history_table_existed)
             initial_version = current_version
             for target, desc, migrate in _MIGRATIONS:
                 if current_version < target:
@@ -291,6 +318,35 @@ class HistoryDB:
         logger.info(f"历史数据库已初始化: {self.db_path}")
 
     # ==================== 私有辅助方法 ====================
+
+    async def _backup_before_migration(
+        self, db: aiosqlite.Connection, current_version: int, history_table_existed: bool
+    ) -> None:
+        """结构升级前把当前库快照到 ``{db_path}.bak-v{current_version}``（数据治理 P2-4）。
+
+        仅当调用方确认建表前已存在 history 表（真实旧库，而非首次启动的空库）
+        且版本低于代码版本时执行；``VACUUM INTO`` 生成含 WAL 已提交内容的
+        一致性快照。目标文件已存在时跳过（保留最早一次该版本的备份，避免
+        覆盖）；备份失败只告警不阻断迁移（迁移函数本身幂等）。
+
+        Args:
+            db: aiosqlite 连接。
+            current_version: 迁移前的 schema 版本（0 表示未打标记的旧库）。
+            history_table_existed: 建表前是否已存在 history 表。
+        """
+        if current_version >= SCHEMA_VERSION:
+            return
+        if not history_table_existed:
+            return  # 全新空库，无需备份
+        backup_path = f"{self.db_path}.bak-v{current_version}"
+        if os.path.exists(backup_path):
+            logger.info(f"迁移前备份已存在，跳过: {backup_path}")
+            return
+        try:
+            await db.execute("VACUUM INTO ?", (backup_path,))
+            logger.info(f"迁移前自动备份完成: {backup_path}")
+        except Exception as e:  # noqa: BLE001 — 备份失败不阻断迁移主流程
+            logger.warning(f"迁移前自动备份失败（继续迁移）: {e}")
 
     async def _get_schema_version(self, db: aiosqlite.Connection) -> int:
         """读取数据库 schema 版本标记（PRAGMA user_version），无标记返回 0。
@@ -479,6 +535,7 @@ class HistoryDB:
             "output_size_bytes",
             "vram_peak_mb",
             "input_sha256",
+            "pinned",
         }
         invalid_keys = set(kwargs.keys()) - allowed_columns
         if invalid_keys:
@@ -602,10 +659,106 @@ class HistoryDB:
         )
         return self._row_to_record(row) if row else None
 
+    async def distinct_output_dirs(self, limit: int = 50, scan_window: int = 1000) -> list[str]:
+        """最近任务输出去重父目录（水位清理范围，成本治理 P1-1）。
+
+        默认输出模板（如 ``{input_dir}/restored/``）会把成品写到 outputs/
+        之外，时间清理覆盖不到；水位清理以本方法返回的目录为清理范围。
+
+        Args:
+            limit: 返回目录数上限。
+            scan_window: 扫描最近多少条带输出路径的记录。
+
+        Returns:
+            去重后的输出文件父目录列表（新记录优先，最多 limit 个）。
+        """
+        rows = await self._fetch_all(
+            "SELECT output_file FROM history WHERE output_file != '' ORDER BY id DESC LIMIT ?",
+            (int(scan_window),),
+        )
+        dirs: list[str] = []
+        for row in rows:
+            parent = os.path.dirname(row["output_file"])
+            if parent and parent not in dirs:
+                dirs.append(parent)
+                if len(dirs) >= limit:
+                    break
+        return dirs
+
     async def delete_record(self, record_id: int) -> bool:
         """删除记录"""
         await self._execute_write("DELETE FROM history WHERE id = ?", (record_id,))
         return True
+
+    async def get_task_ids_by_record_id(self, record_id: int) -> list[str]:
+        """查询历史记录关联的全部任务 ID（数据治理 P1-1 删除连带清理用）。
+
+        一个记录可能因重试/断点续跑存在多个任务行，删除记录时需要
+        逐一回收其断点续跑 JSON。
+
+        Args:
+            record_id: 历史记录主键 ID。
+
+        Returns:
+            关联的 task_id 列表（按更新时间降序）；无关联任务返回空列表。
+        """
+        rows = await self._fetch_all(
+            "SELECT task_id FROM tasks WHERE record_id = ? ORDER BY updated_at DESC",
+            (record_id,),
+        )
+        return [str(row["task_id"]) for row in rows]
+
+    async def set_record_pinned(self, record_id: int, pinned: bool) -> bool:
+        """设置/取消记录的「标记保留」（数据治理 P1-5）。
+
+        pinned 记录的输出文件被 retention 年龄/数量清理豁免。
+
+        Args:
+            record_id: 历史记录主键 ID。
+            pinned: True 标记保留，False 取消标记。
+
+        Returns:
+            记录存在且更新成功返回 True；记录不存在返回 False。
+        """
+        rowcount = await self._execute_write(
+            "UPDATE history SET pinned = ? WHERE id = ?",
+            (1 if pinned else 0, record_id),
+            want_rowcount=True,
+        )
+        return rowcount > 0
+
+    async def get_pinned_output_paths(self) -> set[str]:
+        """查询全部 pinned 记录的输出文件路径（retention 清理豁免清单）。
+
+        Returns:
+            去重后的输出文件路径集合（空 output_file 不计入）；无 pinned 记录返回空集合。
+        """
+        rows = await self._fetch_all("SELECT DISTINCT output_file FROM history WHERE pinned = 1 AND output_file != ''")
+        return {str(row["output_file"]) for row in rows}
+
+    async def get_records_filtered(
+        self, before_date: str | None = None, status: str | None = None
+    ) -> list[HistoryRecord]:
+        """按 clear_records 相同条件查询记录（删除连带产物前先取落盘路径）。
+
+        Args:
+            before_date: 仅匹配该日期之前的记录，None 不限。
+            status: 仅匹配指定状态，None 不限。
+
+        Returns:
+            命中的 HistoryRecord 列表。
+        """
+        conditions = []
+        params: list = []
+        if before_date:
+            conditions.append("created_at < ?")
+            params.append(before_date)
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        rows = await self._fetch_all(f"SELECT * FROM history{where}", params)
+        return [self._row_to_record(row) for row in rows]
 
     async def clear_records(self, before_date: str | None = None, status: str | None = None) -> int:
         """清除记录。
@@ -818,6 +971,7 @@ class HistoryDB:
             output_size_bytes=row["output_size_bytes"] if "output_size_bytes" in cols else 0,
             vram_peak_mb=row["vram_peak_mb"] if "vram_peak_mb" in cols else 0.0,
             input_sha256=row["input_sha256"] if "input_sha256" in cols else "",
+            pinned=bool(row["pinned"]) if "pinned" in cols else False,
         )
 
     def _row_to_task_record(self, row: sqlite3.Row) -> TaskRecord:

@@ -168,3 +168,34 @@ class TestPerPathCache:
         mtime = key_file.stat().st_mtime_ns
         get_secret_key(key_file=key_file)
         assert key_file.stat().st_mtime_ns == mtime
+
+
+class TestIcaclsSubprocessDecoding:
+    """KNOWN_ISSUES #76：icacls subprocess 必须显式指定解码参数
+
+    中文 Windows 下 icacls 输出 GBK 文本，PYTHONUTF8=1 环境的 text=True
+    按 UTF-8 解码会让 _readerthread 崩线程（UnicodeDecodeError），
+    stdout 静默丢失。回归契约：run 调用必须携带 encoding + errors。
+    """
+
+    def test_icacls_run_passes_explicit_encoding(self, tmp_path, monkeypatch):
+        import subprocess as _subprocess
+
+        captured: dict = {}
+
+        def _fake_run(cmd, **kwargs):
+            captured.update(kwargs)
+            return _subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(_subprocess, "run", _fake_run)
+        # 清空 TEMP/TMP 使实现跳过「临时目录不跑 icacls」的早退分支
+        monkeypatch.delenv("TEMP", raising=False)
+        monkeypatch.delenv("TMP", raising=False)
+
+        key_file = tmp_path / "sk-decode-test.key"
+        key_file.write_text(TEST_KEY.hex(), encoding="utf-8")
+        assert harden_secret_file_permissions(key_file) is True
+
+        assert captured.get("encoding") == "utf-8"
+        assert captured.get("errors") == "replace"
+        assert captured.get("text") is True

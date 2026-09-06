@@ -689,7 +689,10 @@ def _patch_rope_for_blockswap(model: torch.nn.Module) -> None:
                     except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
                         error_msg = str(e).lower()
                         if any(x in error_msg for x in ["device", "memory", "allocation"]):
-                            logger.warning(f"RoPE OOM for {module_name}, falling back to CPU")
+                            logger.warning(
+                                f"RoPE OOM for {module_name}, falling back to CPU "
+                                "(if this recurs, raise the block-swap tier or lower resolution in task settings)"
+                            )
 
                             try:
                                 current_device = next(self.parameters()).device

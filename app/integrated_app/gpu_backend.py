@@ -124,6 +124,17 @@ class _GPUStrategy(ABC):
         """
         raise NotImplementedError
 
+    def check_health(self) -> bool:
+        """运行时健康探测（评估 P2-4：能力可用 ≠ 上下文健康）
+
+        默认实现返回 False（未检测到可探测的后端）。就绪探针仅在
+        is_gpu_available 为 True 时才消费本结果，此时具体策略必然存在。
+
+        Returns:
+            bool: 后端运行时健康返回 True，上下文损坏/探测异常返回 False
+        """
+        return False
+
     def get_process_group_backend(self) -> str:
         """获取分布式训练进程组通信后端
 
@@ -233,6 +244,27 @@ class _CUDAStrategy(_GPUStrategy):
 
             return torch.cuda.is_available()
         except ImportError:
+            return False
+
+    def check_health(self) -> bool:
+        """运行时健康探测：CUDA 上下文可响应且显存可查询（评估 P2-4）
+
+        torch.cuda.is_available() 在 CUDA 上下文损坏（OOM 后驱动状态异常、
+        驱动崩溃恢复中）时可能仍返回 True，表现为「健康但所有任务失败」的
+        假阳性。mem_get_info 需要与驱动真实交互，能暴露这类损坏。
+
+        Returns:
+            bool: 上下文健康返回 True；探测异常返回 False（探针永不抛异常）
+        """
+        try:
+            import torch
+
+            if not torch.cuda.is_available():
+                return False
+            torch.cuda.mem_get_info(0)
+            return True
+        except Exception as e:  # noqa: BLE001 — 探针必须无异常收敛为 False
+            logger.warning(f"CUDA 健康探测失败，判定 GPU 不健康: {e}")
             return False
 
     def synchronize(self) -> None:
@@ -361,6 +393,24 @@ class GPUBackendManager:
             bool: GPU 可用返回 True，降级模式返回 False
         """
         return self._backend == GPUBackend.CUDA
+
+    def check_health(self) -> bool:
+        """运行时健康探测（评估 P2-4）
+
+        委托当前策略探测 CUDA 上下文健康。调用方语义约定：
+        - is_gpu_available=True 时调用本方法，False 表示 GPU 已损坏，应停止接流；
+        - is_gpu_available=False（降级模式）时无需调用——服务本就不承诺推理能力。
+
+        Returns:
+            bool: GPU 运行时健康返回 True；无后端或探测异常返回 False
+        """
+        if self._strategy is None:
+            return False
+        try:
+            return self._strategy.check_health()
+        except Exception as e:  # noqa: BLE001 — 探针必须无异常收敛为 False
+            logger.warning(f"GPU 健康探测异常，判定不健康: {e}")
+            return False
 
     @property
     def device_str(self) -> str:

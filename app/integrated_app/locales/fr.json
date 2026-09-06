@@ -259,6 +259,7 @@
     "batch_mode": "Lot",
     "readonly_param_tip": "Valeur recommandée, non modifiable",
     "optimized_params": "Optimisé",
+    "vae_tiling_tier_hint": "VRAM {gb}GB dispo → tuilage VAE recommandé : tile {size} / overlap {overlap}",
     "tip_swap_io": "Activé, les poids du modèle sont permutés entre la VRAM et la RAM selon les besoins, ce qui réduit fortement la VRAM de pointe au prix d'une légère perte de vitesse. À garder activé si votre VRAM est inférieure à la taille du modèle.",
     "tip_cache_model": "Conserver les modèles chargés en mémoire entre les tâches pour accélérer les suivantes au prix de la VRAM ; désactivé pour les libérer après chaque tâche",
     "tip_tiled_encode": "Encodage par carreaux : découpe les grandes images avant encodage pour éviter les pics de VRAM. Laissez activé ; le désactiver n'est légèrement plus rapide que pour de hautes résolutions avec beaucoup de VRAM.",

@@ -475,6 +475,8 @@ class RuntimeTaskConfig(BaseModel):
         stale_threshold_minutes: processing 任务超过该分钟数无更新视为卡死（0-1440，0=禁用）。
         progress_stall_timeout_minutes: 当前运行任务进度停滞超过该分钟数自动取消
             （0-1440，0=禁用；防止单文件推理挂死占住唯一 worker）。
+        checkpoint_ttl_minutes: 失败/中断任务残留 checkpoint JSON 的最长保留分钟数，
+            启动孤儿扫描时清理超期文件（0=禁用；数据治理 P2-1）。
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -506,6 +508,12 @@ class RuntimeTaskConfig(BaseModel):
         ge=0,
         le=1440,
         description="运行中任务进度停滞超过该分钟数自动取消；0 表示禁用",
+    )
+    checkpoint_ttl_minutes: int = Field(
+        1440,
+        ge=0,
+        le=43200,
+        description="失败/中断任务残留 checkpoint JSON 的最长保留分钟数，启动孤儿扫描清理超期文件；0 表示禁用",
     )
 
 
@@ -548,16 +556,20 @@ class RuntimeSecurityConfig(BaseModel):
 
 
 class RetentionConfig(BaseModel):
-    """输出产物保留策略配置模型。
+    """输出与上传产物保留策略配置模型。
 
-    定义 outputs/ 推理输出的自动清理策略与任务启动前的磁盘空间预检阈值，
-    防止输出文件只增不删写满磁盘（成本治理 P0-1）。
+    定义 outputs/ 推理输出与 data/uploads/ 用户上传的自动清理策略，
+    以及任务启动前的磁盘空间预检阈值，防止文件只增不删写满磁盘
+    （成本治理 P0-1；uploads 留存为数据治理 P0-1）。
 
     Attributes:
         outputs_max_age_days: 输出文件最大保留天数，超过自动删除；0 表示禁用年龄规则。
         outputs_max_files: 输出文件数量上限（保留最新 N 个）；0 表示不限制。
-        outputs_cleanup_interval_seconds: outputs 周期清理间隔（秒），60-604800 范围。
+        outputs_cleanup_interval_seconds: outputs/uploads 周期清理共用间隔（秒），60-604800 范围。
         disk_min_free_gb: 任务启动前输出磁盘最低剩余空间（GB），低于此值拒绝新任务；0 表示禁用预检。
+        uploads_max_age_days: 用户上传原始文件（data/uploads/ 下，restored/ 成品子树除外）
+            最大保留天数，超过自动删除；0 表示禁用。原始上传比修复产物更隐私敏感，
+            默认 7 天（短于 outputs 的 14 天）。
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -565,6 +577,7 @@ class RetentionConfig(BaseModel):
     outputs_max_files: int = Field(0, ge=0)
     outputs_cleanup_interval_seconds: int = Field(3600, ge=60, le=604800)
     disk_min_free_gb: float = Field(5.0, ge=0.0, le=1024.0)
+    uploads_max_age_days: int = Field(7, ge=0, le=3650)
 
 
 class RuntimeOomBreakerConfig(BaseModel):
@@ -613,6 +626,9 @@ class RuntimeConfig(BaseModel):
     通过 config.yaml 的 runtime 节统一配置。
 
     Attributes:
+        vram_preflight_enabled: 任务提交前显存预检门禁开关（成本治理 P1-2）。
+            开启时提交任务先估算所选配置的显存需求，超过可用预算直接拒绝
+            （HTTP 503 + 降档建议）；关闭则回退到运行期 OOM 降级重试兜底。
         sse: SSE 进度推送配置。
         batch: 批量任务重试配置。
         retry: 推理坏案例自动重试配置。
@@ -622,6 +638,7 @@ class RuntimeConfig(BaseModel):
     """
 
     model_config = ConfigDict(extra="ignore")
+    vram_preflight_enabled: bool = Field(True)
     sse: RuntimeSseConfig = Field(default_factory=RuntimeSseConfig)
     batch: RuntimeBatchConfig = Field(default_factory=RuntimeBatchConfig)
     retry: RuntimeRetryConfig = Field(default_factory=RuntimeRetryConfig)

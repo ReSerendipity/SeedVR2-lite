@@ -225,3 +225,124 @@ class TestJSONLogFormatter:
         record.args = object()  # 不可格式化对象
         line = JSONLogFormatter().format(record)
         assert isinstance(_json.loads(line), dict)  # 不得抛异常，须降级为合法 JSON
+
+
+class TestQueueFullRejection:
+    """评估 P2-1：队列满时提交端点快速返回 503（不得挂起请求）"""
+
+    def test_upload_returns_503_when_queue_full(self, test_app, monkeypatch):
+        from io import BytesIO
+
+        from PIL import Image
+
+        from app.integrated_app.exceptions import TaskQueueFullError
+        from app.integrated_app.routes.restore import upload as upload_module
+
+        class _FullQueue:
+            """桩队列：submit 必满；补齐 lifespan/看门狗所需的存活接口"""
+
+            current_task_id = None
+
+            @staticmethod
+            async def submit(*args, **kwargs):
+                raise TaskQueueFullError(
+                    "任务队列已满（容量 100），请等待排队任务消化后重试",
+                    detail={"queue_maxsize": 100, "queue_size": 100},
+                )
+
+            @staticmethod
+            async def start():
+                return None
+
+            @staticmethod
+            async def stop():
+                return None
+
+        class _StubGPU:
+            is_gpu_available = True
+
+        app = test_app.app
+        monkeypatch.setattr(app.state, "task_queue", _FullQueue())
+        # CI 无 GPU 环境下 GPU 能力检查先行 503，用桩替换保证覆盖到队列满语义
+        monkeypatch.setattr(upload_module, "gpu_manager", _StubGPU())
+
+        buf = BytesIO()
+        Image.new("RGB", (4, 4)).save(buf, format="PNG")
+        buf.seek(0)
+
+        # CSRF 握手：GET 种 token，POST 回传 X-CSRF-Token
+        test_app.get("/")
+        token = test_app.cookies.get("csrf_token")
+        # dit_model=3b_fp8：让 VRAM 预检门放行（fp16 预估 16GB 在 12GB 消费卡上必被拒），
+        # 保证请求能到达队列提交点覆盖 P2-1 语义
+        response = test_app.post(
+            "/api/restore/",
+            headers={"X-CSRF-Token": token} if token else {},
+            files={"file": ("tiny.png", buf, "image/png")},
+            data={"task_type": "image", "dit_model": "3b_fp8"},
+        )
+
+        assert response.status_code == 503
+        assert response.headers.get("Retry-After") == "5"
+        body = response.json()
+        assert body["success"] is False
+        assert "队列已满" in body["error"]["message"]
+
+
+class TestReadinessGpuHealth:
+    """评估 P2-4：/ready 的 GPU 运行时健康探测"""
+
+    def test_ready_503_when_gpu_unhealthy(self, test_app, monkeypatch):
+        """GPU 声明可用但上下文探测失败 → 503 gpu_unhealthy"""
+        from app.integrated_app.gpu_backend import GPUBackendManager, gpu_manager
+
+        monkeypatch.setattr(GPUBackendManager, "is_gpu_available", property(lambda self: True))
+        monkeypatch.setattr(GPUBackendManager, "check_health", lambda self: False)
+        assert gpu_manager.is_gpu_available is True
+
+        body = test_app.get("/api/system/ready")
+        assert body.status_code == 503
+        payload = body.json()
+        assert payload["reason"] == "gpu_unhealthy"
+        assert payload["gpu_healthy"] is False
+        assert body.headers.get("Retry-After") == "5"
+
+    def test_ready_200_contains_gpu_healthy_when_gpu_present(self, test_app, monkeypatch):
+        """GPU 可用且健康 → 200，body 携带 gpu_healthy=True"""
+        from app.integrated_app.gpu_backend import GPUBackendManager
+
+        monkeypatch.setattr(GPUBackendManager, "is_gpu_available", property(lambda self: True))
+        monkeypatch.setattr(GPUBackendManager, "check_health", lambda self: True)
+
+        body = test_app.get("/api/system/ready")
+        assert body.status_code == 200
+        payload = body.json()
+        assert payload["status"] == "ready"
+        assert payload["gpu_healthy"] is True
+
+
+class TestDocsEndpointsToggle:
+    """评估 P2-5：docs/redoc/openapi 端点显式开关（SEEDVR2_ENABLE_DOCS）"""
+
+    def test_docs_disabled_via_env(self, monkeypatch):
+        """SEEDVR2_ENABLE_DOCS=0 时 docs/redoc/openapi 路由不再注册
+
+        页面 404 兜底会对未知路径 302 回首页，因此以「不跟随重定向 = 302」
+        判定端点不存在（若端点存在则直接 200）。
+        """
+        from app.integrated_app.app_server import create_app
+        from app.integrated_app.config import load_config
+
+        monkeypatch.setenv("SEEDVR2_ENABLE_DOCS", "0")
+        app = create_app(load_config())
+        with TestClient(app) as client:
+            assert client.get("/docs", follow_redirects=False).status_code == 302
+            assert client.get("/redoc", follow_redirects=False).status_code == 302
+            assert client.get("/openapi.json", follow_redirects=False).status_code == 302
+            # 业务端点不受影响
+            assert client.get("/api/system/ping").status_code == 200
+
+    def test_docs_enabled_by_default(self, test_app):
+        """默认保持既有行为：/docs 与 /openapi.json 可访问（向后兼容）"""
+        assert test_app.get("/openapi.json").status_code == 200
+        assert test_app.get("/docs").status_code == 200

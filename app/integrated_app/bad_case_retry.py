@@ -46,6 +46,7 @@ class FailureType(Enum):
     """失败类型枚举。"""
 
     OOM = "oom"  # GPU 显存不足
+    RAM = "ram"  # 系统内存耗尽（内存守卫触发，不可重试，评估 P2-2）
     NETWORK = "network"  # 网络抖动 / 瞬态 IO 错误
     CANCELLED = "cancelled"  # 任务被取消（不重试）
     UNKNOWN = "unknown"  # 未知异常
@@ -73,6 +74,16 @@ _OOM_KEYWORDS = (
     "hip out of memory",
     "runtimeerror: cuda",
     "显存不足",  # 引擎侧中文错误消息（result.error / MemoryError 消息）
+)
+
+# 系统内存守卫错误关键词（_memory_utils 的 MemoryError 文案；评估 P2-2）。
+# 判定顺序必须先于 OOM：守卫异常类型为 MemoryError，其异常类名 "memoryerror"
+# 命中 OOM 关键词，若后判会被误分类为可重试的 GPU OOM
+_RAM_GUARD_KEYWORDS = (
+    "内存使用率",
+    "必须立即终止模型",
+    "可用内存",
+    "insufficientramerror",
 )
 
 # 网络/瞬态错误关键词
@@ -180,6 +191,7 @@ def classify_failure(
     """分类失败类型。
 
     根据 异常对象 或 错误消息字符串 判断失败类型：
+    - RAM: 系统内存守卫触发（内存使用率超阈值/可用内存不足，不可重试）
     - OOM: GPU 显存不足（含 "out of memory", "cuda", "alloc" 等关键词）
     - NETWORK: 网络/IO 瞬态错误（含 "connection", "timeout", "socket" 等）
     - CANCELLED: 任务被取消（不重试）
@@ -206,6 +218,10 @@ def classify_failure(
     # 取消
     if any(kw in msg for kw in _CANCELLED_KEYWORDS):
         return False, FailureType.CANCELLED, msg
+
+    # 系统内存守卫（先于 OOM：守卫异常类名 MemoryError 会命中 OOM 关键词）
+    if any(kw in msg for kw in _RAM_GUARD_KEYWORDS):
+        return True, FailureType.RAM, msg
 
     # OOM
     if any(kw in msg for kw in _OOM_KEYWORDS):
@@ -422,14 +438,17 @@ async def retry_with_bad_case_detection(
             error_msg = getattr(result, "error", "") or "推理返回失败"
             has_failure, ftype, reason = classify_failure(message=error_msg)
 
-            if not has_failure or ftype == FailureType.CANCELLED:
-                # 取消：不重试
+            if not has_failure or ftype in (FailureType.CANCELLED, FailureType.RAM):
+                # 取消 / 系统内存耗尽：不重试（RAM 重试只会重复白烧加载时间，
+                # 且 OOM 降级阶梯的 blockswap 会进一步加剧系统内存压力，评估 P2-2）
                 return RetryResult(
                     success=False,
                     result=result,
                     attempts=attempt + 1,
                     final_params=current_params,
-                    failure_reason=f"任务被取消: {reason}",
+                    failure_reason=(
+                        f"任务被取消: {reason}" if ftype == FailureType.CANCELLED else f"系统内存耗尽，不重试: {reason}"
+                    ),
                     degraded=state.degraded,
                 )
 
@@ -456,8 +475,17 @@ async def retry_with_bad_case_detection(
             state.failure_type = ftype
             state.failure_reason = reason
 
-            if not has_failure or ftype == FailureType.CANCELLED:
-                raise
+            if not has_failure or ftype in (FailureType.CANCELLED, FailureType.RAM):
+                # 取消向上传播；系统内存耗尽直接返回失败（不重试，评估 P2-2）
+                if ftype != FailureType.RAM:
+                    raise
+                return RetryResult(
+                    success=False,
+                    attempts=attempt + 1,
+                    final_params=current_params,
+                    failure_reason=f"系统内存耗尽，不重试: {reason}",
+                    degraded=state.degraded,
+                )
 
             logger.warning("[BadCaseRetry] 尝试 %d/%d 异常: %s", attempt + 1, cfg.max_retries + 1, reason)
 

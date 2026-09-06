@@ -174,6 +174,20 @@ def main() -> int | None:
         print("[WARN] 未安装 PyTorch。应用将以降级模式启动（推理功能不可用）。")
         print("[WARN] 请运行 install.bat 安装 CUDA 版本的 PyTorch 以启用推理功能。")
 
+    # FFmpeg 预检（DX P1-1）：视频修复在合成阶段才依赖 ffmpeg，缺失时启动即给指引，
+    # 而不是等首个任务跑到最后一步才报"ffmpeg 视频合成失败"。图像任务不受影响。
+    try:
+        from app.integrated_app.video_processor import FFmpegWrapper
+
+        if FFmpegWrapper().is_available():
+            print("[FFmpeg] 已检测到可用 FFmpeg")
+        else:
+            print("[WARN] 未检测到可用 FFmpeg：视频修复的解码/合成依赖它（不随仓库分发，见 NOTICE 第 4 条）。")
+            print("[WARN] 安装指引：https://www.gyan.dev/ffmpeg/builds/（Windows 选 release-full），加入 PATH；")
+            print("[WARN] 或将 ffmpeg.exe / ffprobe.exe 直接放到项目 app/ 目录下。")
+    except Exception as e:  # 预检失败不阻塞启动
+        print(f"[WARN] FFmpeg 预检跳过: {e}")
+
     wp_python = find_winpython_python()
     if wp_python:
         print(f"[WinPython] 检测到 WinPython: {wp_python}")
