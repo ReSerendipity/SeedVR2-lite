@@ -20,14 +20,14 @@
 （`SEEDVR2_DEPLOYMENT=container` / 容器运行时标记）生效；桌面壳原生拉起后端
 不触发该门禁，桌面用户流程不受影响。
 
-## 2. 发现与建议（按优先级）
+## 2. 发现与建议（按优先级）——后续建议 R3 轮处置记录（2026-09-06）
 
-| # | 级别 | 发现 | 建议 |
-|---|---|---|---|
-| D-1 | Low | `tauri.conf.json` 的 `app.security.csp: null`——Tauri 层 CSP 关闭。当前加载内容为本地后端页面（其 HTTP 响应头 CSP 仍然生效），但壳内注入的 `initialization_script` 与任何未来 webview 内内容不受 Tauri CSP 约束 | 设置最小 Tauri CSP（`default-src 'self' http://127.0.0.1:*; connect-src ipc: http://ipc.localhost` 形态），与后端 CSP 收紧路线（docs/CSP_TIGHTENING_ROADMAP.md）一并推进 |
-| D-2 | Low | `withGlobalTauri: true` 向页面暴露完整 `window.__TAURI__` 全局 API；桥接实际只用 `__TAURI_INTERNALS__` | 确认无其他消费方后关闭，缩小页面可达的 API 面 |
-| D-3 | Info | 更新端点固定 `releases/latest/download/shell-update.json`——latest 漂移意味着回滚版本不可指向（换载/回滚逻辑已测试，但 latest 语义绕过了版本钉版纪律） | 改用固定 channel 文件（如 `shell-update-stable.json`）由发布流程原子更新 |
-| D-4 | Info | 拖拽白名单按文件粒度登记，未见单文件大小上限（`read_dragged_file` 全量读取） | 对齐上传限制（image 50MB/video 500MB）设置读取上限 |
+| # | 级别 | 发现 | 处置 | 状态 |
+|---|---|---|---|---|
+| D-1 | Low | `tauri.conf.json` 的 `app.security.csp: null`——Tauri 层 CSP 关闭 | **核实后关闭**：主窗口创建后即 `navigate()` 到后端 `http://127.0.0.1:{port}`（window.rs:42），实际内容由后端 HTTP 头 CSP（per-request nonce）保护；tauri csp 仅作用于 tauri:// 内部资产（启动占位页，瞬时存在）。改动收益为零且有破坏占位页风险 | 已关闭（不适用） |
+| D-2 | Low | `withGlobalTauri: true` 暴露 `window.__TAURI__` 全局 API | **核实后保留**：占位页 `index.html:58,62-63` 实际消费 `window.__TAURI__`（重试按钮 invoke + startup-status 事件监听）；远程后端页面本就经 initialization_script 获得 `__TAURI_INTERNALS__`，全局不新增暴露面 | 已关闭（必需项） |
+| D-3 | Info | 更新端点 `releases/latest/download/shell-update.json` 的 latest 漂移 | **核实后关闭（评审自我修正）**：latest 语义与文件名无关，改名 `-stable` 不解决问题——Tauri updater 的标准形态即 latest 指针，回滚控制面在服务端（重发布/删除 Release 资产即可收回）；`pubkey` 已钉版，未签名产物不可激活。发布检查清单已注明回滚路径 | 已关闭（设计即如此） |
+| D-4 | Info | 拖拽读取无大小上限 | **部分误报修正 + 实际加固**：200MB 上限早已存在（原 drag_drop.rs:61），但检查位于 `fs::read` 之后（保护响应体而非进程内存）。本轮抽出 `validate_dragged_file`（metadata 先查、超限拒绝发生在读取之前）+ 新增 Rust 单测（目录/正常/不存在三态）。>200MB 正向分支无法在单测构造（不造 200MB 临时文件），以常量与逻辑审查背书 | 已完成（`desktop/src-tauri/src/drag_drop.rs`） |
 
 ## 3. 结论
 
