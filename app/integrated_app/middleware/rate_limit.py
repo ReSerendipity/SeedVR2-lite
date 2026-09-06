@@ -69,6 +69,14 @@ _RATE_LIMITED_PATH_PATTERNS = (
     re.compile(r"^/api/engine/submit$"),  # 引擎推理任务提交
 )
 
+# 重资源 GET 端点（评估报告 R9）：目录枚举/扫描会列文件系统结构，
+# 暴露部署档下是探测面。独立于 POST 限额（get_rate_limit_per_minute），
+# 默认 0 = 不限流（向后兼容），由 app_server 按上传限额倍率启用
+_RATE_LIMITED_GET_PATH_PATTERNS = (
+    re.compile(r"^/api/system/browse-dir/?$"),  # 目录枚举（白名单内）
+    re.compile(r"^/api/restore/scan-folder/?$"),  # 文件夹扫描
+)
+
 # 信任 X-Forwarded-For 的环境变量开关 (反向代理部署时显式开启)
 _TRUST_PROXY_ENV = "SEEDVR2_TRUST_PROXY"
 
@@ -92,6 +100,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         rate_limit_per_minute: int = 30,
         window_seconds: float = _WINDOW_SECONDS,
         trust_proxy: bool = False,
+        get_rate_limit_per_minute: int = 0,
     ):
         """初始化速率限制中间件。
 
@@ -101,19 +110,29 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             window_seconds: 滑动窗口时长（秒），测试可注入小窗口。
             trust_proxy: 是否信任 X-Forwarded-For 头（默认 False）。
                 也可通过环境变量 SEEDVR2_TRUST_PROXY=1 开启。
+            get_rate_limit_per_minute: 重资源 GET 端点（目录枚举/扫描，
+                见 _RATE_LIMITED_GET_PATH_PATTERNS）的独立限额，
+                <=0（默认）表示 GET 不限流（向后兼容）。
         """
         super().__init__(app)
         self._limit = int(rate_limit_per_minute)
+        self._get_limit = int(get_rate_limit_per_minute)
         self._window_seconds = float(window_seconds)
         env_trust = os.environ.get(_TRUST_PROXY_ENV, "").strip().lower() in ("1", "true", "yes")
         self._trust_proxy = trust_proxy or env_trust
-        # IP -> 窗口内请求时间戳队列（单调时钟）
+        # IP -> 窗口内请求时间戳队列（单调时钟）；POST 与 GET 独立计数池
         self._hits: dict[str, deque[float]] = {}
+        self._hits_get: dict[str, deque[float]] = {}
 
     @staticmethod
     def _matches_path(path: str) -> bool:
         """判断路径是否属于限流范围的上传/推理端点。"""
         return any(p.match(path) for p in _RATE_LIMITED_PATH_PATTERNS)
+
+    @staticmethod
+    def _matches_get_path(path: str) -> bool:
+        """判断路径是否属于限流范围的重资源 GET 端点。"""
+        return any(p.match(path) for p in _RATE_LIMITED_GET_PATH_PATTERNS)
 
     def _client_ip(self, request: Request) -> str:
         """提取客户端 IP。
@@ -138,22 +157,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return direct_ip
 
     def _sweep(self, now: float) -> None:
-        """内存护栏：IP 条目超过阈值时清理窗口外过期条目。
+        """内存护栏：IP 条目超过阈值时清理窗口外过期条目（POST/GET 两个池）。
 
         仅在条目数超限时执行，避免每次请求都遍历全表。
 
         Args:
             now: 当前单调时钟时间。
         """
-        if len(self._hits) <= _MAX_TRACKED_IPS:
-            return
         cutoff = now - self._window_seconds
-        stale = [ip for ip, hits in self._hits.items() if not hits or hits[-1] <= cutoff]
-        for ip in stale:
-            del self._hits[ip]
+        for pool in (self._hits, self._hits_get):
+            if len(pool) <= _MAX_TRACKED_IPS:
+                continue
+            stale = [ip for ip, hits in pool.items() if not hits or hits[-1] <= cutoff]
+            for ip in stale:
+                del pool[ip]
 
     def _allow(self, client_ip: str) -> int:
-        """滑动窗口计数：记录一次请求并返回剩余配额。
+        """滑动窗口计数（POST 上传/推理池）：记录一次请求并返回剩余配额。
 
         窗口内已有请求数达到上限时返回 -1（拒绝且不记录本次）。
 
@@ -163,40 +183,54 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         Returns:
             int: 剩余可用配额（>=0），或 -1 表示超限应返回 429。
         """
-        if self._limit <= 0:
+        return self._allow_in(self._hits, client_ip, self._limit)
+
+    def _allow_in(self, hits: "dict[str, deque[float]]", client_ip: str, limit: int) -> int:
+        """滑动窗口计数（可注入独立计数池，POST/GET 配额互不挤占）。"""
+        if limit <= 0:
             return 1  # limit<=0 表示禁用限流，永远放行
         now = _monotonic()
-        hits = self._hits.setdefault(client_ip, deque())
+        timestamps = hits.setdefault(client_ip, deque())
         # 清理窗口外的过期时间戳 (滑动窗口)
-        while hits and now - hits[0] > self._window_seconds:
-            hits.popleft()
-        if len(hits) >= self._limit:
+        while timestamps and now - timestamps[0] > self._window_seconds:
+            timestamps.popleft()
+        if len(timestamps) >= limit:
             self._sweep(now)
             return -1
-        hits.append(now)
+        timestamps.append(now)
         self._sweep(now)
-        return self._limit - len(hits)
+        return limit - len(timestamps)
 
-    def _retry_after_seconds(self, client_ip: str) -> int:
+    def _retry_after_seconds(self, client_ip: str, hits: "dict[str, deque[float]] | None" = None) -> int:
         """计算该 IP 最早请求过期还需等待的秒数（向上取整，最小 1）。"""
-        hits = self._hits.get(client_ip)
-        if not hits:
+        pool = self._hits if hits is None else hits
+        timestamps = pool.get(client_ip)
+        if not timestamps:
             return 1
-        wait = self._window_seconds - (_monotonic() - hits[0])
+        wait = self._window_seconds - (_monotonic() - timestamps[0])
         return max(1, int(math.ceil(wait)))
 
     async def dispatch(self, request: Request, call_next):
-        """中间件分发方法：仅对限流范围内的 POST 上传/推理端点计数。"""
-        if self._limit > 0 and request.method == "POST" and self._matches_path(request.url.path):
+        """中间件分发方法：对限流范围内的 POST 上传/推理端点与重资源 GET 端点计数。"""
+        is_limited = (self._limit > 0 and request.method == "POST" and self._matches_path(request.url.path)) or (
+            self._get_limit > 0 and request.method == "GET" and self._matches_get_path(request.url.path)
+        )
+        if is_limited:
+            if request.method == "POST":
+                limit = self._limit
+                hits_pool = self._hits
+            else:
+                limit = self._get_limit
+                hits_pool = self._hits_get
             client_ip = self._client_ip(request)
-            if self._allow(client_ip) < 0:
-                retry_after = self._retry_after_seconds(client_ip)
+            if self._allow_in(hits_pool, client_ip, limit) < 0:
+                retry_after = self._retry_after_seconds(client_ip, hits_pool)
                 logger.warning(
-                    f"速率限制触发: {request.method} {request.url.path} from {client_ip} " f"(limit={self._limit}/min)"
+                    f"速率限制触发: {request.method} {request.url.path} from {client_ip} (limit={limit}/min)"
                 )
                 from app.integrated_app.security.audit import audit_event
 
-                audit_event("RATE_LIMITED", request=request, client_ip=client_ip, limit_per_minute=self._limit)
+                audit_event("RATE_LIMITED", request=request, client_ip=client_ip, limit_per_minute=limit)
                 return JSONResponse(
                     status_code=429,
                     content={
@@ -209,7 +243,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     },
                     headers={
                         "Retry-After": str(retry_after),
-                        "X-RateLimit-Limit": str(self._limit),
+                        "X-RateLimit-Limit": str(limit),
                         "X-RateLimit-Remaining": "0",
                     },
                 )

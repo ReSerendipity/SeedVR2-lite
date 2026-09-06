@@ -768,8 +768,18 @@ def create_app(config: dict | None = None) -> FastAPI:
 
     _rate_limit_per_minute = int(config.get("runtime", {}).get("security", {}).get("rate_limit_per_minute", 30))
     if _rate_limit_per_minute >= 1:
-        app.add_middleware(RateLimitMiddleware, rate_limit_per_minute=_rate_limit_per_minute)
-        logger.info(f"Rate Limit 中间件已注册 (limit={_rate_limit_per_minute}/min)")
+        app.add_middleware(
+            RateLimitMiddleware,
+            rate_limit_per_minute=_rate_limit_per_minute,
+            # 评估报告 R9：重资源 GET（browse-dir/scan-folder 目录枚举）独立限额
+            # （4×上传限额，封顶 240/min），不挤占上传配额；枚举端点是暴露档下的
+            # 文件系统结构探测面。默认关闭行为由 get_rate_limit_per_minute=0 保留
+            get_rate_limit_per_minute=min(_rate_limit_per_minute * 4, 240),
+        )
+        logger.info(
+            f"Rate Limit 中间件已注册 (limit={_rate_limit_per_minute}/min, "
+            f"get={min(_rate_limit_per_minute * 4, 240)}/min)"
+        )
 
     from app.integrated_app.middleware.error_handler import register_error_handlers
 

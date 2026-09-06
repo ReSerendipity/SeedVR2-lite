@@ -188,3 +188,42 @@ class TestAppServerWiring:
         app = create_app({"runtime": {"security": {"rate_limit_per_minute": 7}}})
         names = [m.cls.__name__ for m in app.user_middleware]
         assert "RateLimitMiddleware" in names
+
+
+class TestGetEndpointRateLimit:
+    """重资源 GET 端点独立限额（评估报告 R9）。"""
+
+    def _make(self, get_limit: int, post_limit: int = 0) -> RateLimitMiddleware:
+        return RateLimitMiddleware(app=None, rate_limit_per_minute=post_limit, get_rate_limit_per_minute=get_limit)
+
+    def test_get_under_limit_allowed(self):
+        mw = self._make(get_limit=3)
+        for _ in range(3):
+            assert mw._allow_in(mw._hits_get, "10.0.0.1", mw._get_limit) >= 0
+
+    def test_get_over_limit_blocked(self):
+        mw = self._make(get_limit=2)
+        assert mw._allow_in(mw._hits_get, "10.0.0.1", mw._get_limit) >= 0
+        assert mw._allow_in(mw._hits_get, "10.0.0.1", mw._get_limit) >= 0
+        assert mw._allow_in(mw._hits_get, "10.0.0.1", mw._get_limit) == -1
+
+    def test_get_and_post_pools_independent(self):
+        """GET 配额耗尽不影响 POST 池（互不挤占）。"""
+        mw = self._make(get_limit=1, post_limit=5)
+        assert mw._allow_in(mw._hits_get, "10.0.0.1", mw._get_limit) >= 0
+        assert mw._allow_in(mw._hits_get, "10.0.0.1", mw._get_limit) == -1
+        # POST 池仍满额可用
+        assert mw._allow("10.0.0.1") >= 0
+
+    def test_browse_dir_and_scan_folder_matched(self):
+        assert RateLimitMiddleware._matches_get_path("/api/system/browse-dir")
+        assert RateLimitMiddleware._matches_get_path("/api/restore/scan-folder")
+        assert not RateLimitMiddleware._matches_get_path("/api/system/settings")
+        assert not RateLimitMiddleware._matches_get_path("/api/system/history")
+
+    def test_default_get_limit_zero_keeps_legacy_behavior(self):
+        """不传 get_rate_limit_per_minute 时 GET 不限流（向后兼容）。"""
+        mw = RateLimitMiddleware(app=None, rate_limit_per_minute=30)
+        assert mw._get_limit == 0
+        for _ in range(10):
+            assert mw._allow_in(mw._hits_get, "10.0.0.1", mw._get_limit) >= 0
