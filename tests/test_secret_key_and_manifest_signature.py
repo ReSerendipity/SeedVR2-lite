@@ -178,6 +178,7 @@ class TestIcaclsSubprocessDecoding:
     stdout 静默丢失。回归契约：run 调用必须携带 encoding + errors。
     """
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="icacls 仅 Windows 提供，Linux 上实现走 which 早退分支")
     def test_icacls_run_passes_explicit_encoding(self, tmp_path, monkeypatch):
         import subprocess as _subprocess
 

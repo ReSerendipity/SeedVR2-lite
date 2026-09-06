@@ -94,11 +94,16 @@ class TestBuildSaveMetadataKwargs:
 
 class TestVerifyWatermarkCli:
     def _run(self, *args):
+        # 显式 encoding/errors（KNOWN_ISSUES #76 同款契约）：PYTHONUTF8=1 环境下
+        # text=True 的隐式 UTF-8 解码遇 GBK 线程输出会崩 _readerthread，stdout
+        # 静默丢失为 None（CI Windows 实测），本测试第一行断言即 TypeError。
         return subprocess.run(
             [sys.executable, "scripts/verify_watermark.py", *args],
             capture_output=True,
             text=True,
             timeout=120,
+            encoding="utf-8",
+            errors="replace",
         )
 
     def test_embedded_image_passes(self, tmp_path):
