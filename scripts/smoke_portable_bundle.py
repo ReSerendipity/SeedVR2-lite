@@ -452,6 +452,15 @@ def find_python(app_dir: Path, explicit: str) -> str:
     return sys.executable
 
 
+def resolve_serve_command(cmd: list[str], python_exe: str) -> list[str]:
+    """把 --serve-and-run 命令里的 {python} 占位展开为便携解释器路径。
+
+    外部命令（如量化质量基线脚本）需要被测环境的解释器（requests/PIL/numpy
+    随便携包），但命令行由调用方给出，故用占位符延迟绑定。
+    """
+    return [c.replace("{python}", python_exe) for c in cmd]
+
+
 def run(args: argparse.Namespace) -> int:
     """执行完整冒烟验收，返回退出码。"""
     app_dir = Path(args.app_dir).resolve()
@@ -482,6 +491,16 @@ def run(args: argparse.Namespace) -> int:
             token_value = cookies.get(CSRF_COOKIE_NAME, "")
             if not token_value:
                 raise SmokeError("未能从响应头取得 csrf_token cookie")
+
+            if args.serve_and_run:
+                # 常驻执行模式（MLOps 后续建议）：服务已就绪、CSRF 链路已验证，
+                # 把会话整体让渡给外部命令（量化质量基线等），起止/兜底关停复用本链路，
+                # 避免各脚本重复造 boot/健康等待逻辑。内置冒烟任务在此模式下跳过。
+                cmd = resolve_serve_command(args.serve_and_run, python_exe)
+                print(f"  常驻模式：就绪后执行 {cmd}")
+                rc = subprocess.call(cmd, cwd=str(app_dir))  # noqa: S603
+                print(f"  外部命令退出码：{rc}")
+                return 0 if rc == 0 else 1
 
             png = make_test_png()
             print(f"  测试图：{len(png)} 字节 PNG")
@@ -560,6 +579,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="image_metrics.py 回退路径（v1.5.0 等历史便携包不含该模块；由外部 checkout 提供）",
     )
     parser.add_argument("--keep-log", action="store_true", help="结束时打印日志路径")
+    parser.add_argument(
+        "--serve-and-run",
+        nargs=argparse.REMAINDER,
+        metavar="CMD",
+        default=[],
+        help=(
+            "常驻执行模式（须放在命令行最后）：服务就绪后执行其后的全部参数构成的命令再关停"
+            "（跳过内置冒烟任务）。命令中的 {python} 占位会展开为便携解释器路径，如："
+            "--serve-and-run {python} ../perf/benchmark/quant_quality_baseline.py --base-url http://127.0.0.1:7870"
+        ),
+    )
     return parser.parse_args(argv)
 
 
