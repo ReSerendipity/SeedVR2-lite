@@ -59,11 +59,14 @@ jobs:
       - name: Determine tag
         if: env.GPG_PRIVATE_KEY != ''
         id: tag
+        # 评估报告 R4 跟进：event 上下文经 env 注入（run-shell-injection 消解）
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          [ -z "$TAG" ] && TAG="${{ github.event.inputs.tag }}"
+          TAG="$RELEASE_TAG"
+          [ -z "$TAG" ] && TAG="$INPUT_TAG"
           [ -z "$TAG" ] && TAG=$(gh release list --limit 10 --json tagName,isDraft --jq '[.[] | select(.isDraft|not)][0].tagName')
           [ -n "$TAG" ] || { echo "::error::no release found to sign"; exit 1; }
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"

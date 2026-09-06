@@ -79,9 +79,8 @@ def _safe_torch_load(
     """
     # Step 1: 安全模式优先
     try:
-        return torch.load(
-            path, map_location=map_location, weights_only=True
-        )  # nosemgrep: pickles-in-pytorch - 安全包装器 Step1：weights_only=True 受限 unpickler
+        # nosemgrep: trailofbits.python.pickles-in-pytorch.pickles-in-pytorch - 安全包装器 Step1：weights_only=True 受限 unpickler
+        return torch.load(path, map_location=map_location, weights_only=True)
     except Exception as safe_err:
         if not allow_pickle_fallback:
             logger.error(
@@ -96,9 +95,8 @@ def _safe_torch_load(
         f"    这可能导致任意代码执行 (CWE-502)。请确保该文件来源 100% 可信。\n"
         f"    建议: 迁移到 safetensors 格式以彻底消除 pickle 风险。"
     )
-    return torch.load(
-        path, map_location=map_location, weights_only=False
-    )  # nosemgrep: pickles-in-pytorch - allow_pickle_fallback 门控回退（默认 False），回退前打 [SECURITY CRITICAL] 日志
+    # nosemgrep: trailofbits.python.pickles-in-pytorch.pickles-in-pytorch - allow_pickle_fallback 门控回退（默认 False），回退前已打 [SECURITY CRITICAL] 日志
+    return torch.load(path, map_location=map_location, weights_only=False)
 
 
 # ---------------------------------------------------------------------------
@@ -718,9 +716,8 @@ class AutoResumeManager:
             checkpoint["metadata"] = metadata
 
         try:
-            torch.save(
-                checkpoint, save_path
-            )  # nosemgrep: pickles-in-pytorch - torch.save 为序列化（非反序列化），非 RCE 向量
+            # nosemgrep: trailofbits.python.pickles-in-pytorch.pickles-in-pytorch - torch.save 为序列化（非反序列化），非 RCE 向量
+            torch.save(checkpoint, save_path)
             logger.info(f"检查点已保存: {save_path}")
             return True
         except Exception as e:

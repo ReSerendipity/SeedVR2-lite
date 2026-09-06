@@ -212,9 +212,8 @@ class HistoryDB:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA synchronous=NORMAL")
         # 与连接 timeout 对齐：锁竞争时在超时窗口内忙等重试（毫秒）
-        await db.execute(
-            f"PRAGMA busy_timeout={int(self.timeout * 1000)}"
-        )  # nosemgrep: sqlalchemy-execute-raw-query - int 转型的配置常量（timeout 恒为默认值），无注入面
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query - int 转型的配置常量（timeout 恒为默认值），无注入面
+        await db.execute(f"PRAGMA busy_timeout={int(self.timeout * 1000)}")
 
         # 数据治理 P2-4：建表前先探测是否为已存在数据的旧库——
         # CREATE TABLE IF NOT EXISTS 之后探测会把全新空库误判为旧库
@@ -368,7 +367,7 @@ class HistoryDB:
             db: aiosqlite 连接。
             version: 要写入的版本号（来自 SCHEMA_VERSION 常量）。
         """
-        # nosemgrep: sqlalchemy-execute-raw-query - version 为代码常量 SCHEMA_VERSION，无注入面
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query - version 为代码常量 SCHEMA_VERSION，无注入面
         await db.execute(f"PRAGMA user_version={int(version)}")
 
     async def get_schema_version(self) -> int:

@@ -63,8 +63,15 @@ jobs:
     steps:
       - name: Resolve trigger context and target tag
         id: ctx
+        # 评估报告 R4 跟进：触发上下文经 env 注入 shell（GitHub run-shell-injection
+        # 规则消解；workflow_run conclusion/branch 理论上可被同仓工作流影响，env
+        # 注入杜绝直接插值）
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WF_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WF_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
-          event="${{ github.event_name }}"
+          event="$EVENT_NAME"
           wanted=false
           tag=""
           reason=""
@@ -78,8 +85,8 @@ jobs:
               reason="weekly schedule"
               ;;
             workflow_run)
-              wc="${{ github.event.workflow_run.conclusion }}"
-              hb="${{ github.event.workflow_run.head_branch }}"
+              wc="$WF_CONCLUSION"
+              hb="$WF_HEAD_BRANCH"
               if [ "$wc" = "success" ] && printf '%s' "$hb" | grep -Eq '^v[0-9]'; then
                 wanted=true
                 tag="$hb"
@@ -146,13 +153,17 @@ jobs:
     steps:
       - name: Fetch workflow scripts via codeload source archive
         shell: pwsh
+        # 评估报告 R4 跟进：上下文经 env 注入（run-shell-injection 消解）
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
           # 本 runner 网络下 git smart-HTTP 长连接不稳（checkout@v4 实测 20+ 分钟零推进），
           # codeload 源码包通道实测 1s 内返回；只取三个脚本文件，整包也仅数 MB。
           $ErrorActionPreference = 'Stop'
           $ProgressPreference = 'SilentlyContinue'
-          $ref = "${{ github.ref_name }}"
-          Invoke-WebRequest "https://codeload.github.com/${{ github.repository }}/tar.gz/refs/heads/$ref" -OutFile src.tgz -UseBasicParsing
+          $ref = $env:REF_NAME
+          Invoke-WebRequest "https://codeload.github.com/$env:REPO/tar.gz/refs/heads/$ref" -OutFile src.tgz -UseBasicParsing
           New-Item -ItemType Directory -Path src -Force | Out-Null
           tar -xzf src.tgz -C src --strip-components=1
           New-Item -ItemType Directory -Path scripts -Force | Out-Null
@@ -164,12 +175,15 @@ jobs:
       - name: Resolve target release tag
         id: tag
         shell: pwsh
+        # 评估报告 R4 跟进：event.inputs / needs 输出经 env 注入（run-shell-injection 消解）
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          PRECHECK_TAG: ${{ needs.runner-precheck.outputs.tag }}
         run: |
           # 优先级：手动输入 > workflow_run 携带的 tag（precheck 解析）> 最新已发布 Release。
-          $t = "${{ github.event.inputs.tag }}"
-          if (-not $t) { $t = "${{ needs.runner-precheck.outputs.tag }}" }
+          $t = $env:INPUT_TAG
+          if (-not $t) { $t = $env:PRECHECK_TAG }
           if (-not $t) {
             $t = gh release list --limit 20 --json tagName,isDraft,isPrerelease |
               ConvertFrom-Json |
