@@ -542,6 +542,8 @@ class _ImagePipelineMixin:
                 "mean": float(mean_val),
                 "std": float(std_val),
                 "vram_peak_mb": vram_peak_mb,
+                # MLOps P1-1：实际使用的种子（-1 已物化为抽签值），供服务层回写 history parameters
+                "seed_effective": inf.get("seed"),
                 # P3-2：统一速度口径 —— it/s 只以 DiT 采样阶段耗时为分母（不含 VAE/IO），
                 # 与 processing_time（端到端墙钟）区分，避免跨口径比较
                 "dit_seconds": round(dit_seconds, 3),
@@ -605,6 +607,9 @@ class _ImagePipelineMixin:
             seed = inf["seed"]
             if seed == -1:
                 seed = random.randint(0, MAX_SEED)
+                # MLOps P1-1：随机抽签回写请求级 inf，实际种子就此物化——
+                # 输出图元数据（dict(inf)）与 result.metadata.seed_effective 均取该值
+                inf["seed"] = seed
 
             cfg_scale = inf["cfg_scale"]
             cfg_rescale = inf["cfg_rescale"]

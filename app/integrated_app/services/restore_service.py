@@ -577,13 +577,16 @@ async def process_image_task(
             )
         # P0-3：降级事件写入历史 parameters（血缘可解释性，best-effort 不影响主流程）
         degradation_meta = build_degradation_metadata({"config": image_config}, retry_result.final_params, retry_result)
-        if degradation_meta:
+        # MLOps P1-1：实际物化的种子（-1 随机抽签或重试轮换）必须落库，否则该记录不可复现
+        seed_effective = (getattr(retry_result.result, "metadata", None) or {}).get("seed_effective")
+        if degradation_meta or isinstance(seed_effective, int):
             try:
-                await history_db.update_record(
-                    record_id, parameters=merge_degradation_into_parameters(params.model_dump_json(), degradation_meta)
-                )
+                merged = merge_degradation_into_parameters(params.model_dump_json(), degradation_meta)
+                if isinstance(seed_effective, int):
+                    merged = merge_provenance_into_parameters(merged, {"seed_effective": seed_effective})
+                await history_db.update_record(record_id, parameters=merged)
             except Exception as meta_err:  # noqa: BLE001 — 血缘记录失败不阻断任务
-                logger.warning(f"[{task_id}] 降级血缘写入历史失败: {meta_err}")
+                logger.warning(f"[{task_id}] 降级/种子血缘写入历史失败: {meta_err}")
         return retry_result.result
 
     await run_task_with_state(
@@ -710,13 +713,18 @@ async def process_video_task(
             )
         # P0-3：降级事件写入历史 parameters（血缘可解释性，best-effort 不影响主流程）
         degradation_meta = build_degradation_metadata(dict(video_params), retry_result.final_params, retry_result)
-        if degradation_meta:
+        # MLOps P1-1：实际物化的种子（-1 随机抽签或重试轮换）必须落库，否则该记录不可复现
+        seed_effective = (getattr(retry_result.result, "metadata", None) or {}).get("seed_effective")
+        if degradation_meta or isinstance(seed_effective, int):
             try:
-                await history_db.update_record(
-                    record_id, parameters=merge_degradation_into_parameters(params.model_dump_json(), degradation_meta)
-                )
+                # 重写 parameters 会整体覆盖创建时的值，先重注入 ffmpeg 版本血缘（数据治理 P1-2）
+                merged = apply_ffmpeg_lineage(params.model_dump_json(), "video")
+                merged = merge_degradation_into_parameters(merged, degradation_meta)
+                if isinstance(seed_effective, int):
+                    merged = merge_provenance_into_parameters(merged, {"seed_effective": seed_effective})
+                await history_db.update_record(record_id, parameters=merged)
             except Exception as meta_err:  # noqa: BLE001 — 血缘记录失败不阻断任务
-                logger.warning(f"[{task_id}] 降级血缘写入历史失败: {meta_err}")
+                logger.warning(f"[{task_id}] 降级/种子血缘写入历史失败: {meta_err}")
         return retry_result.result
 
     await run_task_with_state(
@@ -845,6 +853,32 @@ def merge_degradation_into_parameters(parameters_json: str, metadata: dict | Non
     if not isinstance(data, dict):
         data = {"raw": parameters_json}
     data["degradation"] = metadata
+    return json.dumps(data, ensure_ascii=False)
+
+
+def merge_provenance_into_parameters(parameters_json: str, provenance: dict) -> str:
+    """把运行期血缘字段（顶层键）合并进 parameters JSON（MLOps 报告 P1-1）。
+
+    与 merge_degradation_into_parameters 同构：反序列化 → dict.update → 重序列化；
+    非法 / 非 dict JSON 时把原文挂到 "raw" 键兜底，不丢数据。
+    provenance 为空时原样返回。典型字段：seed_effective。
+
+    Args:
+        parameters_json: 原始 parameters JSON 字符串（可能为空）。
+        provenance: 要合并进顶层的键值字典。
+
+    Returns:
+        合并后的 parameters JSON 字符串。
+    """
+    if not provenance:
+        return parameters_json or ""
+    try:
+        data = json.loads(parameters_json) if parameters_json else {}
+    except (ValueError, TypeError):
+        data = {"raw": parameters_json}
+    if not isinstance(data, dict):
+        data = {"raw": parameters_json}
+    data.update(provenance)
     return json.dumps(data, ensure_ascii=False)
 
 
