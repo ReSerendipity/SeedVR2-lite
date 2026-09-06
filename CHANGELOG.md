@@ -26,6 +26,7 @@
 
 ### Security
 
+* **安全合规评估落地（2026-09-06 评估报告）**：`browse-dir`/`open-explorer` 收敛到 `runtime.security.allowed_base_dirs` 路径白名单（原全盘可枚举/可打开）+ `validate_path` 兄弟目录前缀绕过修复（`is_relative_to` 语义）；容器/编排部署 Basic Auth fail-closed（`SEEDVR2_DEPLOYMENT=container` 标记 + 未鉴权拒绝启动 + env 快捷通道）；水印嵌入失败策略化处置（`mark_metadata` 侧车元数据/`block`/`ignore`，管线不再 `except:pass` 静默输出无水印文件）+ 视频水印验证 CLI + H.264 转码鲁棒性诊断（实测 0/16 帧存活，记录为已知限制）；容器依赖改用 uv 导出精确钉版锁；重资源 GET（目录枚举）独立限流；PathGuard Windows 特有向量测试；CSP 收紧路线图与桌面壳聚焦安全评估文档；SECURITY.md 机制描述对齐实际（`632a568` `ca2cc28` `24fa248` `3067484` `b962346` `2d237cb` `c8e73cd` `0e1e0be`）
 * Tauri 更新签名私钥加入 .gitignore（`79eb342`）
 
 ### CI / 杂务
