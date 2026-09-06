@@ -245,11 +245,48 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def resolve_auth_settings(config: dict) -> dict:
+    """汇总生效的 Basic Auth 配置（环境变量优先于 config.yaml）。
+
+    环境变量快捷通道（评估报告 R1 最小修复）：同时注入
+    ``SEEDVR2_AUTH_USERNAME`` 与 ``SEEDVR2_AUTH_PASSWORD`` 即视为启用，
+    容器/编排部署无需为镜像单独维护 config.yaml 的 security.auth 节。
+
+    Args:
+        config: 应用配置字典。
+
+    Returns:
+        dict: 归一化后的鉴权配置（enable/username/password/realm/防爆破参数）。
+    """
+    auth_cfg = config.get("security", {}).get("auth", {})
+    env_username = os.environ.get("SEEDVR2_AUTH_USERNAME", "").strip()
+    env_password = os.environ.get("SEEDVR2_AUTH_PASSWORD", "").strip()
+
+    username = env_username or auth_cfg.get("username", "")
+    # 环境变量优先级高于配置文件 (避免密码明文存配置)
+    password = env_password or auth_cfg.get("password", "")
+
+    enable = bool(auth_cfg.get("enable", False))
+    if env_username and env_password:
+        enable = True
+
+    return {
+        "enable": enable,
+        "username": username,
+        "password": password,
+        "realm": auth_cfg.get("realm", "SeedVR2"),
+        "max_auth_failures": int(auth_cfg.get("max_auth_failures", 5)),
+        "auth_failure_window_seconds": float(auth_cfg.get("auth_failure_window_seconds", 300)),
+        "auth_ban_seconds": float(auth_cfg.get("auth_ban_seconds", 600)),
+    }
+
+
 def should_enable_auth(config: dict) -> bool:
     """根据配置判断是否应启用 Basic Auth。
 
     启用条件:
-        1. config.security.auth.enable == True
+        1. config.security.auth.enable == True，或同时注入
+           SEEDVR2_AUTH_USERNAME + SEEDVR2_AUTH_PASSWORD 环境变量（容器部署快捷通道）
         2. 用户名和密码均非空
 
     Args:
@@ -258,19 +295,76 @@ def should_enable_auth(config: dict) -> bool:
     Returns:
         bool: True 表示应启用 Basic Auth。
     """
-    auth_cfg = config.get("security", {}).get("auth", {})
-    if not auth_cfg.get("enable", False):
+    settings = resolve_auth_settings(config)
+    if not settings["enable"]:
         return False
 
-    username = auth_cfg.get("username", "")
-    # 环境变量优先
-    password = os.environ.get("SEEDVR2_AUTH_PASSWORD", auth_cfg.get("password", ""))
-
-    if not username or not password:
+    if not settings["username"] or not settings["password"]:
         logger.warning("Basic Auth 已配置 enable=true 但用户名或密码为空，跳过启用")
         return False
 
     return True
+
+
+# 视为"容器/编排暴露部署"的环境标记：
+# - Dockerfile 注入 SEEDVR2_DEPLOYMENT=container（权威来源，k8s+containerd 不创建 /.dockerenv）
+# - 运行时标记为兜底探测（Docker / Podman）
+_CONTAINER_MARKERS = ("/.dockerenv", "/run/.containerenv")
+_ALLOW_UNAUTH_VALUES = {"1", "true", "yes"}
+
+
+def is_containerized() -> bool:
+    """探测当前进程是否运行在容器/编排环境中。
+
+    Returns:
+        bool: True 表示容器环境（镜像 ENV 声明或容器运行时标记存在）。
+    """
+    if os.environ.get("SEEDVR2_DEPLOYMENT", "").strip().lower() == "container":
+        return True
+    return any(os.path.exists(marker) for marker in _CONTAINER_MARKERS)
+
+
+def ensure_exposure_auth(config: dict, *, containerized: bool | None = None) -> None:
+    """暴露部署下的鉴权 fail-closed 检查（评估报告 R1）。
+
+    容器/编排环境中服务必然绑定 0.0.0.0（config 校验器的回环强制管不到
+    gunicorn --bind），无鉴权 + 端口映射/Ingress 即向局域网开放全部 API
+    （GPU 推理 / 上传 / 目录端点）。未配置鉴权且未显式豁免时拒绝启动，
+    并给出可操作的修复指引——fail-closed 优于仅靠文档警示。
+
+    Args:
+        config: 应用配置字典。
+        containerized: 显式指定容器环境（测试注入用）；None 时自动探测。
+
+    Raises:
+        RuntimeError: 容器环境、未配置鉴权且未显式豁免。
+    """
+    if containerized is None:
+        containerized = is_containerized()
+    if not containerized:
+        return
+
+    optout = os.environ.get("SEEDVR2_ALLOW_UNAUTHENTICATED", "").strip().lower()
+    if optout in _ALLOW_UNAUTH_VALUES:
+        logger.warning(
+            "[SECURITY] SEEDVR2_ALLOW_UNAUTHENTICATED=1：已在容器内显式豁免 Basic Auth。"
+            "仅当端口映射严格限定回环（如 127.0.0.1:7870:7870）时才安全。"
+        )
+        return
+
+    auth = resolve_auth_settings(config)
+    if auth["enable"] and auth["username"] and auth["password"]:
+        return
+
+    raise RuntimeError(
+        "[SECURITY] 检测到容器/编排部署（SEEDVR2_DEPLOYMENT=container 或容器运行时标记），"
+        "但 Basic Auth 未生效。容器内服务绑定 0.0.0.0，无鉴权将向网络开放全部 API。"
+        "修复方式（任选其一）：\n"
+        "  1) 注入环境变量 SEEDVR2_AUTH_USERNAME 与 SEEDVR2_AUTH_PASSWORD（强密码，推荐）；\n"
+        "  2) 在 config.yaml 配置 security.auth.enable=true / username / password；\n"
+        "  3) 若端口映射严格限定回环（127.0.0.1:7870:7870），可设置 "
+        "SEEDVR2_ALLOW_UNAUTHENTICATED=1 显式豁免。"
+    )
 
 
 def create_auth_middleware(config: dict):
@@ -285,10 +379,10 @@ def create_auth_middleware(config: dict):
     if not should_enable_auth(config):
         return None
 
-    auth_cfg = config.get("security", {}).get("auth", {})
+    settings = resolve_auth_settings(config)
     return BasicAuthMiddleware(
         app=None,  # 由 add_middleware 填充
-        username=auth_cfg.get("username", "admin"),
-        password=os.environ.get("SEEDVR2_AUTH_PASSWORD", auth_cfg.get("password", "")),
-        realm=auth_cfg.get("realm", "SeedVR2"),
+        username=settings["username"],
+        password=settings["password"],
+        realm=settings["realm"],
     )

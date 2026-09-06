@@ -28,6 +28,11 @@ services:
       LOG_LEVEL: INFO
       # LOG_FORMAT: json            # 结构化 JSON 日志（容器最佳实践）
       # SEEDVR2_ALLOWED_ORIGINS: http://localhost:7870
+      # 鉴权（评估报告 R1）：容器内 fail-closed 默认要求 Basic Auth。
+      # 本 compose 端口严格绑定 127.0.0.1（等价回环档），故显式豁免；
+      # 若改为局域网映射 "7870:7870"，删除下行并改注入：
+      #   SEEDVR2_AUTH_USERNAME / SEEDVR2_AUTH_PASSWORD（强密码）
+      SEEDVR2_ALLOW_UNAUTHENTICATED: "1"
     volumes:
       - seedvr2-model:/app/model
       - seedvr2-data:/app/data

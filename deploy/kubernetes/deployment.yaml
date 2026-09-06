@@ -78,6 +78,17 @@ spec:
               value: "https://seedvr2.example.com"
             - name: LOG_LEVEL
               value: "INFO"
+            # Basic Auth（评估报告 R1：暴露部署 fail-closed）。镜像内
+            # SEEDVR2_DEPLOYMENT=container 会使未鉴权启动直接失败：
+            # 部署前必填强密码（生产建议改用 Secret keyRef 注入）
+            - name: SEEDVR2_AUTH_USERNAME
+              value: "admin" # TODO: 修改为实际运维账户
+            - name: SEEDVR2_AUTH_PASSWORD
+              value: "" # TODO(必填): 设置强密码；生产建议
+              # valueFrom:
+              #   secretKeyRef:
+              #     name: seedvr2-auth
+              #     key: password
           resources:
             requests:
               nvidia.com/gpu: 1 # 整卡独占（MIG 场景可改为 1.nvidia.com/gpu 分片）

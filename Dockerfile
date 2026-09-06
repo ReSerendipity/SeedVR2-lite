@@ -41,7 +41,12 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     PIP_NO_CACHE_DIR=1 \
     NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    SEEDVR2_DEPLOYMENT=container
+# SEEDVR2_DEPLOYMENT=container：容器/编排暴露标记（评估报告 R1）。容器内绑定 0.0.0.0，
+# 应用启动时强制 Basic Auth fail-closed——需注入 SEEDVR2_AUTH_USERNAME/PASSWORD，
+# 或在端口映射严格限定回环时设 SEEDVR2_ALLOW_UNAUTHENTICATED=1 显式豁免
+# （判定逻辑见 middleware/basic_auth.py 的 ensure_exposure_auth）。
 
 WORKDIR /app
 

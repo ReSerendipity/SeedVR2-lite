@@ -736,24 +736,31 @@ def create_app(config: dict | None = None) -> FastAPI:
     app.add_middleware(CSRFMiddleware)
 
     # Basic Auth 中间件 (公网部署保护, CWE-306 防御)
-    from app.integrated_app.middleware.basic_auth import should_enable_auth
+    from app.integrated_app.middleware.basic_auth import (
+        ensure_exposure_auth,
+        resolve_auth_settings,
+        should_enable_auth,
+    )
 
     if should_enable_auth(config):
         from app.integrated_app.middleware.basic_auth import BasicAuthMiddleware
 
-        auth_cfg = config.get("security", {}).get("auth", {})
-        import os as _os
-
+        auth = resolve_auth_settings(config)
         app.add_middleware(
             BasicAuthMiddleware,
-            username=auth_cfg.get("username", "admin"),
-            password=_os.environ.get("SEEDVR2_AUTH_PASSWORD", auth_cfg.get("password", "")),
-            realm=auth_cfg.get("realm", "SeedVR2"),
-            max_auth_failures=int(auth_cfg.get("max_auth_failures", 5)),
-            auth_failure_window_seconds=float(auth_cfg.get("auth_failure_window_seconds", 300)),
-            auth_ban_seconds=float(auth_cfg.get("auth_ban_seconds", 600)),
+            username=auth["username"],
+            password=auth["password"],
+            realm=auth["realm"],
+            max_auth_failures=auth["max_auth_failures"],
+            auth_failure_window_seconds=auth["auth_failure_window_seconds"],
+            auth_ban_seconds=auth["auth_ban_seconds"],
         )
         logger.info("Basic Auth 中间件已注册")
+    else:
+        # 评估报告 R1：容器/编排环境默认绑定 0.0.0.0，未鉴权 + 端口映射即裸奔——
+        # fail-closed 拒绝启动并给出修复指引（回环映射的本地容器可用
+        # SEEDVR2_ALLOW_UNAUTHENTICATED=1 显式豁免）
+        ensure_exposure_auth(config)
 
     # 请求速率限制中间件 (上传/推理端点防护, CWE-770 防御)
     # 上限取自 config.yaml runtime.security.rate_limit_per_minute (默认 30 次/分钟)

@@ -7,6 +7,8 @@
 - 环境变量 SEEDVR2_AUTH_PASSWORD 优先级高于配置文件
 - 常量时间比较防时序攻击
 - AuthFailureTracker 暴力破解防护：失败计数 / 临时封禁 / 成功清零 / 解封
+- ensure_exposure_auth 暴露部署 fail-closed（评估报告 R1）
+- resolve_auth_settings env 快捷通道与优先级
 """
 
 from __future__ import annotations
@@ -22,6 +24,9 @@ from app.integrated_app.middleware.basic_auth import (
     AuthFailureTracker,
     BasicAuthMiddleware,
     create_auth_middleware,
+    ensure_exposure_auth,
+    is_containerized,
+    resolve_auth_settings,
     should_enable_auth,
 )
 
@@ -320,3 +325,87 @@ class TestBruteForceBanIntegration:
             good = base64.b64encode(b"admin:secret123").decode("ascii")
             resp = client.get("/", headers={"Authorization": f"Basic {good}"})
             assert resp.status_code == 200
+
+
+class TestExposureAuthFailClosed:
+    """ensure_exposure_auth 暴露部署 fail-closed 测试（评估报告 R1）"""
+
+    def test_not_containerized_passes(self):
+        """非容器环境不启用 fail-closed 检查"""
+        ensure_exposure_auth({}, containerized=False)
+
+    def test_containerized_without_auth_raises(self, monkeypatch):
+        """容器环境 + 无鉴权 + 无豁免 → 拒绝启动"""
+        for var in ("SEEDVR2_ALLOW_UNAUTHENTICATED", "SEEDVR2_AUTH_PASSWORD", "SEEDVR2_AUTH_USERNAME"):
+            monkeypatch.delenv(var, raising=False)
+        with pytest.raises(RuntimeError, match="Basic Auth"):
+            ensure_exposure_auth({}, containerized=True)
+
+    def test_containerized_with_env_credentials_passes(self, monkeypatch):
+        """容器环境 + env 用户名密码快捷通道 → 放行"""
+        monkeypatch.setenv("SEEDVR2_AUTH_USERNAME", "ops")
+        monkeypatch.setenv("SEEDVR2_AUTH_PASSWORD", "strong-pass")
+        ensure_exposure_auth({}, containerized=True)
+
+    def test_containerized_with_config_auth_passes(self):
+        """容器环境 + config.yaml 鉴权配置 → 放行"""
+        config = {"security": {"auth": {"enable": True, "username": "admin", "password": "p"}}}
+        ensure_exposure_auth(config, containerized=True)
+
+    def test_containerized_with_optout_passes(self, monkeypatch):
+        """容器环境 + 显式豁免（回环映射场景）→ 放行"""
+        monkeypatch.setenv("SEEDVR2_ALLOW_UNAUTHENTICATED", "1")
+        ensure_exposure_auth({}, containerized=True)
+
+    def test_is_containerized_via_env(self, monkeypatch):
+        monkeypatch.setenv("SEEDVR2_DEPLOYMENT", "container")
+        assert is_containerized() is True
+
+    def test_is_containerized_via_runtime_marker(self, monkeypatch, tmp_path):
+        import app.integrated_app.middleware.basic_auth as ba
+
+        monkeypatch.delenv("SEEDVR2_DEPLOYMENT", raising=False)
+        fake = tmp_path / ".dockerenv"
+        fake.write_text("")
+        monkeypatch.setattr(ba, "_CONTAINER_MARKERS", (str(fake),))
+        assert is_containerized() is True
+
+    def test_is_containerized_native(self, monkeypatch):
+        import app.integrated_app.middleware.basic_auth as ba
+
+        monkeypatch.delenv("SEEDVR2_DEPLOYMENT", raising=False)
+        monkeypatch.setattr(ba, "_CONTAINER_MARKERS", ())
+        assert is_containerized() is False
+
+
+class TestResolveAuthSettings:
+    """resolve_auth_settings 环境变量优先级与容器快捷通道测试"""
+
+    def test_env_only_shortcut_enables_auth(self, monkeypatch):
+        """同时注入用户名+密码环境变量即视为启用（容器部署免 config.yaml）"""
+        monkeypatch.setenv("SEEDVR2_AUTH_USERNAME", "ops")
+        monkeypatch.setenv("SEEDVR2_AUTH_PASSWORD", "strong-pass")
+        settings = resolve_auth_settings({})
+        assert settings["enable"] is True
+        assert settings["username"] == "ops"
+        assert settings["password"] == "strong-pass"
+
+    def test_password_env_alone_does_not_enable(self, monkeypatch):
+        """仅注入密码（无用户名）不改变 enable 判定"""
+        monkeypatch.setenv("SEEDVR2_AUTH_PASSWORD", "strong-pass")
+        settings = resolve_auth_settings({})
+        assert settings["enable"] is False
+
+    def test_env_overrides_config_credentials(self, monkeypatch):
+        monkeypatch.setenv("SEEDVR2_AUTH_USERNAME", "env_user")
+        monkeypatch.setenv("SEEDVR2_AUTH_PASSWORD", "env_pass")
+        config = {"security": {"auth": {"enable": True, "username": "cfg_user", "password": "cfg_pass"}}}
+        settings = resolve_auth_settings(config)
+        assert settings["username"] == "env_user"
+        assert settings["password"] == "env_pass"
+
+    def test_config_enable_only(self):
+        config = {"security": {"auth": {"enable": True, "username": "admin", "password": "pass"}}}
+        settings = resolve_auth_settings(config)
+        assert settings["enable"] is True
+        assert settings["username"] == "admin"
