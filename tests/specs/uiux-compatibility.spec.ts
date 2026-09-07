@@ -790,16 +790,18 @@ test.describe('Cross-browser rendering', () => {
 test.describe('Visual regression tests', () => {
   // 基线仅对 chromium-desktop project 维护（本地 win32 一套 + CI linux 由
   // update-baselines.yml 生成一套）。其余 project（firefox/webkit/各视口）
-  // 无基线，跳过避免 missing-snapshot 假失败。（2026-09-07 恢复 E1 视觉回归）
-  test.skip(
-    ({ projectName }) => projectName !== 'chromium-desktop',
-    'visual baselines maintained for chromium-desktop only'
-  );
-
+  // 无基线，运行时守卫跳过避免 missing-snapshot 假失败。
+  // （2026-09-07 恢复 E1；守卫放 beforeEach 而非 test.skip 条件——CI 锁定的
+  // playwright 1.61 skip-modifier 不支持 projectName fixture，本地 1.63 能过
+  // 属版本漂移假象，update-baselines run 34077775685 实证）
   // Use a consistent viewport for visual regression to ensure stable baselines
   test.use({ viewport: { width: 1280, height: 720 } });
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
+    if (testInfo.project.name !== 'chromium-desktop') {
+      test.skip(true, 'visual baselines maintained for chromium-desktop only');
+      return;
+    }
     await setupAllMocks(page);
     // The restore page shows a first-visit onboarding modal when
     // 'sv_onboarding_seen_v2' is missing; it intercepts clicks on the theme
