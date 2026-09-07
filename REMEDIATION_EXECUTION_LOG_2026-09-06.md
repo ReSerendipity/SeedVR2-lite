@@ -114,7 +114,7 @@
 - **本地实证**：`pip install semgrep==1.173.0` + 与 CI 完全同款 `semgrep scan --config auto --severity ERROR`，逐文件定位残留→补行内注释→全仓扫描 **ERROR = 0**（确定性证据，替代盲试 CI）。
 - 据此翻 `--error` 硬门禁（R4b，`1c4f39d`）。semgrep 安装仅落在 gitignored 的 `.venv`，不触依赖清单。
 - **CI 终态实证**：`--error` 上线后 SAST 在 62646ff 与 63b0ae0 均 success（ERROR findings 双端=0），R4 端到端达成。
-- GitHub open ERROR alerts 计数仍显示 10：属告警自动关闭的**异步滞后**（依赖后续扫描收敛），非门禁缺口；按铁律不经 API 越权 dismiss（维护者判断），列报告外观察。
+- GitHub open ERROR alerts 计数仍显示 10：深挖后**修正结论**——门禁步骤（`--config auto --severity ERROR --error`）在 62646ff/1c4f39d/515112a 三次扫描均 0（绿，硬门禁真实生效）；而告警面板数据源是全量 SARIF 步骤（无 severity 过滤，515112a 的 analysis 共 70 results），GitHub 将其中同 10 处位置的 `rule.severity` 映射为 error。**两步骤对同树同规则的严重级归类不一致**，属 GitHub SARIF↔semgrep severity 映射 + 告警指纹细节，非代码回归、非抑制失效。维护者复核路径：下载任一 analysis 的 SARIF 比对 `properties.severity` 与 GitHub `rule.severity`；确认后可批量 `dismiss_reason=fixed` 收敛面板。按铁律不越权 dismiss。
 - **外部并行事件留痕**：①后端门禁首红根因是我 R1 提交的 experiment 脚本缺 black 格式（已在本文件 F1 提交说明遗漏核验，教训：新增脚本必须点名过 black）——修复 `63b0ae0` 由维护者并行提交（标题注明「越权最小处置」），我方重复修复自动变为 no-op；②同一时段 main 上存在并行 MLOps 整改线（4a17570/5d0a33d/d97df5b/9523292），其中 5d0a33d 与我的 gpu-smoke.yml env 修复为不同 hunk，共存无损，已逐行复核。
 
 ## F2b. 本轮决策（续 D14 之后）
