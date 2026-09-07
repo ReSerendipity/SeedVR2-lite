@@ -17,12 +17,23 @@
 
 ## 2. 收紧步骤（按依赖顺序）
 
+> **2026-09-06 盘点修订（S1 近乎完成，S2 逼近即时可行）**：全模板 grep
+> `on(click|change|input|submit|keydown|load|error|…)=` 共 **0 处**内联事件属性；
+> JS 的 100 处 `.onclick =` 为代码赋值（非 HTML 属性，不受 CSP script-src 约束）；
+> 22 处 innerHTML 拼接不含 on*。base.html 6 个 script：2 个内联均带 nonce、
+> 4 个外链同源。**S2 唯一残留障碍** = `history.html:276/:335` 两处
+> `hx-on::after-request`（htmx 经 `new Function` 求值——注意：现行 CSP 无
+> 'unsafe-eval'，此 2 处在当前策略下**疑似已静默失效**，删除前先人工确认
+> 刷新链路现状）。等价改法：app.js 监听 `htmx:afterRequest` 延时 click
+> （<15 分钟工作量 + 一轮 e2e 回归）。58 处模板 `style="…"`（restore.html 占 39）
+> 仍是 S4 的主体工作量。
+
 | 步骤 | 内容 | 验收 |
 |---|---|---|
-| S1 | 盘点全部模板/JS 的内联事件处理器（`onclick=` 等）与内联 `<script>`，迁移到事件委托 + 外部 JS；`base.html` 的两个内联 `<script nonce>` 保留（nonce 覆盖） | grep 模板零 `on\*=` 属性 |
-| S2 | `script-src` 移除 `'unsafe-inline'`（nonce 已全覆盖后）：meta 与响应头**同一提交**内同步移除 | `tests/test_csp_nonce.py` 全绿 + 断言 CSP 不含 unsafe-inline |
+| S1 | ~~盘点全部模板/JS 内联事件处理器~~ → **盘点已完成（见上）**：模板零内联事件属性，仅 2 处 htmx `hx-on` 待等价迁移 | ~~grep 模板零 `on*=` 属性~~ ✅（hx-on 迁移后达成） |
+| S2 | `script-src` 移除 `'unsafe-inline'`（先完成 hx-on 迁移）：meta 与响应头**同一提交**内同步移除 | `tests/test_csp_nonce.py` 全绿 + 断言 CSP 不含 unsafe-inline |
 | S3 | 字体本地化：下载站酷小薇/马善政楷书 woff2 入 `/static/fonts/`（注意字体文件自身的再分发许可），`style-src/font-src` 移除 Google Fonts 域 | UI 字体切换器回归 + CSP 不含 fonts.googleapis.com |
-| S4 | 内联 style 迁移（最大工作量）：组件级 `style=` 属性迁外部样式表后，`style-src` 移除 `'unsafe-inline'` | 全 UI 视觉回归截图对比 |
+| S4 | 内联 style 迁移（最大工作量，58 处属性）：组件级 `style=` 迁外部样式表/类切换后，`style-src` 移除 `'unsafe-inline'` | 全 UI 视觉回归截图对比 |
 
 ## 3. 发布策略
 

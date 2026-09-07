@@ -114,7 +114,8 @@
 - **本地实证**：`pip install semgrep==1.173.0` + 与 CI 完全同款 `semgrep scan --config auto --severity ERROR`，逐文件定位残留→补行内注释→全仓扫描 **ERROR = 0**（确定性证据，替代盲试 CI）。
 - 据此翻 `--error` 硬门禁（R4b，`1c4f39d`）。semgrep 安装仅落在 gitignored 的 `.venv`，不触依赖清单。
 - **CI 终态实证**：`--error` 上线后 SAST 在 62646ff 与 63b0ae0 均 success（ERROR findings 双端=0），R4 端到端达成。
-- GitHub open ERROR alerts 计数仍显示 10：深挖后**修正结论**——门禁步骤（`--config auto --severity ERROR --error`）在 62646ff/1c4f39d/515112a 三次扫描均 0（绿，硬门禁真实生效）；而告警面板数据源是全量 SARIF 步骤（无 severity 过滤，515112a 的 analysis 共 70 results），GitHub 将其中同 10 处位置的 `rule.severity` 映射为 error。**两步骤对同树同规则的严重级归类不一致**，属 GitHub SARIF↔semgrep severity 映射 + 告警指纹细节，非代码回归、非抑制失效。维护者复核路径：下载任一 analysis 的 SARIF 比对 `properties.severity` 与 GitHub `rule.severity`；确认后可批量 `dismiss_reason=fixed` 收敛面板。按铁律不越权 dismiss。
+- GitHub open ERROR alerts 计数一度滞留 10：**根因已定位并端到端修复（`a990010`）**。本地复现 CI 同款命令实证：semgrep 1.173.0 的 `--sarif` 输出**不应用 nosemgrep 抑制**且 result 无 level/properties，GitHub 按规则 `defaultConfiguration.level=error` 为被抑制项建 error 告警（每扫描重复上报→永不自愈）；而 `--severity ERROR` 门禁步骤语义正确（0 findings）。修复：新增 `scripts/ci/sarif_nosemgrep_filter.py` 以 `--json` 扫描（正确应用抑制）为事实源裁剪 SARIF（只删不增，本地验证 13→3），接入 SARIF 步骤。**效果实证：a990010 的 SAST success 后，面板 open ERROR = 0**（13→0 全自动关闭，未越权 dismiss 任何告警）。
+- **CSP 路线 S1 盘点（本轮完成，文档已回填）**：模板内联事件属性 grep **0 处**；JS 100 处 `.onclick=` 为代码赋值不受 CSP 约束；22 处 innerHTML 无 on*。S2 唯一残留 = `history.html:276/:335` 两处 htmx `hx-on::after-request`（且现行 CSP 无 unsafe-eval，疑似已静默失效——删除前先人工确认刷新链路）。58 处模板 `style="…"` 为 S4 主体。S1→S2 从「前端重构工程」降格为「<15 分钟迁移 + e2e 回归」。
 - **外部并行事件留痕**：①后端门禁首红根因是我 R1 提交的 experiment 脚本缺 black 格式（已在本文件 F1 提交说明遗漏核验，教训：新增脚本必须点名过 black）——修复 `63b0ae0` 由维护者并行提交（标题注明「越权最小处置」），我方重复修复自动变为 no-op；②同一时段 main 上存在并行 MLOps 整改线（4a17570/5d0a33d/d97df5b/9523292），其中 5d0a33d 与我的 gpu-smoke.yml env 修复为不同 hunk，共存无损，已逐行复核。
 
 ## F2b. 本轮决策（续 D14 之后）
