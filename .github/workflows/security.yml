@@ -32,11 +32,18 @@ jobs:
           semgrep scan --config auto --severity ERROR --error
 
       - name: Semgrep SARIF (all severities)
-        # 全量告警（含 WARNING/MEDIUM 与 nosemgrep 抑制项）进 SARIF 上报，不参与门禁。
-        # || true 仅作用于报告步骤：semgrep 自身故障由上方 gate 步骤暴露，不再被静默。
+        # 全量告警（含 WARNING/MEDIUM）进 SARIF 上报，不参与门禁。
+        # nosemgrep 修正（2026-09-06 实证）：semgrep 1.173.0 的 --sarif 输出
+        # 不应用 nosemgrep 抑制且 result 缺 level，GitHub 按规则
+        # defaultConfiguration.level=error 建告警 → 被抑制项在面板永不自愈。
+        # 用 --json 扫描（正确应用抑制）作事实源过滤 SARIF，见
+        # scripts/ci/sarif_nosemgrep_filter.py。|| true 仅作用于 semgrep 自身
+        # 容错：工具故障由上方 gate 步骤暴露，不在此静默。
         if: always()
         run: |
-          semgrep scan --config auto --sarif --output semgrep.sarif
+          semgrep scan --config auto --sarif --output semgrep.sarif || true
+          semgrep scan --config auto --json --output semgrep.findings.json || true
+          python scripts/ci/sarif_nosemgrep_filter.py semgrep.sarif semgrep.findings.json semgrep.sarif
 
       - name: Upload SARIF results
         if: always()
