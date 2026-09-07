@@ -664,9 +664,14 @@ function Get-SeedVR2PeakGbEstimate {
             Measure-Object -Property Length -Sum).Sum
     }
     if ($ModelDirectory -and (Test-Path -LiteralPath $ModelDirectory)) {
-        foreach ($key in @('checkpoint_fp8', 'vae_checkpoint', 'pos_emb', 'neg_emb')) {
-            $want = ($Components -contains 'model-fp8' -and $key -eq 'checkpoint_fp8') -or
-                ($Components -contains 'model-shared' -and $key -ne 'checkpoint_fp8')
+        # 主模型键双算（KNOWN_ISSUES #83）：v1.5.1 五精度后内置主模型为
+        # checkpoint_mxfp8，旧 checkpoint_fp8 仍可能在 config.yaml 中定义但无
+        # 权重文件在场（Test-Path 自然跳过）；只数旧键会让约 3.3 GB 主权重
+        # 漏出磁盘预检。model-shared 侧用 -notcontains 排除两个主键防双计。
+        $mainKeys = @('checkpoint_fp8', 'checkpoint_mxfp8')
+        foreach ($key in ($mainKeys + @('vae_checkpoint', 'pos_emb', 'neg_emb'))) {
+            $want = (($Components -contains 'model-fp8') -and ($mainKeys -contains $key)) -or
+                (($Components -contains 'model-shared') -and ($mainKeys -notcontains $key))
             if (-not $want) {
                 continue
             }
