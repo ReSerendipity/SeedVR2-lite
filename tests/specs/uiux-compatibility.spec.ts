@@ -788,6 +788,14 @@ test.describe('Cross-browser rendering', () => {
 // ============================================================
 
 test.describe('Visual regression tests', () => {
+  // 基线仅对 chromium-desktop project 维护（本地 win32 一套 + CI linux 由
+  // update-baselines.yml 生成一套）。其余 project（firefox/webkit/各视口）
+  // 无基线，跳过避免 missing-snapshot 假失败。（2026-09-07 恢复 E1 视觉回归）
+  test.skip(
+    ({ projectName }) => projectName !== 'chromium-desktop',
+    'visual baselines maintained for chromium-desktop only'
+  );
+
   // Use a consistent viewport for visual regression to ensure stable baselines
   test.use({ viewport: { width: 1280, height: 720 } });
 
@@ -814,14 +822,14 @@ test.describe('Visual regression tests', () => {
    * providing tolerance for anti-aliasing and font rendering differences
    * across platforms while still catching significant visual regressions.
    *
-   * NOTE: These tests are skipped until baseline screenshots are generated.
-   * To generate baselines, run once with: npx playwright test --update-snapshots
-   * Then remove .skip() to enable visual regression checking.
+   * 2026-09-07 解禁（E1）：原 12 个 test.skip 硬跳过属历史遗留——win32 基线
+   * 早已存在仓库（*-chromium-desktop-win32.png），CI linux 基线由
+   * update-baselines.yml 生成。平台/project 差异由上方 skip 与
+   * maxDiffPixelRatio 双容差覆盖。
    */
 
   // --- Dark theme screenshots ---
-  // 暂时跳过视觉回归测试以解决 CI 失败问题
-  test.skip('Home page - dark theme visual regression', async ({ page }) => {
+  test('Home page - dark theme visual regression', async ({ page }) => {
     const basePage = new BasePage(page);
     await basePage.navigate('/');
     await basePage.switchTheme('dark');
@@ -832,7 +840,7 @@ test.describe('Visual regression tests', () => {
     });
   });
 
-  test.skip('Video Restore page - dark theme visual regression', async ({ page }) => {
+  test('Video Restore page - dark theme visual regression', async ({ page }) => {
     const basePage = new BasePage(page);
     await basePage.navigate('/restore');
     await basePage.switchTheme('dark');
@@ -843,7 +851,7 @@ test.describe('Visual regression tests', () => {
     });
   });
 
-  test.skip('Image Restore page - dark theme visual regression', async ({ page }) => {
+  test('Image Restore page - dark theme visual regression', async ({ page }) => {
     const basePage = new BasePage(page);
     await basePage.navigate('/restore');
     await basePage.switchTheme('dark');
@@ -854,7 +862,7 @@ test.describe('Visual regression tests', () => {
     });
   });
 
-  test.skip('Settings page - dark theme visual regression', async ({ page }) => {
+  test('Settings page - dark theme visual regression', async ({ page }) => {
     const basePage = new BasePage(page);
     await basePage.navigate('/settings');
     await basePage.switchTheme('dark');
@@ -865,7 +873,7 @@ test.describe('Visual regression tests', () => {
     });
   });
 
-  test.skip('History page - dark theme visual regression', async ({ page }) => {
+  test('History page - dark theme visual regression', async ({ page }) => {
     const basePage = new BasePage(page);
     await basePage.navigate('/history');
     await basePage.switchTheme('dark');
@@ -876,7 +884,7 @@ test.describe('Visual regression tests', () => {
     });
   });
 
-  test.skip('System Status page - dark theme visual regression', async ({ page }) => {
+  test('System Status page - dark theme visual regression', async ({ page }) => {
     const basePage = new BasePage(page);
     await basePage.navigate('/');
     await basePage.switchTheme('dark');
@@ -889,7 +897,7 @@ test.describe('Visual regression tests', () => {
 
   // --- Light theme screenshots ---
   // 暂时跳过视觉回归测试以解决 CI 失败问题
-  test.skip('Home page - light theme visual regression', async ({ page }) => {
+  test('Home page - light theme visual regression', async ({ page }) => {
     const basePage = new BasePage(page);
     await basePage.navigate('/');
     await basePage.switchTheme('light');
@@ -900,7 +908,7 @@ test.describe('Visual regression tests', () => {
     });
   });
 
-  test.skip('Video Restore page - light theme visual regression', async ({ page }) => {
+  test('Video Restore page - light theme visual regression', async ({ page }) => {
     const basePage = new BasePage(page);
     await basePage.navigate('/restore');
     await basePage.switchTheme('light');
@@ -911,7 +919,7 @@ test.describe('Visual regression tests', () => {
     });
   });
 
-  test.skip('Image Restore page - light theme visual regression', async ({ page }) => {
+  test('Image Restore page - light theme visual regression', async ({ page }) => {
     const basePage = new BasePage(page);
     await basePage.navigate('/restore');
     await basePage.switchTheme('light');
@@ -922,7 +930,7 @@ test.describe('Visual regression tests', () => {
     });
   });
 
-  test.skip('Settings page - light theme visual regression', async ({ page }) => {
+  test('Settings page - light theme visual regression', async ({ page }) => {
     const basePage = new BasePage(page);
     await basePage.navigate('/settings');
     await basePage.switchTheme('light');
@@ -933,7 +941,7 @@ test.describe('Visual regression tests', () => {
     });
   });
 
-  test.skip('History page - light theme visual regression', async ({ page }) => {
+  test('History page - light theme visual regression', async ({ page }) => {
     const basePage = new BasePage(page);
     await basePage.navigate('/history');
     await basePage.switchTheme('light');
@@ -944,7 +952,7 @@ test.describe('Visual regression tests', () => {
     });
   });
 
-  test.skip('System Status page - light theme visual regression', async ({ page }) => {
+  test('System Status page - light theme visual regression', async ({ page }) => {
     const basePage = new BasePage(page);
     await basePage.navigate('/');
     await basePage.switchTheme('light');

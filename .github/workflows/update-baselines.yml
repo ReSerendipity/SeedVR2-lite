@@ -71,9 +71,21 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git diff --quiet tests/specs/uiux-compatibility.spec.ts-snapshots/; then
-            git add -f tests/specs/uiux-compatibility.spec.ts-snapshots/
-            git commit -m "chore(e2e): update visual regression baselines"
+          SNAP=tests/specs/uiux-compatibility.spec.ts-snapshots
+          # 基线必须真实产出（12 个视觉项 × chromium/linux 平台后缀）；
+          # 若目录缺失或不足则显式失败——否则问题会被 else 分支静默吞掉
+          # （2026-09-07：旧实现在全部视觉项被 skip 时 git diff 直接
+          #  "did not match any files" exit 128，无任何有效信号）
+          if [ ! -d "$SNAP" ]; then
+            echo "::error::snapshots dir not created by --update-snapshots run"
+            exit 1
+          fi
+          count=$(find "$SNAP" -name "*-linux.png" | wc -l)
+          echo "linux baselines: $count (expect 12)"
+          [ "$count" -ge 12 ] || { echo "::error::fewer than 12 linux baselines generated"; exit 1; }
+          if ! git diff --quiet -- "$SNAP" || git ls-files --others --exclude-standard -- "$SNAP" | grep -q .; then
+            git add -f "$SNAP"
+            git commit -m "chore(e2e): update visual regression baselines (linux, update-baselines workflow)"
             git push origin HEAD:main || {
               echo "push failed (branch protection or race) - baselines committed locally only"
               git log --oneline -1
