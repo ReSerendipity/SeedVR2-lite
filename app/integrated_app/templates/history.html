@@ -273,7 +273,6 @@ document.addEventListener('DOMContentLoaded', () => {
                             hx-swap="none"
                             hx-indicator="#historyLoading"
                             hx-disabled-elt="this"
-                            hx-on::after-request="setTimeout(() => document.getElementById('btnRefresh').click(), 300)"
                             title="${I["common.cancel"] || 'Cancel'}" aria-label="${I["common.cancel"] || 'Cancel'}">
                         <i class="bi bi-x-circle"></i>
                     </button>`
@@ -332,7 +331,6 @@ document.addEventListener('DOMContentLoaded', () => {
                                 hx-swap="none"
                                 hx-indicator="#historyLoading"
                                 hx-disabled-elt="this"
-                                hx-on::after-request="setTimeout(() => document.getElementById('btnRefresh').click(), 300)"
                                 title="${I["common.cancel"] || 'Cancel'}" aria-label="${I["common.cancel"] || 'Cancel'}">
                             <i class="bi bi-x-circle"></i>
                         </button>`
@@ -443,6 +441,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 刷新
     document.getElementById('btnRefresh').addEventListener('click', () => loadHistory(currentPage));
+
+    // 取消任务请求完成后延迟刷新（自 hx-on::after-request 迁移：htmx 该属性经
+    // new Function 求值，被无 'unsafe-eval' 的 CSP 静默拦截——原行为本就失效，
+    // 迁移同时修复功能与 CSP 收紧前提，见 docs/CSP_TIGHTENING_ROADMAP.md S2）
+    document.body.addEventListener('htmx:afterRequest', (evt) => {
+        if (evt.target && evt.target.closest && evt.target.closest('.btn-cancel-record')) {
+            setTimeout(() => document.getElementById('btnRefresh').click(), 300);
+        }
+    });
 
     // 使用事件委托处理删除按钮点击
     document.getElementById('historyBody').addEventListener('click', (e) => {

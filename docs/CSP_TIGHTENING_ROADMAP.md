@@ -41,6 +41,30 @@
 （上报端点可复用 `/api/system/ping` 级轻量端点或控制台采集），零告警后
 切换强制头并保留一步可回滚（meta/头两处均在同一提交内，git revert 即回滚）。
 
+## 2b. 实施进度（2026-09-06 自主落地轮）
+
+- **S1 ✅ 完成**：盘点证实模板零内联事件属性、JS 零拼接 `<script>`/on*（见上）。
+  唯一残留 `history.html` 两处 `hx-on::after-request` 已迁移为 document 级
+  `htmx:afterRequest` 委托监听——且经核实该属性经 htmx `new Function` 求值，
+  在现行无 `'unsafe-eval'` 的 CSP 下**本已静默失效**，迁移同时修复了功能。
+- **S2 ✅ 完成**：`base.html` meta CSP 改为 `script-src 'self'{% if csp_nonce %}
+  'nonce-…'{% else %} 'unsafe-inline'{% endif %}`——nonce 上下文彻底移除
+  `unsafe-inline`，无 nonce 异常路径保留回退防白屏；全部 7 处内联 script 由
+  `render_page` 无条件注入的 per-request nonce 覆盖。响应头侧（`security_headers.py`）
+  无 per-request nonce 可拼，按 CSP 交集语义（meta 更严者生效）保留字符串并注释。
+  回归：`tests/test_csp_nonce.py` 新增「nonce 存在时 script-src 无 unsafe-inline」
+  正向断言，既有回退断言继续通过。桌面壳桥接经 CDP document-created 通道注入，
+  不受页面 CSP 约束（建议下轮真机复验一次标题字体/刷新链路）。
+- **S3 ☑ 评估后关闭（不做自托管）**：装饰字体加载链已是完全按需——默认启动
+  **零第三方请求**（`app.js` `ensureWebfonts` 仅在用户展开字体菜单或已保存装饰
+  字体选择时触发）；界面基字体（DM Sans / Instrument Serif）本已本地化。
+  自托管 11 个 Google 字体家族需引入 30–60MB CJK 子集碎片（unicode-range
+  分片），与便携包体积治理（core ~1.9GB、体积注释三处同源）冲突且用户收益为零。
+  CSP 的 `fonts.googleapis.com/gstatic.com` 域因此保留。决策 D22。
+- **S4 ⏳ 部分**：见 §2c。
+
+## 2c. S4 style= 盘点分类（2026-09-06）
+
 ## 4. 风险与边界
 
 - S2 前必须完成 S1，否则内联脚本被浏览器静默拦截（表现为 UI 无报错失效）。

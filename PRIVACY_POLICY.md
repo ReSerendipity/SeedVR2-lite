@@ -22,11 +22,11 @@ SeedVR2-lite 是一款自托管的图像/视频修复（Restore）工具。我�
 
 本服务**不收集**任何个人信息、使用埋点或遥测数据；不依赖第三方分析服务。
 
-**第三方资源披露**（2026-09-06 增补）：Web UI 的标题字体默认从 Google Fonts
-（fonts.googleapis.com / fonts.gstatic.com）加载——浏览器访问页面时会向上述
-域名发起字体资源请求（属内容加载，非数据上报）。如需完全离线/无第三方请求，
-可在 config.yaml 或本地字体包中切换字体，或参考
-[docs/CSP_TIGHTENING_ROADMAP.md](docs/CSP_TIGHTENING_ROADMAP.md) 的字体本地化路线。
+**第三方资源披露**（2026-09-06 更新）：界面基础字体（DM Sans / Instrument Serif）
+已本地化，页面默认加载**不向任何第三方发起请求**。仅当您主动展开「标题字体」
+菜单或此前已选用装饰字体时，浏览器才会向 Google Fonts
+（fonts.googleapis.com / fonts.gstatic.com）请求所选字体资源（属内容加载，
+非数据上报；网络不可达时界面会明确提示，不会静默降级）。
 
 ## 4. 数据删除
 

@@ -44,6 +44,18 @@ class TestCspNonce:
             n2 = _extract(client.get("/restore").text)[0][0]
             assert n1 != n2
 
+    def test_script_src_drops_unsafe_inline_when_nonce(self):
+        """CSP 收紧 S2（2026-09-06）：nonce 存在时 script-src 不得再含 'unsafe-inline'——
+        全部内联脚本均带 nonce（render_page 无条件注入），回退串仅服务无 nonce 异常路径"""
+        app = create_app({})
+        with TestClient(app) as client:
+            for path in ["/", "/restore", "/settings", "/history"]:
+                html = client.get(path).text
+                m = re.search(r"script-src ([^;]+);", html)
+                assert m, f"{path} meta 缺 script-src"
+                assert "unsafe-inline" not in m.group(1), f"{path} nonce 上下文仍含 unsafe-inline"
+                assert "'nonce-" in m.group(1), f"{path} script-src 缺 nonce 源"
+
     def test_csp_keeps_unsafe_inline_fallback_without_nonce(self):
         """无 nonce 上下文渲染时应保持旧 CSP（unsafe-inline 回退，不出现空 nonce 源）"""
         from fastapi import Request

@@ -27,13 +27,18 @@ logger = logging.getLogger(__name__)
 
 # 默认 CSP（保留 unsafe-inline 以兼容现有前端内联事件与内联样式）
 #
-# ⚠️ 必须与 base.html 头部的 <meta http-equiv="Content-Security-Policy"> 保持一致：
+# ⚠ 必须与 base.html 头部的 <meta http-equiv="Content-Security-Policy"> 保持一致：
 # 浏览器对 meta 与响应头两份策略取交集，任何一边更严都会拦截另一边明确放行的资源。
 # 曾因响应头缺 fonts.googleapis.com / fonts.gstatic.com / media-src blob:，
 # 把页面自己声明并实际使用的标题字体样式表与 blob: 视频对比全部拦下
 # （见 docs/project/KNOWN_ISSUES.md #54、陷阱 #7）。
 # 标题字体切换器依赖的站酷小薇/马善政楷书等中文字体仅存在于 Google Fonts，
 # 本地字体包（/static/fonts/）只有 DM Sans 与 Instrument Serif 两族，无法替代。
+#
+# S2 收紧说明（docs/CSP_TIGHTENING_ROADMAP.md，2026-09-06）：script-src 的实际
+# 收紧在 meta 侧完成（nonce 上下文移除 unsafe-inline）；响应头侧无 per-request
+# nonce 可用，保留 'unsafe-inline' 字符串不构成弱点——交集语义下 meta 的
+# nonce-only 策略必然更严并生效。style-src 收紧见 S4。
 _DEFAULT_CSP = (
     "default-src 'self'; "
     "script-src 'self' 'unsafe-inline'; "
