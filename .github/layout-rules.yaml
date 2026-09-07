@@ -1,0 +1,111 @@
+# Auto-generated structure-guard baseline.
+# root_allowlist freezes the approved root layout.
+# To deliberately permit a new root file, add it to root_allowlist.
+# forbid_root_patterns fail CI on future stray dumps
+# (audit / review / log / temp files at repo root).
+version: 1
+require_dirs:
+  - docs
+  - scripts
+  - .github
+forbid_root_patterns:
+  - '.*_AUDIT_.*\.md$'
+  - '.*_ASSESSMENT_.*\.md$'
+  - '.*_REVIEW_.*\.md$'
+  - '.*_REPORT.*\.md$'
+  - 'REMEDIATION_EXECUTION_LOG.*\.md$'
+  - 'REVISION_LOG.*\.md$'
+  - '.*_EXECUTION_SUMMARY.*\.md$'
+  - '.*_报告_.*\.md$'
+  - '.*评估.*\.md$'
+  - '.*审查.*\.md$'
+  - '.*_release_log.*\.txt$'
+
+# 产物类（会自行再生的构建/测试垃圾）：仅 WARN 不阻断，由 auto_tidy 归位
+artifact_root_patterns:
+  - '.*\.log$'
+  - '.*\.tmp$'
+  - '.*\.bak$'
+  - 'coverage\.xml$'
+  - 'tmp_.*'
+  - '.*~$'
+gitignored_expect:
+  - coverage.xml
+  - .coverage
+  - node_modules
+  - __pycache__
+  - .venv
+  - .venv_srv
+  - dist
+  - build
+  - .mypy_cache
+  - .pytest_cache
+  - .ruff_cache
+  - .hypothesis
+  - .torch_cache
+  - .trae
+  - .idea
+  - .qoder
+  - htmlcov
+  - .gradle
+  - .kotlin
+  - .vscode
+  - playwright-report
+  - test-results
+  - dogfood-output
+  - android-sdk
+  - artifacts
+  - coverage
+root_allowlist:
+  - .dockerignore
+  - .env.example
+  - .gitattributes
+  - .github
+  - .gitignore
+  - .pre-commit-config.yaml
+  - CHANGELOG.md
+  - CONTRIBUTING.md
+  - Dockerfile
+  - LICENSE
+  - NOTICE
+  - PRIVACY_POLICY.md
+  - README.md
+  - REMEDIATION_EXECUTION_LOG_2026-09-06.md
+  - THIRD_PARTY_NOTICES.md
+  - USER_AGREEMENT.md
+  - _archive
+  - app
+  - assets
+  - common
+  - config.yaml
+  - configs_3b
+  - configs_7b
+  - data
+  - demo
+  - deploy
+  - desktop
+  - docker-compose.yml
+  - docs
+  - experiments
+  - install.bat
+  - install.sh
+  - launcher
+  - logs
+  - model
+  - model_lib
+  - perf
+  - portable_launcher
+  - pyproject.toml
+  - requirements-container-lock.txt
+  - requirements-dev.txt
+  - requirements-lock.txt
+  - requirements.txt
+  - scripts
+  - start.bat
+  - start.sh
+  - start_portable.py
+  - tests
+  - training
+  - uv.lock
+  - version.json
+  - website
