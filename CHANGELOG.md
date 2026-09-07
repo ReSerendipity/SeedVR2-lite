@@ -29,6 +29,10 @@
 
 ### Security
 
+* **CSP 收紧 S1+S2 落地（2026-09-07 自主轮）**：history.html 两处 htmx `hx-on::after-request` 迁移为 `htmx:afterRequest` 委托监听（该属性经 `new Function` 求值，在无 `'unsafe-eval'` 的 CSP 下本已静默失效——迁移同时修复取消后自动刷新）；`base.html` meta CSP 在 nonce 上下文移除 `script-src 'unsafe-inline'`（7 处内联 script 全覆盖 per-request nonce，无 nonce 异常路径保留回退），`test_csp_nonce` 新增正向断言。S3 评估关闭（装饰字体已完全按需加载、默认零第三方请求；11 家族 CJK 子集自托管 30-60MB 与体积治理冲突维持 CDN）；S4 深度调查后暂停（21 处 `display:none` 与 59 写/8 读 `style.display` 状态机耦合，前置依赖可见性 classList 化重构，见 CSP_TIGHTENING_ROADMAP §2c）。PRIVACY_POLICY 第三方资源披露精确化（`006ebd5` `c6fdb21`）
+* **E1 视觉回归门禁恢复（2026-09-07）**：uiux-compatibility 12 个硬 `test.skip` 解禁（win32 基线 2026-08 已入库、skip 系历史遗留），新增 `projectName` 门控只跑 chromium-desktop；update-baselines.yml 补「基线未产出显式失败 + ≥12 张断言」（旧版全 skip 时 exit 128 静默）。CI linux 基线经 update-baselines 生成中（`006ebd5`）
+### Security
+
 * **安全合规评估落地（2026-09-06 评估报告）**：`browse-dir`/`open-explorer` 收敛到 `runtime.security.allowed_base_dirs` 路径白名单（原全盘可枚举/可打开）+ `validate_path` 兄弟目录前缀绕过修复（`is_relative_to` 语义）；容器/编排部署 Basic Auth fail-closed（`SEEDVR2_DEPLOYMENT=container` 标记 + 未鉴权拒绝启动 + env 快捷通道）；水印嵌入失败策略化处置（`mark_metadata` 侧车元数据/`block`/`ignore`，管线不再 `except:pass` 静默输出无水印文件）+ 视频水印验证 CLI + H.264 转码鲁棒性诊断（实测 0/16 帧存活，记录为已知限制）；容器依赖改用 uv 导出精确钉版锁；重资源 GET（目录枚举）独立限流；PathGuard Windows 特有向量测试；CSP 收紧路线图与桌面壳聚焦安全评估文档；SECURITY.md 机制描述对齐实际（`632a568` `ca2cc28` `24fa248` `3067484` `b962346` `2d237cb` `c8e73cd` `0e1e0be`）
 * **安全评估后续建议落地（2026-09-06 轮）**：视频水印抗有损编码增强——三通道等幅嵌入（纯亮度扰动，免疫色度下采样）+ 连续重复码 + 候选探测验证，实测生产 CRF18/23 转码后全帧存活（旧单通道 0/16），代价视频路径 PSNR≈37.5dB，`_verify_signature` 加固免疫非 ASCII 垃圾；`verify_watermark.py` 补视频采样帧验证；孤儿 checkpoint 周期清扫接入后台循环；桌面壳拖拽读取校验前移（DoS 面消除）+ D-1/2/3 核实关闭；semgrep 13 条存量 ERROR 告警抑制根因修复（短规则名→完整 rule.id + 多行锚定）+ 4 处 Actions run-shell-injection 经 env 间接化（`7a0d959` `2f1b711` `2a36bc8` `ee7e8b1`）
 * Tauri 更新签名私钥加入 .gitignore（`79eb342`）

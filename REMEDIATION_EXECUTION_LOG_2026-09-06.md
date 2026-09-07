@@ -132,3 +132,43 @@
 ## F3. 报告外发现（本轮新增，未处理）
 - `.github/scripts/check_layout.py`（用户未跟踪在制品，8 条 ruff 告警）与 `structure-guard.yml`、`layout-rules.yaml`：非本任务产物，未触碰；CI 检出无此文件不影响门禁。
 - 远端 main 在本轮开始前已前进（f5d6cc3，用户侧提交），本次推送 fast-forward 无冲突。
+
+
+---
+
+# 自主深挖轮（2026-09-07，用户指令：「剩余所有没做的全部做一遍 + 扫描各报告未实施项」）
+
+## J1. 全仓报告对账（盘点即交付）
+
+| 来源 | 未实施声称 | 交叉核实结果 |
+|---|---|---|
+| v2 EXECUTION_CHECKLIST | P3 0/4、其他 0/5、T1-1 等 ⬜ | **严重滞后**：T1-1/T2-2/T2-3/T3-1/T4-1~T4-4 均已落地（逐项代码核实），清单已对账刷新（本地工件，用户 gitignore 策略不入库） |
+| LOGGING_AUDIT | 「RotatingFileHandler 未实施」 | 过时——app_server.py:97 / audit.py:57 均有 |
+| MLOps 执行日志 | 量化基线接线「留待下轮」 | 维护者已完成（4a17570/5d0a33d），不重复 |
+| TEST_SYSTEM_AUDIT | E1 视觉回归 12 skip | **本轮执行**（见 J3） |
+| 20260830 深度完整性 | 「哈希锁定未落地」 | 部分过时：requirements-lock.txt 现 2454 行带哈希；容器锁 a990010 全量哈希 |
+
+## J2. 任务终态
+
+| # | 项 | 状态 | 产出 |
+|---|---|---|---|
+| S1/S2 | CSP nonce 收紧 | **完成** `c6fdb21` | hx-on 迁移（附带修复静默失效的取消自动刷新）、meta nonce 上下文去 unsafe-inline、正向断言；S2 全绿 222 用例 |
+| S3 | 字体 | **评估关闭** | 按需加载实测零默认第三方请求；自托管 30-60MB 否决（D22）；PRIVACY_POLICY 精确化 |
+| S4 | style= | **调查完成→暂停** | 21 display:none 与 style.display 状态机（59写/8读）耦合 + .sv-hidden !important 冲突 → 等价迁移不可行，前置=可见性 classList 化重构（2-3 天独立项），§2c 落档 |
+| E | verify CLI 视频 | **完成** `06a8087` | CRF18 视频 4 帧端到端 exit 0；ffmpeg 缺失自动 skip |
+| F | PyArmor T3-4 | **完成**（不采纳） | trial PoC 实测（×4.5-6 体积/+27ms import/功能正确）+ 开源形态根本冲突 → 报告落档 docs/reports/PYARMOR_EVALUATION_2026-09-07.md（本地工件） |
+| E1 | 视觉回归 | **改造完成，基线生成中** `006ebd5` | 12 skip 解禁 + projectName 门控（仅 chromium-desktop 有基线）+ update-baselines 断言韧性（目录缺失/≥12 张显式失败）；bootstrap 窗口=首跑 e2e 视觉组红一次→基线回推自愈 |
+
+## J3. 报告外发现（新增，未处理）
+
+1. **history.spec.ts:510/529 zombie locator**：`button[onclick*="deleteHistoryRecord"]` 全仓不存在（删除按钮实际走 `.btn-delete-record` 事件委托），两个删除测试的断言体永不执行（假绿）。修复涉 e2e 语义与产品确认弹窗设计，需维护者定夺。
+2. `docs/reports/` 与 v2 checklist 被用户 2026-09-06 目录整理 `.gitignore`（164/271 行）排除入库——本轮清单对账与 PyArmor 报告按此策略以本地工件留存，未 `-f` 强推。
+
+## J4. 决策续
+
+| ID | 决策 | 理由 |
+|---|---|---|
+| D22 | S3 维持 CDN 按需加载，否决自托管 | 默认已零第三方请求；30-60MB 子集碎片与体积治理冲突且用户无收益 |
+| D23 | S4 暂停执行不强行迁移 | 等价迁移不存在（状态机耦合），盲目迁移引入可见性回归；识别前置依赖并落档路线 |
+| D24 | E1 基线走 update-baselines 官方通道而非本地生成 | 与 CI 同环境渲染，避免跨平台噪声；bootstrap 红窗有明确自愈路径 |
+| D25 | v2 清单对账物尊重用户 gitignore 策略留本地 | 目录整理是用户显式决策，不越权覆盖 |

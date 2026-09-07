@@ -63,7 +63,27 @@
   CSP 的 `fonts.googleapis.com/gstatic.com` 域因此保留。决策 D22。
 - **S4 ⏳ 部分**：见 §2c。
 
-## 2c. S4 style= 盘点分类（2026-09-06）
+## 2c. S4 style= 深度调查结论（2026-09-07，决策=暂停执行，等待可见性状态机重构）
+
+盘点：58 处模板内联 `style=` **全部静态**（零模板变量绑定），其中 21 处为
+`display:none` 系——本可机械迁移，但深度调查证明**与 JS 可见性状态机深度耦合**：
+
+- `style.css:3981` 已存在 `.sv-hidden{display:none!important}`；
+- JS 有 59 处 `el.style.display = '…'` 写操作与 **8 处
+  `el.style.display !== 'none'` 读取判断**（app.js:1076/1085/1202/1421/3144、
+  restore.html:2095/2114/2351 等）——迁移后内联读取值为空串，
+  `'' !== 'none'` 恒真 → 可见性判断**翻转**；且 `!important` 令
+  `style.display='flex'` 显示失效。
+- 结论：等价迁移不可行；style-src 移除 `'unsafe-inline'` 的**前置依赖**是把
+  可见性控制整体重构为 classList 状态机（show/hide 单一出口 + 禁止内联
+  display 读写），属交互逻辑迁移而非样式搬运，必须依托视觉回归基线
+  （E1 已恢复，2026-09-07）+ e2e 断言同步改造后分批推进。
+- 剩余 37 处一次性静态样式（max-width/padding/calc 阴影等）可低风险迁移，
+  但在状态机重构前移除 unsafe-inline 不成立，单独迁移无门禁收益——留待
+  状态机批次一并处理。
+
+执行状态：S1 ✅ / S2 ✅ / S3 ✅（评估关闭）/ **S4 ⏸（依赖已识别：
+可见性状态机 classList 化，建议作为独立工作项排期，工作量 2-3 天）**。
 
 ## 4. 风险与边界
 
