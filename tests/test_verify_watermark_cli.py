@@ -79,3 +79,67 @@ def test_cli_exits_two_for_unreadable_file():
             f.write("x")
         code, out = _run_cli(path)
     assert code == 2, out
+
+
+def test_cli_video_path_verifies_watermarked_video():
+    """视频采样验证路径（评估报告 R2 后续建议⑥：纳入自动化）"""
+    import shutil
+
+    try:
+        import imageio_ffmpeg
+
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("无 ffmpeg（imageio-ffmpeg / PATH），跳过视频路径测试")
+
+    from app.integrated_app.security.watermark import _VIDEO_ALPHA, _VIDEO_REPEAT, embed_watermark
+
+    with tempfile.TemporaryDirectory() as td:
+        frames_dir = os.path.join(td, "frames")
+        os.makedirs(frames_dir)
+        for i in range(4):
+            rng = np.random.default_rng(i)
+            base = np.tile(np.linspace(30, 220, 512).astype(np.uint8), (512, 1))
+            img = np.stack([base] * 3, axis=-1)
+            img = np.clip(img.astype(np.int16) + rng.integers(-10, 10, img.shape), 0, 255).astype(np.uint8)
+            wm = embed_watermark(img, payload="video-cli-task", alpha=_VIDEO_ALPHA, repeat=_VIDEO_REPEAT)
+            import cv2
+
+            cv2.imwrite(os.path.join(frames_dir, f"frame_{i:06d}.png"), cv2.cvtColor(wm, cv2.COLOR_RGB2BGR))
+        video = os.path.join(td, "clip.mp4")
+        proc = subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-framerate",
+                "8",
+                "-i",
+                os.path.join(frames_dir, "frame_%06d.png"),
+                "-c:v",
+                "libx264",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                video,
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        assert proc.returncode == 0, proc.stderr[-300:]
+
+        code, out = _run_cli_video(video)
+    assert code == 0, out
+    assert "采样帧携带可信水印" in out
+
+
+def _run_cli_video(path: str) -> tuple[int, str]:
+    proc = subprocess.run(
+        [sys.executable, _CLI, path, "--frames", "4"],
+        capture_output=True,
+        timeout=120,
+        env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
+    )
+    return proc.returncode, (proc.stdout or b"").decode("utf-8", errors="replace")
