@@ -89,11 +89,22 @@ jobs:
           git add -f "$SNAP"
           if ! git diff --cached --quiet; then
             git commit -m "chore(e2e): update visual regression baselines (linux, update-baselines workflow)"
-            git push origin HEAD:main || {
-              echo "::error::push failed (branch protection or race) - baselines committed locally only"
-              git log --oneline -1
-              exit 1
-            }
+            if git push origin HEAD:main; then
+              echo "baselines pushed to main"
+            else
+              # 分支保护（PR 必须 + required checks）拒绝 workflow 直推属**设计使然**
+              # 而非故障（GH006，run 34078396828 实证）——基线已入下方 artifact，
+              # 由维护者下载提交（凭据含 bypass）或给本 workflow 配置保护豁免
+              echo "::warning::protected branch declined direct push - baselines available as 'visual-regression-baselines' artifact"
+            fi
           else
             echo "no baseline changes"
           fi
+
+      - name: Upload baselines artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-baselines
+          path: tests/specs/uiux-compatibility.spec.ts-snapshots/
+          retention-days: 14
