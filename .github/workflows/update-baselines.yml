@@ -83,12 +83,16 @@ jobs:
           count=$(find "$SNAP" -name "*-linux.png" | wc -l)
           echo "linux baselines: $count (expect 12)"
           [ "$count" -ge 12 ] || { echo "::error::fewer than 12 linux baselines generated"; exit 1; }
-          if ! git diff --quiet -- "$SNAP" || git ls-files --others --exclude-standard -- "$SNAP" | grep -q .; then
-            git add -f "$SNAP"
+          # 先 -f 暂存（snapshot png 受 .gitignore 管控，必须 add -f 才能入
+          # staged diff；2026-09-07 教训：用 ls-files --exclude-standard 判
+          # 未跟踪会因 ignore 规则把新基线判成 "no changes" 静默跳过）
+          git add -f "$SNAP"
+          if ! git diff --cached --quiet; then
             git commit -m "chore(e2e): update visual regression baselines (linux, update-baselines workflow)"
             git push origin HEAD:main || {
-              echo "push failed (branch protection or race) - baselines committed locally only"
+              echo "::error::push failed (branch protection or race) - baselines committed locally only"
               git log --oneline -1
+              exit 1
             }
           else
             echo "no baseline changes"
