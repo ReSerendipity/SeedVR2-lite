@@ -6,63 +6,136 @@
   <title>SeedVR2 启动中</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; }
     body {
-      width: 100vw; height: 100vh;
       display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
-      color: #e0e0e0;
+      background:
+        radial-gradient(1100px 480px at 50% -12%, rgba(148,184,143,0.14) 0%, rgba(148,184,143,0) 60%),
+        linear-gradient(180deg, #272421 0%, #1e1c19 46%, #1a1815 100%);
+      color: rgba(234,230,225,0.92);
+      font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
       overflow: hidden;
+      user-select: none;
     }
-    .logo {
-      font-size: 48px; font-weight: 700;
-      background: linear-gradient(90deg, #e94560, #f39c12);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      margin-bottom: 16px;
-      letter-spacing: 2px;
+    /* 顶栏：可拖拽标题栏 + 窗口控制（与主界面风格一致） */
+    .winbar {
+      height: 38px; flex: 0 0 38px;
+      display: flex; align-items: center;
+      padding: 0 6px 0 14px;
+      -webkit-app-region: drag;
+      app-region: drag;
     }
-    .subtitle { font-size: 16px; color: #8899aa; margin-bottom: 40px; }
+    .winbar-brand {
+      font-size: 12px; letter-spacing: 1.5px;
+      color: rgba(234,230,225,0.45);
+      font-weight: 600;
+    }
+    .win-controls { margin-left: auto; display: flex; gap: 2px; -webkit-app-region: no-drag; app-region: no-drag; }
+    .win-btn {
+      width: 36px; height: 30px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: none; background: transparent; color: rgba(234,230,225,0.72);
+      border-radius: 6px; cursor: pointer; font-size: 14px;
+      transition: background .15s ease, color .15s ease;
+    }
+    .win-btn:hover { background: #45403b; color: #fff; }
+    .win-btn-close:hover { background: #dd8a7a; color: #fff; }
+    /* 主内容区 */
+    .main {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding-bottom: 46px;
+    }
+    .logo-row { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+    .logo-mark {
+      width: 52px; height: 52px; border-radius: 13px;
+      background: linear-gradient(145deg, #7aa375 0%, #5e7d5a 100%);
+      box-shadow: 0 6px 22px rgba(94,125,90,0.35), inset 0 1px 0 rgba(255,255,255,0.14);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .logo-mark span {
+      font-family: Georgia, "Times New Roman", serif;
+      font-style: italic; font-size: 30px; font-weight: 700;
+      color: #faf7f2; margin-top: 1px;
+    }
+    .logo-text {
+      font-size: 30px; font-weight: 600; letter-spacing: 1px;
+      color: rgba(244,241,236,0.95);
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+    }
+    .subtitle {
+      font-size: 13px; color: rgba(234,230,225,0.48);
+      letter-spacing: 0.5px; margin-bottom: 34px;
+    }
     .spinner {
-      width: 40px; height: 40px;
-      border: 3px solid rgba(255,255,255,0.1);
-      border-top-color: #e94560;
+      width: 38px; height: 38px;
+      border: 3px solid rgba(148,184,143,0.18);
+      border-top-color: #94b88f;
       border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin-bottom: 24px;
+      animation: spin 0.85s linear infinite;
+      margin-bottom: 22px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .status { font-size: 14px; color: #aabbcc; min-height: 20px; }
+    .status { font-size: 13px; color: rgba(234,230,225,0.66); min-height: 20px; }
     .error {
-      color: #e94560; margin-top: 16px;
-      font-size: 13px; max-width: 400px;
-      text-align: center; line-height: 1.6;
+      color: #dd8a7a; margin-top: 14px;
+      font-size: 12.5px; max-width: 420px;
+      text-align: center; line-height: 1.7;
     }
     .btn {
-      margin-top: 20px; padding: 8px 24px;
-      background: #e94560; color: #fff;
-      border: none; border-radius: 4px;
-      cursor: pointer; font-size: 14px;
+      margin-top: 18px; padding: 8px 26px;
+      background: #5e7d5a; color: #faf7f2;
+      border: none; border-radius: 7px;
+      cursor: pointer; font-size: 13px; font-family: inherit;
+      transition: background .15s ease;
     }
-    .btn:hover { background: #d63851; }
+    .btn:hover { background: #7aa375; }
     .hidden { display: none; }
   </style>
 </head>
 <body>
-  <div class="logo">SeedVR2</div>
-  <div class="subtitle">AI 图片修复 · 桌面版</div>
-  <div class="spinner" id="spinner"></div>
-  <div class="status" id="status">正在启动 Python 运行时...</div>
-  <div class="error hidden" id="error"></div>
-  <button class="btn hidden" id="retryBtn" onclick="window.__TAURI__.invoke('retry_start')">重试</button>
+  <div class="winbar" data-tauri-drag-region>
+    <div class="winbar-brand">SEEDVR2</div>
+    <div class="win-controls" id="winControls">
+      <button class="win-btn" id="winMinimize" title="最小化" aria-label="最小化">&#x2212;</button>
+      <button class="win-btn win-btn-close" id="winClose" title="关闭" aria-label="关闭">&#x2715;</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="logo-row">
+      <div class="logo-mark"><span>S</span></div>
+      <div class="logo-text">SeedVR2</div>
+    </div>
+    <div class="subtitle">AI 图片修复 · 桌面版</div>
+    <div class="spinner" id="spinner"></div>
+    <div class="status" id="status">正在启动 Python 运行时...</div>
+    <div class="error hidden" id="error"></div>
+    <button class="btn hidden" id="retryBtn" onclick="window.__TAURI__ && window.__TAURI__.invoke('retry_start')">重试</button>
+  </div>
 
   <script>
-    // 监听来自 Rust 的状态更新
+    // 窗口控制（桌面壳无边框窗口；浏览器环境自动跳过）
+    (function () {
+      var I = window.__TAURI_INTERNALS__;
+      var T = window.__TAURI__;
+      var ctl = document.getElementById('winControls');
+      if ((!I && !T) || !ctl) return;
+      function invoke(cmd) {
+        try {
+          if (T && T.core && T.core.invoke) return T.core.invoke(cmd);
+          if (I && I.invoke) return I.invoke(cmd);
+        } catch (e) {}
+      }
+      document.getElementById('winMinimize').addEventListener('click', function () { invoke('window_minimize'); });
+      document.getElementById('winClose').addEventListener('click', function () { invoke('window_close'); });
+    })();
+    // 监听来自 Rust 壳的启动状态
     if (window.__TAURI__) {
-      window.__TAURI__.event.listen('startup-status', (event) => {
-        const data = event.payload;
-        document.getElementById('status').textContent = data.message || '';
+      window.__TAURI__.event.listen('startup-status', function (event) {
+        var data = event.payload;
+        var statusEl = document.getElementById('status');
+        if (statusEl) statusEl.textContent = data.message || '';
         if (data.error) {
           document.getElementById('spinner').classList.add('hidden');
           document.getElementById('error').textContent = data.error;
