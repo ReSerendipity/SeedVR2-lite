@@ -74,7 +74,8 @@ function Find-SeedVR2SevenZip {
         "$env:ProgramFiles\7-Zip\7z.exe",
         "${env:ProgramFiles(x86)}\7-Zip\7z.exe",
         "$env:LOCALAPPDATA\Programs\7-Zip\7z.exe",
-        'C:\Program Files\7-Zip\7z.exe'
+        'C:\Program Files\7-Zip\7z.exe',
+        "$env:ProgramFiles\NVIDIA Corporation\NVIDIA App\7z.exe"
     )
     foreach ($c in $candidates) {
         if ($c -and (Test-Path -LiteralPath $c)) {

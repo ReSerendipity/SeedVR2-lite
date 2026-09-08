@@ -313,3 +313,15 @@ data/model_hash_cache.json
 
 # AI assistant workspace (not part of the project)
 .workbuddy-ai/
+
+# --- 2026-09-06 目录整理补齐（方案 A：路径不动，仅排除）---
+tests/*.log
+requirements-lock.txt
+_archive/zcode/
+_tmp_excluded_tests/
+
+# --- auto-tidy: 运行时产物自动补齐 (auto) ---
+outputs/
+
+# --- 安装器构建产物（仅本地保留，发布走 Release 附件）---
+scripts/installer/*.exe
