@@ -23,6 +23,11 @@ fn main() {
                 "get_app_config",
                 "set_notification_sound",
                 "set_close_to_tray",
+                "window_minimize",
+                "window_maximize_toggle",
+                "window_close",
+                "window_toggle_fullscreen",
+                "window_is_fullscreen",
             ]),
         ),
     )

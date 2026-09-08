@@ -23,7 +23,12 @@
     "allow-retry-start",
     "allow-restart-service",
     "allow-show-main-window",
-    "allow-save-window-state"
+    "allow-save-window-state",
+    "allow-window-minimize",
+    "allow-window-maximize-toggle",
+    "allow-window-close",
+    "allow-window-toggle-fullscreen",
+    "allow-window-is-fullscreen"
   ],
   "remote": {
     "urls": [

@@ -4,6 +4,8 @@ use std::sync::Mutex;
 use anyhow::{Result, anyhow};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 use crate::port_manager::find_free_port;
 
@@ -80,6 +82,7 @@ impl PythonProcess {
             .stderr(Stdio::from(log_writer))
             .env("PYTHONNOUSERSITE", "1")
             .env("PYTHONUNBUFFERED", "1")
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .spawn()?;
 
         self.child = Some(child);

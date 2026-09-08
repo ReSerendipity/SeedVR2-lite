@@ -1,4 +1,4 @@
-//! 窗口管理增强（对应指导文档任务 2）：
+﻿//! 窗口管理增强（对应指导文档任务 2）：
 //! - 窗口状态记忆：关闭/移动/缩放时记录大小、位置、最大化，下次启动恢复；
 //!   存储于 `%APPDATA%/SeedVR2/window_state.json`（见 [`crate::config::WindowState`]）。
 //! - 外部链接：非本机地址不在 WebView 内跳转，改用系统默认浏览器打开
@@ -27,7 +27,7 @@ pub const BRIDGE_JS: &str = include_str!("../../src/desktop-bridge.js");
 pub fn is_internal_url(url: &tauri::Url) -> bool {
     match url.scheme() {
         "tauri" | "about" | "ipc" | "data" => true,
-        "http" | "https" => matches!(url.host_str(), Some("127.0.0.1") | Some("localhost") | None),
+        "http" | "https" => matches!(url.host_str(), Some("127.0.0.1") | Some("localhost") | Some("tauri.localhost") | None),
         _ => false,
     }
 }
@@ -144,6 +144,8 @@ pub fn build_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .title(IDLE_TITLE)
         .min_inner_size(1024.0, 768.0)
         .resizable(true)
+        // 无边框：标题栏由前端自绘（拖拽区 + 窗口控制按钮），正式产品不露系统窗口
+        .decorations(false)
         .visible(false)
         .initialization_script(BRIDGE_JS)
         .on_navigation(|url| {
@@ -184,6 +186,51 @@ pub fn save_window_state(app: AppHandle) {
     save_state(&app);
 }
 
+/// 前端命令：最小化窗口
+#[tauri::command]
+pub fn window_minimize(app: AppHandle) {
+    if let Some(win) = app.get_webview_window(MAIN_LABEL) {
+        let _ = win.minimize();
+    }
+}
+
+/// 前端命令：最大化/还原切换
+#[tauri::command]
+pub fn window_maximize_toggle(app: AppHandle) {
+    if let Some(win) = app.get_webview_window(MAIN_LABEL) {
+        if win.is_maximized().unwrap_or(false) {
+            let _ = win.unmaximize();
+        } else {
+            let _ = win.maximize();
+        }
+    }
+}
+
+/// 前端命令：关闭按钮（与系统 X 一致：保存状态并最小化到托盘，不退出进程）
+#[tauri::command]
+pub fn window_close(app: AppHandle) {
+    hide_to_tray(&app);
+}
+
+/// 前端命令：全屏/退出全屏切换，返回切换后的全屏状态（供前端更新标题栏样式）
+#[tauri::command]
+pub fn window_toggle_fullscreen(app: AppHandle) -> bool {
+    let Some(win) = app.get_webview_window(MAIN_LABEL) else {
+        return false;
+    };
+    let fs = win.is_fullscreen().unwrap_or(false);
+    let _ = win.set_fullscreen(!fs);
+    !fs
+}
+
+/// 前端命令：查询当前全屏状态
+#[tauri::command]
+pub fn window_is_fullscreen(app: AppHandle) -> bool {
+    app.get_webview_window(MAIN_LABEL)
+        .and_then(|w| w.is_fullscreen().ok())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +241,7 @@ mod tests {
         assert!(is_internal_url(&tauri::Url::parse("http://127.0.0.1:7870/").unwrap()));
         assert!(is_internal_url(&tauri::Url::parse("http://localhost:5173/").unwrap()));
         assert!(is_internal_url(&tauri::Url::parse("about:blank").unwrap()));
+        assert!(is_internal_url(&tauri::Url::parse("http://tauri.localhost/index.html").unwrap()));
     }
 
     #[test]
