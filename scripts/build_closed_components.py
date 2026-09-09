@@ -59,10 +59,22 @@ def _compile_module(module_py: Path, work_dir: Path, out_dir: Path) -> Path | No
     work.mkdir(parents=True, exist_ok=True)
     shutil.copy2(module_py, work / module_py.name)
 
-    # 隔离目录内用 cythonize -i：避免项目根 pyproject 触发 setuptools 包发现
-    cythonize_exe = Path(PYTHON).parent / "cythonize.exe"
-    cmd = [str(cythonize_exe), "-i", module_py.name, "-3"]
+    # 隔离目录内用 cythonize -i：避免项目根 pyproject 触发 setuptools 包发现。
+    # 双路径：优先 `python -m cythonize`（CI 系统 python，console script 装在
+    # Scripts/ 子目录导致 exe 路径 FileNotFoundError，GOTCHAS #96 同批实测）；
+    # 回退 cythonize.exe（老版 cython 无 -m 入口，脚本目录或 Scripts/ 下）。
+    cmd = [str(PYTHON), "-m", "cythonize", "-i", module_py.name, "-3"]
     proc = subprocess.run(cmd, cwd=work, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if proc.returncode != 0 and "No module named cythonize" in (proc.stderr or ""):
+        exe_candidates = [
+            Path(PYTHON).parent / "Scripts" / "cythonize.exe",
+            Path(PYTHON).parent / "cythonize.exe",
+        ]
+        for exe in exe_candidates:
+            if exe.exists():
+                cmd = [str(exe), "-i", module_py.name, "-3"]
+                proc = subprocess.run(cmd, cwd=work, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                break
     if proc.returncode != 0:
         print(f"  [FAIL] 编译失败: {module_py.name}\n{proc.stdout[-800:]}{proc.stderr[-800:]}")
         return None
