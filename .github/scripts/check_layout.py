@@ -2,12 +2,15 @@
 
 Reads .github/layout-rules.yaml. Exit codes: 0 = OK, 1 = hard failure.
 
-v2 改进（2026-09-07）：
-  - 已被 .gitignore 忽略的根条目不再计入检查（它们不构成仓库卫生问题，
+v2 改进（2026-09-07 / 2026-09-09）：
+  - 已被 .gitignore 忽略的根条目不再计入 WARN（它们不构成仓库卫生问题，
     也不应污染 root_allowlist）。这让 WARN 真正意味着"有东西该整理了"。
-  - 命中 forbid_root_patterns -> FAIL（阻断）；其余未登记条目 -> WARN（不阻断）。
+  - 命中 forbid_root_patterns -> FAIL（阻断），且判定在 ignore 之前：即使
+    该文件被 gitignore，散落转储照样拦。
+  - artifact_root_patterns（会再生的产物，如 coverage.xml）只 WARN 不阻断。
+  - 2026-09-09：改用 f-string、去掉 coding 声明，满足 ruff UP009/UP031，
+    避免污染各仓的 lint 门禁。
 """
-
 import os
 import re
 import subprocess
@@ -61,10 +64,10 @@ def ignored_set(repo, entries):
     if not entries:
         return set()
     try:
-        r = subprocess.run(
-            ["git", "check-ignore", "--stdin"], cwd=repo, input="\n".join(entries).encode("utf-8"), capture_output=True
-        )
-        return {x for x in r.stdout.decode("utf-8", "replace").splitlines() if x}
+        r = subprocess.run(["git", "check-ignore", "--stdin"], cwd=repo,
+                           input="\n".join(entries).encode("utf-8"),
+                           capture_output=True)
+        return set(x for x in r.stdout.decode("utf-8", "replace").splitlines() if x)
     except Exception:
         return set()
 
@@ -123,10 +126,9 @@ def main():
     if fails:
         print(f"\nstructure-guard: {len(fails)} failure(s), {len(warns)} warning(s).")
         return 1
-    print(
-        f"structure-guard: OK ({len(entries)} root entries, {len(checked)} checked, "
-        f"{len(ignored)} ignored, {len(warns)} warning(s))."
-    )
+    print("structure-guard: OK "
+          f"({len(entries)} root entries, {len(checked)} checked, "
+          f"{len(ignored)} ignored, {len(warns)} warning(s)).")
     return 0
 
 
