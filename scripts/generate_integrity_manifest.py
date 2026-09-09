@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """生成核心模块完整性清单 (integrity_manifest.json)
 
 用于启动时核心模块 SHA256 完整性自检 (CWE-912 防御)。
@@ -39,16 +39,26 @@ def compute_sha256(filepath: Path) -> str:
     return sha256.hexdigest()
 
 
-def resolve_manifest_entry(app_dir: Path, module_rel: str):
+def resolve_manifest_entry(app_dir: Path, module_rel: str, replace_map: dict | None = None):
     """源码态返回 .py 条目；闭源注入态（Cython 编译后 .py 已被删除）回退同名 .pyd。
 
     清单必须覆盖 security/ 的编译产物：否则发布包重算清单时该模块从清单消失，
     篡改 .pyd 将无法被启动自检验出（GOTCHAS #92，2026-09-09 实测）。
+    replace_map 来自 payload 的 .closed_replacements.json（pyd 名 -> py 名）：
+    水印模块经符号改名后 pyd 名与 .py 不同名（watermark.py -> wm_embed.*.pyd，
+    GOTCHAS #95），必须先查映射再回退同名 glob。
     返回 (清单相对路径, 实际文件 Path)；找不到返回 (None, None)。
     """
     py_path = app_dir / module_rel
     if py_path.exists():
         return module_rel, py_path
+    rel_dir = str(Path(module_rel).parent)
+    if replace_map:
+        for pyd_name, py_name in replace_map.items():
+            if py_name == Path(module_rel).name:
+                cand = (app_dir / rel_dir / pyd_name) if rel_dir != "." else app_dir / pyd_name
+                if cand.exists():
+                    return str(cand.relative_to(app_dir)), cand
     # security/path_guard.py → security/path_guard.cp312-win_amd64.pyd
     pyd_glob = module_rel[: -len(".py")] + ".*.pyd"
     candidates = sorted(app_dir.glob(pyd_glob))
@@ -76,9 +86,18 @@ def main():
         app_dir = project_root / "app" / "integrated_app"
     manifest_path = app_dir / "security" / "integrity_manifest.json"
 
+    # 闭源注入态映射表（payload 内由 build_closed_components.py 生成并随 zip 注入）
+    replace_map: dict | None = None
+    replace_map_path = app_dir / "security" / ".closed_replacements.json"
+    if replace_map_path.exists():
+        try:
+            replace_map = json.loads(replace_map_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            replace_map = None
+
     files = {}
     for module_rel in _CORE_MODULES:
-        rel, module_path = resolve_manifest_entry(app_dir, module_rel)
+        rel, module_path = resolve_manifest_entry(app_dir, module_rel, replace_map)
         if module_path is not None:
             files[rel] = compute_sha256(module_path)
             print(f"  [OK] {rel}: {files[rel][:16]}...")

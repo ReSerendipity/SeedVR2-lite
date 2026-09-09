@@ -8,8 +8,10 @@
 
 产物目录结构（security/）：
     __init__.py                     保留（包导入）
-    watermark.cp312-win_amd64.pyd   编译产物（替代 watermark.py）
-    ... 其余模块同理 ...
+    wm_embed.cp312-win_amd64.pyd    水印模块编译产物（替代 watermark.py；
+                                   文件名去自描述前缀，防「搜 watermark 文件名
+                                   定位水印模块」（GOTCHAS #95））
+    ... 其余模块同理（保持原名） ...
     integrity_manifest.json(.sig...) 运行时数据，原样保留
     manifest_signing_public_key.pem  内置公钥，原样保留
 
@@ -114,13 +116,23 @@ def main() -> int:
             print(f"[FAIL] 编译不完整: {compiled}/{len(targets)} 成功（请检查 MSVC 工具链）")
             return 1
 
-    # 3) 写入替换清单（供构建脚本删除对应 .py：pyd 名 -> py 名）
+    # 3) 符号改名 + 写入替换清单（供构建脚本删除对应 .py：pyd 名 -> py 名）
+    #    文件名去自描述化：watermark → wm_embed，防普通用户搜「watermark」定位
+    #    水印模块后按图索骥（GOTCHAS #95，2026-09-09）。映射表由注入脚本
+    #    （build_portable_bundle.ps1 A 线）消费，.pyd 名变化不影响运行。
+    rename_map = {"watermark": "wm_embed"}  # stem -> 去自描述名（新增改名项时同步此处）
     pyd_map = {}
     for py in targets:
         stem = py.stem
         matches = list(out_dir.glob(f"{stem}*.pyd"))
-        if matches:
-            pyd_map[matches[0].name] = py.name
+        if not matches:
+            continue
+        src = matches[0]
+        final_name = src.name
+        if stem in rename_map:
+            final_name = rename_map[stem] + src.name[len(stem) :]  # wm_embed.cp312-win_amd64.pyd
+            src.rename(out_dir / final_name)
+        pyd_map[final_name] = py.name
     replace_manifest = out_dir / ".closed_replacements.json"
     replace_manifest.write_text(
         __import__("json").dumps(pyd_map, indent=2, ensure_ascii=False),
