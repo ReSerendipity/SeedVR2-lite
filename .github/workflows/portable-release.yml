@@ -103,7 +103,7 @@ jobs:
 
       - name: 安装下载依赖
         shell: powershell
-        run: python -m pip install --upgrade pip huggingface_hub requests rich pyyaml cryptography cython
+        run: python -m pip install --upgrade pip setuptools huggingface_hub requests rich pyyaml cryptography cython
 
       - name: 从 config.yaml 取所需权重文件名
         id: files
