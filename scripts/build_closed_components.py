@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """A 线：把 security/ 核心安全模块 Cython 编译为 .pyd（闭源分发组件）。
 
 背景（水印保密 A-2/A-3）：源码在 Apache-2.0 开源仓库公开，普通用户拿到
@@ -94,9 +94,12 @@ def main() -> int:
 
     print(f"编译 {len(targets)} 个模块: {', '.join(t.name for t in targets)}")
 
-    # 1) 复制运行时数据（非 .py 文件：清单/签名/公钥）
+    # 1) 复制运行时数据（非 .py 文件：清单/签名/公钥）。
+    #    排除 Cython 中间产物（.c/.h/.cpp）：watermark.c 含完整算法细节，
+    #    等同源码泄露（GOTCHAS #90，2026-09-09 实测被打进 closed.zip）。
+    runtime_exclude_suffixes = {".c", ".h", ".cpp", ".hpp", ".pyx", ".pxd"}
     for f in SECURITY_DIR.iterdir():
-        if f.is_file() and f.suffix != ".py":
+        if f.is_file() and f.suffix != ".py" and f.suffix not in runtime_exclude_suffixes:
             shutil.copy2(f, out_dir / f.name)
 
     # 2) 逐模块隔离编译

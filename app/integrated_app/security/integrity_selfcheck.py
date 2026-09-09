@@ -186,7 +186,23 @@ def run_startup_selfcheck(enforce: bool = False) -> dict:
     skipped = 0
     failed_files = []
 
-    for module_rel in _CORE_MODULES:
+    # 以清单为权威遍历：闭源注入态（Cython 编译后 security/*.py 被 .pyd 替换）清单键是
+    # 编译产物相对路径（如 security\watermark.cp312-win_amd64.pyd）；若仍按 _CORE_MODULES
+    # 的 .py 名遍历，发布包内 4 个 security 模块会全部 skip，篡改 .pyd 无法被检出
+    # （GOTCHAS #92，2026-09-09 实测）。
+    if expected_hashes:
+        items = list(expected_hashes.items())
+    else:
+        # 清单存在但为空（旧清单或生成异常）：退回模块名兜底遍历。
+        items = [(m, "") for m in _CORE_MODULES]
+
+    if expected_hashes and len(expected_hashes) < len(_CORE_MODULES):
+        logger.warning(
+            f"[SELF-CHECK] 清单条目数（{len(expected_hashes)}）少于核心模块数"
+            f"（{len(_CORE_MODULES)}），部分模块可能未被完整性覆盖"
+        )
+
+    for module_rel, expected in items:
         module_path = app_dir / module_rel
         if not module_path.exists():
             logger.warning(f"[SELF-CHECK] 核心模块不存在: {module_path}")
@@ -194,7 +210,6 @@ def run_startup_selfcheck(enforce: bool = False) -> dict:
             continue
 
         total += 1
-        expected = expected_hashes.get(module_rel, "")
 
         if not expected:
             skipped += 1

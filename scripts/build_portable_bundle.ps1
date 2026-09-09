@@ -757,6 +757,24 @@ foreach ($id in $Component) {
             $built = New-SeedVR2CorePayload -PayloadDir $payload -ProjectRoot $Root -Runtime $RuntimeDir -Ver $Version `
                 -TorchLabel "torch $TorchVersion+$variant"
 
+            # 打破硬链接（GOTCHAS #91，2026-09-09 实测）：Copy-SeedVR2Tree 对同盘文件优先
+            # 硬链接，payload 与源码目录共享 inode；后续 enforce 翻转 / 清单重算 / 签名写入
+            # 都是就地改写，会穿透回源码目录（曾把源码 config.yaml 翻成 true、清单重算成
+            # .pyd 版）。对将被改写的文件先 Copy→Remove→Move 换成独立 inode。
+            foreach ($_t in @(
+                (Join-Path $payload (Join-Path $PortableRootName 'config.yaml')),
+                (Join-Path $payload (Join-Path $PortableRootName 'app\integrated_app\security\integrity_manifest.json')),
+                (Join-Path $payload (Join-Path $PortableRootName 'app\integrated_app\security\integrity_manifest.json.sig')),
+                (Join-Path $payload (Join-Path $PortableRootName 'app\integrated_app\security\integrity_manifest.json.sig.ed25519'))
+            )) {
+                if (Test-Path -LiteralPath $_t) {
+                    $tmp = "$_t.breaklink"
+                    Copy-Item -LiteralPath $_t -Destination $tmp -Force
+                    Remove-Item -LiteralPath $_t -Force
+                    Move-Item -LiteralPath $tmp -Destination $_t -Force
+                }
+            }
+
             # A 线闭源注入：-ClosedComponentsZip 提供 Cython 编译的 security .pyd 包时，
             # 解压覆盖 security/ 并删除对应 .py 源码（水印实现不随包分发，防普通用户
             # 按源码注释定点拆水印；算法本体仍按 Apache-2.0 在公开仓库可查）。
@@ -802,7 +820,10 @@ foreach ($id in $Component) {
             # 文件（闭源注入/去注释后哈希已变），且签名由构建机私钥完成，用户端
             # 用内置公钥验签（D/P2-3；私钥 data/.manifest_signing_key 不进包）。
             $payloadAppDir = Join-Path $payload (Join-Path $PortableRootName 'app\integrated_app')
-            $py = 'python'
+            # A-6 签名步骤优先用仓库 .venv（已装 cryptography，Ed25519 依赖）；
+            # CI runner 无 .venv 时回退系统 python（portable-release.yml 构建 step 已补装）。
+            $repoPy = Join-Path $PSScriptRoot '..\.venv\Scripts\python.exe'
+            $py = if (Test-Path -LiteralPath $repoPy) { (Resolve-Path -LiteralPath $repoPy).Path } else { 'python' }
             $gen = Invoke-SeedVR2Native -Exe $py -Arguments @('scripts\generate_integrity_manifest.py', '--app-dir', $payloadAppDir)
             if ($gen.ExitCode -ne 0) {
                 throw "A-6 重算便携包完整性清单失败: $($gen.Text)"
