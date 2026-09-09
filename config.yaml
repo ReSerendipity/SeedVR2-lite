@@ -236,7 +236,7 @@ user_preferences:
   default_model: 3b_fp16
   default_resolution: 2048
   default_sampler: dpmpp_2m_sde
-  default_seed: -1
+  default_seed: 42
   default_steps: 20
   default_vae: ema_vae_fp16
   output_format: png
