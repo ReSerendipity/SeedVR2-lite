@@ -179,7 +179,7 @@ try {
     }
     $names = @($manifest.components | ForEach-Object { $_.archive })
     Assert-True (($names | Sort-Object -Unique).Count -eq 4) '四个组件归档名互不相同（不被互相覆盖）'
-    Assert-True (($fp8C.archive -replace '\.zip$', '') -match 'v9\.9\.9-test-win-x64-model-fp8$') "归档名保留完整版本号：$($fp8C.archive)"
+    Assert-True (($fp8C.archive -replace '\.(zip|7z)$', '') -match 'v9\.9\.9-test-win-x64-model-fp8$') "归档名保留完整版本号：$($fp8C.archive)"
 
     $parts = @(Get-ChildItem -LiteralPath $outBundle -File | Where-Object { $_.Name -match '\.\d{3}$' })
     Assert-True ($parts.Count -ge 7) "分卷总数 $($parts.Count) >= 7"

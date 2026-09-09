@@ -1,6 +1,6 @@
 # SeedVR2-lite
 
-![Version](https://img.shields.io/badge/version-1.5.1-blue?style=for-the-badge) ![License](https://img.shields.io/badge/license-Apache%202.0-green?style=for-the-badge) ![Python](https://img.shields.io/badge/python-3.12+-yellow?style=for-the-badge&logo=python&logoColor=white) ![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white) ![Models](https://img.shields.io/badge/model-3B%20%7C%207B%20%7C%207B--Sharp-ff69b4?style=for-the-badge) [![CI](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/ReSerendipity/SeedVR2-lite/actions)
+![Version](https://img.shields.io/badge/version-1.5.4-blue?style=for-the-badge) ![License](https://img.shields.io/badge/license-Apache%202.0-green?style=for-the-badge) ![Python](https://img.shields.io/badge/python-3.12+-yellow?style=for-the-badge&logo=python&logoColor=white) ![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white) ![Models](https://img.shields.io/badge/model-3B%20%7C%207B%20%7C%207B--Sharp-ff69b4?style=for-the-badge) [![CI](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/ReSerendipity/SeedVR2-lite/actions)
 
 **基于 SeedVR2 扩散模型的视频与图像超分辨率修复工具箱 — 独立运行的 Web UI，一键修复，无需 ComfyUI**
 
@@ -21,32 +21,33 @@
 
 **<https://reserendipity.github.io/SeedVR2-lite/>** （由 `.github/workflows/pages-deploy.yml` 自动部署 `demo/` 目录，详见 [demo/README.md](demo/README.md)）
 
-## 📦 免安装便携包（GitHub Releases）
+## 🖥️ 桌面版（对外分发，推荐）
 
-不想装 Python、不想配环境？**直接下载分卷便携包**——已含便携 Python、全部依赖（含 CUDA 12.8 版 torch）与 3B FP8 模型，解压即用：
+**对外正式分发方式为桌面版**：Tauri v2 原生窗口 + NSIS 安装器，一键安装、像普通软件一样使用与卸载：
 
-**<https://github.com/ReSerendipity/SeedVR2-lite/releases/latest>**
+- **一键安装**：`SeedVR2-Setup-vX.Y.Z.exe` + 3 个数据分卷（`SeedVR2-Data.7z.001/.002/.003`），双击安装即用——已含全部依赖（便携 Python、CUDA 版 torch）与 3B MXFP8 模型，**开机即用，无需联网**
+- **原生体验**：独立窗口（非浏览器标签）、系统托盘（显示/隐藏/检查更新/退出）、Windows Toast 通知、文件拖拽、窗口状态记忆
+- **增量更新**：程序内托盘「检查更新」自动下载应用代码更新包（约 1.3MB）→ 校验 → 原子换载 → 重启，失败自动回滚；运行时与模型权重由安装包提供、不随增量更新
+- **单实例**：重复启动自动聚焦已有窗口
+- **崩溃恢复**：Python 后端意外退出自动重启
+- **卸载干净**：安装/卸载自动终止运行中的程序，卸载清理注册表与快捷方式
 
-1. 下载 `core` / `torch` / `model-shared` / `model-fp8` 四个组件的**全部** `.00N` 分卷，外加 `manifest.json`、`SHA256SUMS.txt`、`unpack_portable_bundle.ps1`、`portable_bundle_lib.ps1`（因 GitHub 单文件 2 GiB 上限而拆分，合计约 5.6 GB）
+发布物见 **<https://github.com/ReSerendipity/SeedVR2-lite/releases/latest>**（当前稳定版 v1.5.4）。
+
+> 桌面版与网页版共享同一套 Python 后端与模型；文档：[用户手册](docs/用户手册.md)、[开发者指南](docs/开发者指南.md)。
+
+## 🌐 网页版 / 便携包（开发与内部使用）
+
+不想装 Python、不想配环境时，也可使用**便携分卷包**（已含便携 Python、全部依赖与 3B FP8 模型，解压即用）或直接源码运行网页版：
+
+**<https://github.com/ReSerendipity/SeedVR2-lite/releases>**（v1.5.0 便携分卷包，历史发布）
+
+1. 下载 `core` / `torch` / `model-shared` / `model-fp8` 四个组件的**全部** `.00N` 分卷，外加 `manifest.json`、`SHA256SUMS.txt`、`unpack_portable_bundle.ps1`、`portable_bundle_lib.ps1`（合计约 5.6 GB）
 2. 放进同一文件夹，执行 `powershell -ExecutionPolicy Bypass -File .\unpack_portable_bundle.ps1 -TargetDir D:\SeedVR2`
-   （自动校验每个分卷的 SHA256 → 合并 → 解压 → 离线装 torch，全程不需联网）
 3. 双击 `SeedVR2-Portable\start-portable.bat`，浏览器打开 <http://127.0.0.1:7870>
 
 要求：Windows x64 + NVIDIA 显卡（显存 ≥ 8 GB）+ 磁盘 ≥ 15 GB。图片修复开箱即用；
 视频修复需自行安装 FFmpeg 并加入 PATH（许可证原因不随包分发，见 [NOTICE](NOTICE) 第 4 条）。
-
-## 🖥️ Tauri 桌面版（原生窗口 + 系统托盘 + 增量更新）
-
-在便携 Web UI 之上，额外提供 **Tauri v2 原生桌面壳**（`desktop/`），同样解压即用：
-
-- **原生体验**：独立窗口（非浏览器标签）、系统托盘（显示/隐藏/检查更新/退出）、Windows Toast 通知、文件拖拽、窗口状态记忆
-- **增量更新**：应用代码更新包仅约 10MB，自动下载 → 校验 → 覆盖 → 重启，失败自动回滚；运行时与模型权重由安装包提供、不随增量更新
-- **单实例**：重复启动自动聚焦已有窗口
-- **崩溃恢复**：Python 后端意外退出自动重启
-
-发布物命名 `SeedVR2-Desktop-vX.Y.Z-win-x64.7z.00N`（多卷，GitHub 2GiB 限制内），解压后双击 `SeedVR2.exe` 即用。
-
-> 桌面版与便携 Web UI 共享同一套 Python 后端与模型；两份文档：[用户手册](docs/用户手册.md)、[开发者指南](docs/开发者指南.md)。
 
 ## 🆕 新手必看
 
