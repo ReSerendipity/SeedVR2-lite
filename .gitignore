@@ -325,3 +325,7 @@ outputs/
 
 # --- 安装器构建产物（仅本地保留，发布走 Release 附件）---
 scripts/installer/*.exe
+
+data/.manifest_signing_key
+data/.manifest_signing_key.old
+data/.manifest_signing_key.old.*

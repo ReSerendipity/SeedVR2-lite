@@ -54,7 +54,11 @@ param(
     [switch]$PrintModelFiles,
     [switch]$KeepStaging,
     [switch]$KeepArchive,
-    [switch]$SkipSizeGate
+    [switch]$SkipSizeGate,
+    # A 线：闭源组件 zip（scripts/build_closed_components.py 产物，Cython .pyd）。
+    # 提供时把 security/ 的 .py 替换为 .pyd 并删除源码——发布包内水印实现不可读，
+    # 且 A-6 重算清单发生在注入之后，.pyd 哈希进入清单（防"换 .py 绕过清单"）。
+    [string]$ClosedComponentsZip = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -215,6 +219,7 @@ $CoreIncludeFiles = @('config.yaml', 'pyproject.toml', 'requirements.txt', 'LICE
 $CoreExcludePatterns = @(
     '__pycache__\*', '*.pyc', '*.pyo', '.pytest_cache\*',
     'app\integrated_app\data\*', 'logs\*.log', '*.db', '*.db-wal', '*.db-shm',
+    'data\.seedvr2_secret', 'data\.manifest_signing_key', 'data\.watermark_key',
     '.setup_state.json', '.torch_cache\*', '*.bak', '*.bak.*',
     'node_modules\*', '.venv\*', 'dist\*', 'build\*'
 )
@@ -751,6 +756,63 @@ foreach ($id in $Component) {
             $variant = if ($TorchIndexUrl -match '/whl/([^/]+)/?$') { $Matches[1] } else { 'cpu' }
             $built = New-SeedVR2CorePayload -PayloadDir $payload -ProjectRoot $Root -Runtime $RuntimeDir -Ver $Version `
                 -TorchLabel "torch $TorchVersion+$variant"
+
+            # A 线闭源注入：-ClosedComponentsZip 提供 Cython 编译的 security .pyd 包时，
+            # 解压覆盖 security/ 并删除对应 .py 源码（水印实现不随包分发，防普通用户
+            # 按源码注释定点拆水印；算法本体仍按 Apache-2.0 在公开仓库可查）。
+            if ($ClosedComponentsZip) {
+                $closedZip = Resolve-Path -LiteralPath $ClosedComponentsZip -ErrorAction SilentlyContinue
+                if (-not $closedZip) { throw "闭源组件 zip 不存在: $ClosedComponentsZip" }
+                $securityPayload = Join-Path $payload (Join-Path $PortableRootName 'app\integrated_app\security')
+                $tmpExtract = Join-Path $StagingDir 'closed-components-extract'
+                Remove-SeedVR2TreeFast -Path $tmpExtract
+                New-Item -ItemType Directory -Path $tmpExtract -Force | Out-Null
+                Expand-Archive -LiteralPath $closedZip.Path -DestinationPath $tmpExtract -Force
+                $replaceManifest = Join-Path $tmpExtract '.closed_replacements.json'
+                $replaceMap = @{}
+                if (Test-Path -LiteralPath $replaceManifest) {
+                    $replaceMap = Get-Content -LiteralPath $replaceManifest -Raw -Encoding UTF8 | ConvertFrom-Json
+                }
+                foreach ($f in Get-ChildItem -LiteralPath $tmpExtract -File) {
+                    Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $securityPayload $f.Name) -Force
+                }
+                foreach ($prop in $replaceMap.PSObject.Properties) {
+                    $pyName = [string]$prop.Value
+                    $pyPath = Join-Path $securityPayload $pyName
+                    if (Test-Path -LiteralPath $pyPath) {
+                        Remove-Item -LiteralPath $pyPath -Force
+                        Write-Host "  [A 线] 已移除源码: security/$pyName"
+                    }
+                }
+                Write-Host "  [A 线] 闭源组件已注入 security/（$($replaceMap.PSObject.Properties.Count) 个模块）"
+            }
+
+            # B-8：发布版默认强制完整性校验（enforce=true）。新装/重装用户直接获得
+            # 防篡改阻断；老用户更新后由更新器保留其 config.yaml（可自行改回）。
+            $payloadConfig = Join-Path $payload (Join-Path $PortableRootName 'config.yaml')
+            if (Test-Path -LiteralPath $payloadConfig) {
+                $cfgText = Get-Content -LiteralPath $payloadConfig -Raw -Encoding UTF8
+                $cfgText = $cfgText -replace 'integrity_enforce:\s*false', 'integrity_enforce: true'
+                [System.IO.File]::WriteAllText($payloadConfig, $cfgText, (New-Object System.Text.UTF8Encoding($false)))
+            } else {
+                Write-Warning "payload 缺少 config.yaml，跳过 enforce 注入"
+            }
+
+            # A-6：构建期重算完整性清单并 Ed25519 签名——清单哈希必须基于实际分发
+            # 文件（闭源注入/去注释后哈希已变），且签名由构建机私钥完成，用户端
+            # 用内置公钥验签（D/P2-3；私钥 data/.manifest_signing_key 不进包）。
+            $payloadAppDir = Join-Path $payload (Join-Path $PortableRootName 'app\integrated_app')
+            $py = 'python'
+            $gen = Invoke-SeedVR2Native -Exe $py -Arguments @('scripts\generate_integrity_manifest.py', '--app-dir', $payloadAppDir)
+            if ($gen.ExitCode -ne 0) {
+                throw "A-6 重算便携包完整性清单失败: $($gen.Text)"
+            }
+            $payloadManifest = Join-Path $payloadAppDir 'security\integrity_manifest.json'
+            $sig = Invoke-SeedVR2Native -Exe $py -Arguments @('scripts\sign_integrity_manifest.py', '--manifest', $payloadManifest)
+            if ($sig.ExitCode -ne 0) {
+                throw "A-6 便携包清单签名失败: $($sig.Text)"
+            }
+            Write-Host "  [A-6/B-8] 已重算清单并签名（Ed25519）；config.yaml enforce=true"
         }
         'torch' {
             $built = New-SeedVR2TorchPayload -PayloadDir $payload -WheelDir $TorchWheelDir

@@ -39,3 +39,14 @@ Third-party attributions (required by upstream licenses):
    说明: Comfy Org 以 seedvr2_convert.py（Comfy-Org/comfy-model-tools）对 ByteDance 原始
    权重的单文件转包，含 3B/7B/7B-Sharp × fp16 / fp8_e4m3fn / int8_convrot / mxfp8 / nvfp4
    共 15 个 diffusion 权重与 VAE。本登记为许可预备案，逐文件哈希见 docs/LICENSE_COMPLIANCE.md §3.2。
+
+6. 闭源构建组件（Closed-Source Build Components，A 线/D 决策）
+   自 v1.6.x 起的便携发布版中，app/integrated_app/security/ 下的核心安全模块
+   （水印嵌入/验证、完整性自检、密钥管理等）以 Cython 预编译的 .pyd 二进制
+   分发，不含可读 .py 源码。这些模块的**源码在公开仓库保持 Apache-2.0 开放**
+   （README/docs 与 GitHub tag 快照可查），二进制仅作分发形态，非独立闭源作品。
+   用户可自行从仓库源码构建等价二进制（Apache-2.0 不要求二进制随附源码，
+   与 VS Code 等"仓库开源、产物含专有组件"的行业惯例一致，见 docs/agents/SOPS.md 闭源注入条目）。
+   完整性清单（integrity_manifest.json）由构建机 Ed25519 私钥签发，包内仅含
+   验签公钥（manifest_signing_public_key.pem，公开无害）——这是"算法公开、
+   密钥保密、用户端可验签"的信任模型（D/P2-3）。
