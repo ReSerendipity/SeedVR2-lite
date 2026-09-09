@@ -63,6 +63,10 @@ KNOWN_ORPHANS: dict[str, tuple[str, str]] = {
     "/metrics": ("intentional", "Prometheus 抓取端点，由监控侧调用，不经 UI"),
     "/api/system/ping": ("intentional", "容器 liveness 探针（Dockerfile HEALTHCHECK / K8s startupProbe）"),
     "/api/system/ready": ("intentional", "容器 readiness 探针，预热期返回 503+Retry-After"),
+    "/api/system/shutdown": (
+        "intentional",
+        "本机运维端点（B-5 优雅关闭）：127.0.0.1 白名单 + CSRF 校验，仅桌面壳/本机运维调用，不经 Web UI",
+    ),
     "/api/engine/detect": (
         "api-surface",
         "引擎抽象层对外集成面：仅 /docs Swagger 与外部客户端可达（tests/ 亦无消费者），Web UI 走 /api/restore",
