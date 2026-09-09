@@ -103,7 +103,7 @@ jobs:
 
       - name: 安装下载依赖
         shell: powershell
-        run: python -m pip install --upgrade pip huggingface_hub requests rich pyyaml cryptography
+        run: python -m pip install --upgrade pip huggingface_hub requests rich pyyaml cryptography cython
 
       - name: 从 config.yaml 取所需权重文件名
         id: files
@@ -163,6 +163,16 @@ jobs:
             Write-Host $b64
           }
 
+      - name: Build closed components (A-line, Cython .pyd)
+        shell: powershell
+        run: |
+          # A 线闭源注入：security/ 编译为 .pyd 并打包 closed.zip，构建时替换源码。
+          # 缺失此步会让 Release 包保持源码态（水印 .py 明文），违背发布门禁
+          # （GOTCHAS #97，2026-09-09：portable-release.yml 曾漏传 -ClosedComponentsZip）。
+          python scripts\build_closed_components.py --out $env:RUNNER_TEMP\closed-out --zip $env:RUNNER_TEMP\closed.zip
+          if ($LASTEXITCODE -ne 0) { throw "closed components build failed" }
+          Get-Item $env:RUNNER_TEMP\closed.zip | Select-Object Name, Length
+
       - name: 构建分卷包
         shell: powershell
         run: |
@@ -183,6 +193,7 @@ jobs:
           & .\scripts\build_portable_bundle.ps1 `
             -Version "${{ steps.ver.outputs.version }}" `
             -Component $list `
+            -ClosedComponentsZip $env:RUNNER_TEMP\closed.zip `
             -OutDir $env:BUNDLE_DIR `
             -Format zip `
             @signArgs

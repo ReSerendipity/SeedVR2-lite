@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """为核心模块完整性清单生成/校验签名（D/P2-3：Ed25519 优先，HMAC 兼容）。
 
 背景：integrity_manifest.json 与被校验代码同目录，攻击者若能改代码就能
@@ -27,8 +27,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sys
+
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        with contextlib.suppress(OSError, ValueError):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

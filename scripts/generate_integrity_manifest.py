@@ -7,10 +7,17 @@
     python scripts/generate_integrity_manifest.py
 """
 
+import contextlib
 import hashlib
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
+
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        with contextlib.suppress(OSError, ValueError):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
 
 # 核心安全模块清单 (相对于 app/integrated_app/)
 _CORE_MODULES = [
