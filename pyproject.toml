@@ -1,6 +1,6 @@
 [project]
 name = "seedvr2-lite"
-version = "1.5.1"
+version = "1.5.4"
 description = "SeedVR2 - AI-powered video & image super-resolution toolkit"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -117,6 +117,9 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM"]
 ignore = ["E501", "B008", "SIM108"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
 
 # Numerical / tensor / diffusion code follows ML and PyTorch naming conventions
 # (e.g. tensor dims B/C/H/W/T, matrix names, `import torch.nn.functional as F`,
