@@ -271,3 +271,146 @@ def verify_file_signature(file_path: str | os.PathLike, key: bytes | None = None
     with contextlib.suppress(OSError):
         return hmac.compare_digest(sign_bytes(p.read_bytes(), key_bytes), expected)
     return False
+
+
+# ---------------------------------------------------------------------------
+# D/P2-3：清单签名非对称化（Ed25519：构建机私钥签发 / 发布包内置公钥验证）
+# ---------------------------------------------------------------------------
+# 背景：HMAC 是对称签名，用户端要验签就必须持有密钥；密钥进包=公开可伪造，
+# 不进包=发布版 enforce 会把所有用户锁死（verify_file_signature 无密钥返回 False）。
+# 非对称签名解决该矛盾：私钥只存构建机（data/.manifest_signing_key，随包三
+# 重门禁排除），公钥 PEM 内置到 security/ 随代码分发（公开无害，仅用于验签）。
+
+_MANIFEST_PRIVATE_KEY_NAME = ".manifest_signing_key"
+_MANIFEST_PUBLIC_KEY_NAME = "manifest_signing_public_key.pem"
+_MANIFEST_ED25519_SUFFIX = ".sig.ed25519"
+
+
+def manifest_private_key_path() -> Path:
+    """清单签名私钥路径（项目根 data/.manifest_signing_key，绝不进发布包）。"""
+    return _default_key_file().parent / _MANIFEST_PRIVATE_KEY_NAME
+
+
+def manifest_public_key_path() -> Path:
+    """内置公钥路径（security/ 目录，随代码分发，仅用于验签）。"""
+    return Path(__file__).parent / _MANIFEST_PUBLIC_KEY_NAME
+
+
+def generate_manifest_signing_keypair(force: bool = False) -> tuple[Path, Path]:
+    """生成 Ed25519 清单签名密钥对（构建机/签发机运行一次）。
+
+    Args:
+        force: True 时覆盖已存在的私钥（轮换签发身份，需同步重签所有发布清单）。
+
+    Returns:
+        (私钥路径, 公钥路径)。
+
+    Raises:
+        FileExistsError: 私钥已存在且 force=False。
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    priv_path = manifest_private_key_path()
+    if priv_path.exists() and not force:
+        raise FileExistsError(f"清单签名私钥已存在: {priv_path}（如需轮换请用 --force，并重签历史发布清单）")
+
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    priv_pem = private_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    pub_pem = private_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+    priv_path.parent.mkdir(parents=True, exist_ok=True)
+    priv_path.write_bytes(priv_pem)
+    harden_secret_file_permissions(priv_path)
+    pub_path = manifest_public_key_path()
+    pub_path.write_text(pub_pem.decode("utf-8"), encoding="utf-8")
+    logger.info("清单签名密钥对已生成: 私钥=%s 公钥=%s", priv_path, pub_path)
+    return priv_path, pub_path
+
+
+def sign_manifest_ed25519(
+    manifest_path: str | os.PathLike,
+    private_key_path: str | os.PathLike | None = None,
+) -> Path | None:
+    """用 Ed25519 私钥为清单签名（写入 .sig.ed25519）。
+
+    Args:
+        manifest_path: 待签名清单文件。
+        private_key_path: 私钥路径；None 时用默认 data/.manifest_signing_key。
+
+    Returns:
+        签名文件路径；文件/私钥缺失时返回 None。
+    """
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Ed25519 依赖不可用，无法非对称签名: %s", e)
+        return None
+
+    p = Path(manifest_path)
+    if not p.exists():
+        return None
+    priv_path = manifest_private_key_path() if private_key_path is None else Path(private_key_path)
+    if not priv_path.exists():
+        logger.warning("清单签名私钥不存在: %s", priv_path)
+        return None
+    try:
+        private_key = serialization.load_pem_private_key(priv_path.read_bytes(), password=None)
+        if not isinstance(private_key, ed25519.Ed25519PrivateKey):
+            logger.warning("清单签名私钥非 Ed25519，拒绝签名")
+            return None
+        sig = private_key.sign(p.read_bytes())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Ed25519 签名失败: %s", e)
+        return None
+    sig_path = Path(f"{p}{_MANIFEST_ED25519_SUFFIX}")
+    sig_path.write_bytes(sig)
+    return sig_path
+
+
+def verify_manifest_signature_ed25519(
+    manifest_path: str | os.PathLike,
+    public_key_path: str | os.PathLike | None = None,
+) -> bool:
+    """用内置公钥验证清单的 Ed25519 签名。
+
+    公钥公开无害（仅能验签、不能伪造），发布包内置它即可让用户端
+    enforce 校验通过，同时私钥不出构建机。
+
+    Args:
+        manifest_path: 待校验清单文件。
+        public_key_path: 公钥路径；None 时用内置 security/manifest_signing_public_key.pem。
+
+    Returns:
+        签名存在且有效返回 True；无公钥/无签名/不匹配返回 False。
+    """
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Ed25519 依赖不可用，跳过公钥验证: %s", e)
+        return False
+
+    p = Path(manifest_path)
+    pub_path = manifest_public_key_path() if public_key_path is None else Path(public_key_path)
+    sig_path = Path(f"{p}{_MANIFEST_ED25519_SUFFIX}")
+    if not p.exists() or not pub_path.exists() or not sig_path.exists():
+        return False
+    try:
+        public_key = serialization.load_pem_public_key(pub_path.read_bytes())
+        if not isinstance(public_key, ed25519.Ed25519PublicKey):
+            logger.debug("清单公钥非 Ed25519，拒绝验证")
+            return False
+        public_key.verify(sig_path.read_bytes(), p.read_bytes())
+        return True
+    except Exception as e:  # noqa: BLE001 — 任何验签失败都视为无效
+        logger.debug("Ed25519 清单验签失败: %s", e)
+        return False

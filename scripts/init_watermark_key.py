@@ -7,7 +7,7 @@
 import secrets
 from pathlib import Path
 
-KEY_FILE = Path(__file__).resolve().parent.parent / ".watermark_key"
+KEY_FILE = Path(__file__).resolve().parent.parent / "data" / ".watermark_key"
 
 
 def main() -> None:

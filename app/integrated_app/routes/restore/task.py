@@ -124,6 +124,7 @@ async def get_progress(
                     "total_frames": task.get("total_frames", 0),
                     "task_type": task.get("task_type", "image"),
                     "message": task.get("message", ""),
+                    "error": task.get("error") or "",
                     "processing_time": task.get("processing_time", 0),
                 }
                 payload = json.dumps(data)

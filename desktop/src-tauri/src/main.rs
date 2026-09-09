@@ -13,7 +13,7 @@ mod window;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tauri::{
@@ -78,13 +78,39 @@ async fn start_python_and_load(app: &AppHandle, state: &Arc<PythonState>) {
     let wait_result = health_check::wait_for_ready(port, Duration::from_secs(60)).await;
 
     match wait_result {
-        Ok(()) => {
+        Ok(integrity) => {
             {
                 let mut proc = state.process.lock().unwrap();
                 proc.mark_running();
             }
             log::info!("Python 服务就绪，端口={}", port);
             navigate_to_app(app, port);
+
+            // B-2: 完整性自检失败时启动页告警 + 系统通知（篡改不再静默）
+            if let Some(st) = integrity {
+                if st.failed > 0 {
+                    let files = st.failed_files.join(", ");
+                    log::error!("完整性自检失败 {} 项: {}", st.failed, files);
+                    emit_startup_status(
+                        app,
+                        "安全告警",
+                        Some(format!(
+                            "核心模块完整性自检失败（{} 项）：{}\n可能已被篡改，请检查安装目录。",
+                            st.failed, files
+                        )),
+                    );
+                    crate::notification::handle_show_notification(
+                        app,
+                        crate::notification::ShowNotification {
+                            title: "SeedVR2 安全告警".to_string(),
+                            body: format!(
+                                "核心模块完整性自检失败 {} 项，文件可能已被篡改。",
+                                st.failed
+                            ),
+                        },
+                    );
+                }
+            }
         }
         Err(e) => {
             log::error!("Python 启动超时: {}", e);
@@ -347,9 +373,129 @@ impl WindowSaveDebounce {
     }
 }
 
+/// 简易双写日志：stdout + logs\seedvr2-shell.log（Rust 侧诊断可见，解决之前日志被吞的问题）
+/// 壳日志大小上限与备份份数（B-9：seedvr2-shell.log 无限增长修复）
+const SHELL_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
+const SHELL_LOG_BACKUPS: u32 = 3;
+
+/// 滚动 shell 日志：seedvr2-shell.log -> .1 -> .2 -> .3，删除最旧
+fn rotate_shell_log(path: &std::path::Path) {
+    // 删除最旧备份
+    let oldest = path.with_extension(format!("log.{}", SHELL_LOG_BACKUPS));
+    let _ = std::fs::remove_file(&oldest);
+    // 倒序移位
+    for i in (1..SHELL_LOG_BACKUPS).rev() {
+        let from = path.with_extension(format!("log.{}", i));
+        let to = path.with_extension(format!("log.{}", i + 1));
+        if from.exists() {
+            let _ = std::fs::rename(&from, &to);
+        }
+    }
+    // 当前文件 -> .1
+    let _ = std::fs::rename(path, path.with_extension("log.1"));
+}
+
+struct DualLogger {
+    file: std::sync::Mutex<Option<std::fs::File>>,
+    path: std::sync::Mutex<Option<std::path::PathBuf>>,
+}
+
+impl log::Log for DualLogger {
+    fn enabled(&self, _metadata: &log::Metadata) -> bool {
+        true
+    }
+    fn log(&self, record: &log::Record) {
+        use std::io::Write;
+        let line = format!(
+            "[{}] [{}] {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            record.level(),
+            record.args()
+        );
+        let mut out = std::io::stdout();
+        let _ = writeln!(out, "{line}");
+        if let Ok(mut guard) = self.file.lock() {
+            if let Some(f) = guard.as_mut() {
+                // B-9: 超过大小阈值时滚动（关旧 -> 移位 -> 重开），防止 shell 日志无限增长
+                if let Ok(meta) = f.metadata() {
+                    if meta.len() > SHELL_LOG_MAX_BYTES {
+                        let rotate_path = self.path.lock().ok().and_then(|p| p.clone());
+                        if let Some(p) = rotate_path {
+                            let _ = f.flush();
+                            *guard = None;
+                            rotate_shell_log(&p);
+                            if let Ok(nf) = std::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(&p)
+                            {
+                                *guard = Some(nf);
+                            }
+                        }
+                    }
+                }
+                if let Some(f) = guard.as_mut() {
+                    let _ = writeln!(f, "{line}");
+                }
+            }
+        }
+    }
+    fn flush(&self) {
+        use std::io::Write;
+        if let Ok(mut guard) = self.file.lock() {
+            if let Some(f) = guard.as_mut() {
+                let _ = f.flush();
+            }
+        }
+    }
+}
+
+/// 全局日志器引用（供换载前关闭文件句柄：app 目录整体重命名时不能握有 app\logs 内的句柄）
+static LOGGER: OnceLock<Arc<DualLogger>> = OnceLock::new();
+
+/// 关闭日志文件句柄（更新换载前调用；关闭后日志只写 stdout，换载完成后由重启逻辑重新打开）
+pub fn close_logger() {
+    if let Some(l) = LOGGER.get() {
+        if let Ok(mut guard) = l.file.lock() {
+            *guard = None;
+        }
+    }
+}
+
+/// 初始化日志：日志文件落在 logs\seedvr2-shell.log，RUST_LOG 可覆盖级别（debug/trace/warn/error）
+fn init_logging() {
+    let file = resolve_app_dir().join("logs").join("seedvr2-shell.log");
+    if let Some(parent) = file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file)
+        .ok();
+    let logger = Arc::new(DualLogger {
+        file: std::sync::Mutex::new(f),
+        path: std::sync::Mutex::new(Some(file)),
+    });
+    let _ = LOGGER.set(logger.clone());
+    if let Err(e) = log::set_boxed_logger(Box::new(logger)) {
+        eprintln!("日志初始化失败: {e}");
+    }
+    let level = std::env::var("RUST_LOG")
+        .unwrap_or_else(|_| "info".to_string())
+        .to_lowercase();
+    log::set_max_level(match level.as_str() {
+        "debug" => log::LevelFilter::Debug,
+        "trace" => log::LevelFilter::Trace,
+        "warn" => log::LevelFilter::Warn,
+        "error" => log::LevelFilter::Error,
+        _ => log::LevelFilter::Info,
+    });
+}
+
 fn main() {
     // 初始化日志（RUST_LOG 可覆盖）
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    init_logging();
 
     tauri::Builder::default()
         // 单实例：二次启动聚焦现有窗口而不是开新实例

@@ -1,0 +1,6 @@
+{
+    "changelog": "修复版本号显示（pyproject 同步 1.5.4）；修复失败弹窗显示具体错误原因（SSE 下发 error 详情）；壳更新已含 native-tls 网络通道",
+    "version": "1.5.4",
+    "release_date": "2026-09-08",
+    "minimum_shell_version": "1.0.0"
+}

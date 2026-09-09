@@ -17,6 +17,19 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+# 环境隔离（桌面端迁移 B-4，移植自 clean_launch.setup_isolated_env）：
+# 清除可能指向其他 Python 的环境变量、移除系统/用户包路径，防止桌面端
+# 在用户机器上加载错解释器标准库或第三方包（壳只设了 PYTHONNOUSERSITE）。
+for _var in ("PYTHONHOME", "PYTHONSTARTUP"):
+    os.environ.pop(_var, None)
+sys.path = [
+    p
+    for p in sys.path
+    if not any(exclude in p.lower() for exclude in ("\\appdata\\", "\\program files\\", "\\programdata\\"))
+]
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 
 def main():
     parser = argparse.ArgumentParser(description="SeedVR2 便携版启动器")

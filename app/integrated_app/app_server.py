@@ -23,6 +23,7 @@ SeedVR2 - 应用服务器入口模块
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import logging.handlers
@@ -85,6 +86,17 @@ def setup_logging(config: dict | None = None) -> None:
     log_file = str(os.environ.get("LOG_PATH", log_cfg.get("file", "logs/app.log")))
     max_bytes = int(log_cfg.get("max_size_mb", 50)) * 1024 * 1024
     backup_count = int(log_cfg.get("backup_count", 3))
+
+    # B-9：stdout/stderr 显式 UTF-8（桌面端 Python 子进程 stdout 重定向到
+    # logs/python_*.log，Windows 默认按 GBK 解码会把中文日志写坏；与文件
+    # handler 的 utf-8 对齐，避免同一份日志两种编码）。
+    for _stream in (sys.stdout, sys.stderr):
+        if _stream is None:
+            continue
+        reconfigure = getattr(_stream, "reconfigure", None)
+        if callable(reconfigure):
+            with contextlib.suppress(AttributeError, ValueError, OSError):
+                reconfigure(encoding="utf-8", errors="replace")
 
     handlers: list[logging.Handler | None] = [
         logging.StreamHandler(sys.stdout),
@@ -217,6 +229,89 @@ class VersionedStaticFiles(StaticFiles):
         return response
 
 
+async def shutdown_components(app: FastAPI) -> None:
+    """优雅关闭全部后台组件（桌面端 B-5 抽出的共享关闭逻辑）。
+
+    lifespan 关闭阶段与本机 shutdown 端点共用同一清理路径：
+    停止各周期任务 -> 优雅停止任务队列（30s 超时）-> 卸载模型 -> 关闭历史库。
+
+    Args:
+        app: 正在运行的应用实例（组件挂载在 app.state）。
+    """
+    model_registry = getattr(app.state, "model_registry", None)
+    if model_registry is not None:
+        _bridge = getattr(app.state, "_bridge_model_status_to_sse", None)
+        if _bridge is not None:
+            model_registry.remove_listener(_bridge)
+
+    file_cache = getattr(app.state, "file_cache", None)
+    if file_cache is not None:
+        try:
+            file_cache.stop_cleanup_task()
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"停止文件缓存清理任务失败: {e}")
+
+    # 停止定期清理卡死任务的后台任务
+    stale_cleanup = getattr(app.state, "stale_cleanup_task", None)
+    if stale_cleanup:
+        stale_cleanup.cancel()
+        with suppress(asyncio.CancelledError):
+            await stale_cleanup
+
+    # 停止 outputs 保留策略周期清理任务
+    output_cleanup = getattr(app.state, "output_cleanup_task", None)
+    if output_cleanup:
+        output_cleanup.cancel()
+        with suppress(asyncio.CancelledError):
+            await output_cleanup
+
+    # 停止 uploads 保留策略周期清理任务（数据治理 P0-1）
+    uploads_cleanup = getattr(app.state, "uploads_cleanup_task", None)
+    if uploads_cleanup:
+        uploads_cleanup.cancel()
+        with suppress(asyncio.CancelledError):
+            await uploads_cleanup
+
+    # 停止进度停滞看门狗
+    progress_watchdog = getattr(app.state, "progress_watchdog_task", None)
+    if progress_watchdog:
+        progress_watchdog.cancel()
+        with suppress(asyncio.CancelledError):
+            await progress_watchdog
+
+    # 停止模型空闲卸载任务
+    idle_unload_task = getattr(app.state, "model_idle_unload_task", None)
+    if idle_unload_task:
+        idle_unload_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await idle_unload_task
+
+    # 停止运行时完整性周期重检任务
+    integrity_recheck = getattr(app.state, "integrity_recheck_task", None)
+    if integrity_recheck:
+        integrity_recheck.cancel()
+        with suppress(asyncio.CancelledError):
+            await integrity_recheck
+
+    task_queue = getattr(app.state, "task_queue", None)
+    if task_queue is not None:
+        try:
+            await asyncio.wait_for(task_queue.stop(), timeout=30.0)
+            logger.info("任务队列已优雅停止")
+        except TimeoutError:
+            logger.warning("任务队列停止超时（30s），强制退出")
+
+    model_manager = getattr(app.state, "model_manager", None)
+    if model_manager is not None:
+        await model_manager.unload_model()
+
+    history_db = getattr(app.state, "history_db", None)
+    if history_db is not None:
+        await history_db.close()
+
+    logger.info("SeedVR2已关闭")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI 应用生命周期管理上下文管理器。
@@ -255,9 +350,22 @@ async def lifespan(app: FastAPI):
             run_startup_selfcheck,
         )
 
+        def _store_integrity_result(result: dict) -> None:
+            """把自检结果写入 app.state，供 /api/system/health 等接口对外展示。"""
+            app.state.integrity_selfcheck = {
+                "checked": True,
+                "total": result.get("total", 0),
+                "passed": result.get("passed", 0),
+                "failed": result.get("failed", 0),
+                "skipped": result.get("skipped", 0),
+                "failed_files": result.get("failed_files", []),
+                "manifest_signed": bool(result.get("manifest_signed", False)),
+            }
+
         security_cfg = config.get("runtime", {}).get("security", {})
         enforce = bool(security_cfg.get("integrity_enforce", False))
         selfcheck = run_startup_selfcheck(enforce=enforce)
+        _store_integrity_result(selfcheck)
         if selfcheck["failed"] > 0:
             logger.error(
                 "=" * 60 + "\n"
@@ -267,7 +375,9 @@ async def lifespan(app: FastAPI):
             )
         recheck_interval = int(security_cfg.get("integrity_recheck_interval_seconds", 1800) or 0)
         if recheck_interval > 0:
-            app.state.integrity_recheck_task = asyncio.create_task(periodic_selfcheck_loop(recheck_interval))
+            app.state.integrity_recheck_task = asyncio.create_task(
+                periodic_selfcheck_loop(recheck_interval, on_result=_store_integrity_result)
+            )
             logger.info(f"运行时完整性周期重检已启用（间隔 {recheck_interval}s）")
     except RuntimeError as e:
         # enforce 模式下校验失败：阻断启动，禁止带病运行
@@ -275,6 +385,36 @@ async def lifespan(app: FastAPI):
         raise
     except Exception as e:
         logger.debug(f"核心模块完整性自检跳过: {e}")
+
+    # 启动预检（桌面端迁移 B-3）：CUDA / FFmpeg 可用性。终端时代由
+    # clean_launch.py 在启动时打印警告；桌面端终端不可见，结果挂到
+    # app.state.startup_preflight，经 /api/system/health 暴露给壳/前端展示。
+    try:
+        import torch as _torch
+
+        _cuda_available = bool(_torch.cuda.is_available())
+        _cuda_device = _torch.cuda.get_device_name(0) if _cuda_available else ""
+    except Exception as e:  # noqa: BLE001 — 预检失败不阻断启动
+        logger.debug(f"[PREFLIGHT] CUDA 探测失败: {e}")
+        _cuda_available = False
+        _cuda_device = ""
+    try:
+        from app.integrated_app.video_processor import FFmpegWrapper
+
+        _ffmpeg_available = bool(FFmpegWrapper().is_available())
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"[PREFLIGHT] FFmpeg 探测失败: {e}")
+        _ffmpeg_available = False
+
+    app.state.startup_preflight = {
+        "cuda_available": _cuda_available,
+        "cuda_device": _cuda_device,
+        "ffmpeg_available": _ffmpeg_available,
+    }
+    if not _cuda_available:
+        logger.warning("[PREFLIGHT] CUDA 不可用：SeedVR2 模型仅支持 NVIDIA GPU 推理，任务将无法执行")
+    if not _ffmpeg_available:
+        logger.warning("[PREFLIGHT] FFmpeg 不可用：视频修复的解码/合成将失败（安装指引见 NOTICE 第 4 条）")
 
     history_db: HistoryDB = app.state.history_db
     await history_db.initialize()
@@ -285,6 +425,7 @@ async def lifespan(app: FastAPI):
     logger.info("任务队列已启动")
 
     model_registry.add_listener(_bridge_model_status_to_sse)
+    app.state._bridge_model_status_to_sse = _bridge_model_status_to_sse
     logger.info("已注册模型状态 SSE 桥接监听器")
 
     # P2-11：任务进度事件接线——task_state_store 的每次状态更新经节流后发布到
@@ -614,66 +755,8 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    model_registry.remove_listener(_bridge_model_status_to_sse)
-
-    file_cache.stop_cleanup_task()
-
-    # 停止定期清理卡死任务的后台任务
-    stale_cleanup = getattr(app.state, "stale_cleanup_task", None)
-    if stale_cleanup:
-        stale_cleanup.cancel()
-        with suppress(asyncio.CancelledError):
-            await stale_cleanup
-
-    # 停止 outputs 保留策略周期清理任务
-    output_cleanup = getattr(app.state, "output_cleanup_task", None)
-    if output_cleanup:
-        output_cleanup.cancel()
-        with suppress(asyncio.CancelledError):
-            await output_cleanup
-
-    # 停止 uploads 保留策略周期清理任务（数据治理 P0-1）
-    uploads_cleanup = getattr(app.state, "uploads_cleanup_task", None)
-    if uploads_cleanup:
-        uploads_cleanup.cancel()
-        with suppress(asyncio.CancelledError):
-            await uploads_cleanup
-
-    # 停止进度停滞看门狗
-    progress_watchdog = getattr(app.state, "progress_watchdog_task", None)
-    if progress_watchdog:
-        progress_watchdog.cancel()
-        with suppress(asyncio.CancelledError):
-            await progress_watchdog
-
-    # 停止模型空闲卸载任务
-    idle_unload_task = getattr(app.state, "model_idle_unload_task", None)
-    if idle_unload_task:
-        idle_unload_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await idle_unload_task
-
-    # 停止运行时完整性周期重检任务
-    integrity_recheck = getattr(app.state, "integrity_recheck_task", None)
-    if integrity_recheck:
-        integrity_recheck.cancel()
-        with suppress(asyncio.CancelledError):
-            await integrity_recheck
-
-    task_queue = app.state.task_queue
-    try:
-        await asyncio.wait_for(task_queue.stop(), timeout=30.0)
-        logger.info("任务队列已优雅停止")
-    except TimeoutError:
-        logger.warning("任务队列停止超时（30s），强制退出")
-
-    model_manager = app.state.model_manager
-    await model_manager.unload_model()
-
-    history_db = app.state.history_db
-    await history_db.close()
-
-    logger.info("SeedVR2已关闭")
+    # 关闭逻辑统一走 shutdown_components（桌面端 B-5：本机 shutdown 端点共用）
+    await shutdown_components(app)
 
 
 def create_app(config: dict | None = None) -> FastAPI:

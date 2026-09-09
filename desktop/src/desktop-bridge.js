@@ -355,7 +355,7 @@
     listen("update-error", function (e) { showUpdateDialogError((e && e.message) || "更新失败"); });
     listen("open-update-dialog", function () { showUpdateDialogFromState(); });
     listen("update-not-available", function () { showUpdateDialog(null); });
-    listen("update-check-failed", function (e) { showUpdateDialogError("检查更新失败：" + ((e && e.message) || "")); });
+    listen("update-check-failed", function (e) { var m = (e && e.message) || ""; showUpdateDialogError("检查更新失败：" + m + (m && /请求|连接|超时|TLS|网络|HTTP/i.test(m) ? "\n\n提示：无法连接到更新服务器（GitHub）。请检查网络连接或代理设置后重试。" : "")); });
   }
   function tryShowOnUpdateWindow(info) {
     // 若更新窗口已存在（本窗非 update.html），交给它自己拉取；主窗只提示角标

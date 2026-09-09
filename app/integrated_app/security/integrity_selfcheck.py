@@ -71,17 +71,32 @@ def _get_manifest_path() -> Path:
 
 
 def verify_manifest_signature(manifest_path: Path | str) -> bool:
-    """校验完整性清单的 HMAC-SHA256 签名（数据治理 P3-3）。
+    """校验完整性清单签名（D/P2-3：Ed25519 优先，HMAC 兼容）。
+
+    发布版：清单由构建机用私钥签发，包内内置公钥验证 → 用户端可验签、
+    无需持有私钥，enforce 模式下正常启动且防篡改。
+    开发机：无 Ed25519 私钥/公钥时回退 HMAC（data/.seedvr2_secret）。
 
     Args:
         manifest_path: 清单文件路径。
 
     Returns:
-        签名存在且匹配返回 True；无密钥/无签名/不匹配返回 False。
+        任一签名有效返回 True；否则 False。
     """
+    # 1) Ed25519 公钥验证（发布版主路径；公钥内置、私钥不出构建机）
+    try:
+        from app.integrated_app.security.secret_key import (
+            verify_manifest_signature_ed25519,
+        )
+
+        if verify_manifest_signature_ed25519(manifest_path):
+            return True
+    except Exception as e:  # noqa: BLE001 — 模块不可用时按未签名处理
+        logger.debug("[SELF-CHECK] Ed25519 验签不可用: %s", e)
+    # 2) HMAC 兼容（开发机/历史清单）
     try:
         from app.integrated_app.security.secret_key import verify_file_signature
-    except Exception as e:  # noqa: BLE001 — 模块不可用时按"未签名"处理
+    except Exception as e:  # noqa: BLE001
         logger.debug("[SELF-CHECK] 签名校验模块不可用: %s", e)
         return False
     return verify_file_signature(manifest_path)
@@ -134,6 +149,7 @@ def run_startup_selfcheck(enforce: bool = False) -> dict:
             "failed": 0,
             "skipped": len(_CORE_MODULES),
             "failed_files": [],
+            "manifest_signed": False,
         }
 
     try:
@@ -147,6 +163,7 @@ def run_startup_selfcheck(enforce: bool = False) -> dict:
             "failed": 0,
             "skipped": len(_CORE_MODULES),
             "failed_files": [],
+            "manifest_signed": False,
         }
 
     # 数据治理 P3-3：校验清单本身的 HMAC 签名。
@@ -230,10 +247,11 @@ def run_startup_selfcheck(enforce: bool = False) -> dict:
         "failed": failed,
         "skipped": skipped,
         "failed_files": failed_files,
+        "manifest_signed": signature_ok,
     }
 
 
-async def periodic_selfcheck_loop(interval_seconds: int) -> None:
+async def periodic_selfcheck_loop(interval_seconds: int, on_result=None) -> None:
     """运行时周期性重检核心模块完整性（协程，需作为 asyncio 后台任务运行）。
 
     每 interval_seconds 秒重跑一次 run_startup_selfcheck（enforce 语义：
@@ -241,6 +259,8 @@ async def periodic_selfcheck_loop(interval_seconds: int) -> None:
 
     Args:
         interval_seconds: 重检间隔；<=0 时立即返回（调用方无需创建任务）。
+        on_result: 可选回调，每次重检后以结果 dict 调用（供上层同步到
+            应用状态，如 health 接口展示）；回调异常被吞掉，不影响重检循环。
     """
     if interval_seconds <= 0:
         return
@@ -248,6 +268,11 @@ async def periodic_selfcheck_loop(interval_seconds: int) -> None:
         try:
             await asyncio.sleep(interval_seconds)
             result = await asyncio.to_thread(run_startup_selfcheck)
+            if on_result is not None:
+                try:
+                    on_result(result)
+                except Exception as e:  # noqa: BLE001 — 状态同步失败不影响重检
+                    logger.debug(f"[SELF-CHECK] 状态回调异常: {e}")
             if result["failed"] > 0:
                 logger.error(
                     f"[SECURITY] 运行时周期完整性重检失败 {result['failed']} 项: "

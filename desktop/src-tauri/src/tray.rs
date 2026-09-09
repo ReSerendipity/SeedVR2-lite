@@ -112,6 +112,8 @@ fn open_logs(app: &AppHandle) {
 fn trigger_manual_check(app: &AppHandle) {
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
+        // 先唤起主窗口：检查结果弹窗必须对用户可见（窗口隐藏到托盘时也弹出）
+        crate::window::show_and_focus(&handle);
         match crate::updater::check_update(handle.clone(), false).await {
             Ok(Some(_)) => {
                 // 有更新：让前端打开对话框

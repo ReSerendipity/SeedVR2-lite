@@ -149,6 +149,8 @@ struct GhRelease {
     body: Option<String>,
     #[serde(default)]
     assets: Vec<GhAsset>,
+    #[serde(default)]
+    draft: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,6 +171,66 @@ pub fn normalize_version(raw: &str) -> String {
 fn parse_semver(raw: &str) -> Result<semver::Version> {
     let v = normalize_version(raw);
     semver::Version::parse(&v).with_context(|| format!("版本号无法解析: {raw}"))
+}
+
+/// 构建 HTTP 客户端：native-tls（Windows SChannel，与系统浏览器/.NET 同栈）+ 系统代理/环境变量代理。
+/// 解决大陆网络下 rustls 指纹被 TLS 层阻断导致检查更新失败的问题（实测 curl/rustls 0.02s 断、.NET 200 通）。
+fn build_http_client(timeout: Duration) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .timeout(timeout)
+        .user_agent("SeedVR2-Desktop");
+    if let Some(proxy) = resolve_proxy() {
+        log::info!("网络请求使用代理: {proxy}");
+        builder = builder.proxy(reqwest::Proxy::all(&proxy).context("代理地址无效")?);
+    }
+    builder.build().context("创建 HTTP 客户端失败")
+}
+
+/// 解析可用代理：优先环境变量（HTTPS_PROXY 等），其次 Windows 系统代理（ProxyEnable=1）
+fn resolve_proxy() -> Option<String> {
+    for var in [
+        "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy",
+    ] {
+        if let Ok(v) = std::env::var(var) {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(key) = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+            .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+        {
+            let enable: u32 = key.get_value("ProxyEnable").unwrap_or(0);
+            if enable == 1 {
+                if let Ok(server) = key.get_value::<String, _>("ProxyServer") {
+                    let server = server.trim();
+                    if !server.is_empty() {
+                        return Some(parse_proxy_server(server));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 规范化 Windows 注册表 ProxyServer 值（可能含协议前缀或分号分段，如 http=...;https=...）
+fn parse_proxy_server(s: &str) -> String {
+    if s.contains('=') && s.contains(';') {
+        for part in s.split(';') {
+            let part = part.trim();
+            if let Some(v) = part.strip_prefix("https=") {
+                let v = v.trim();
+                if !v.is_empty() {
+                    return if v.contains("://") { v.to_string() } else { format!("http://{v}") };
+                }
+            }
+        }
+    }
+    if s.contains("://") { s.to_string() } else { format!("http://{s}") }
 }
 
 /// 拉取 GitHub release JSON（latest 或按 tag 定位）
@@ -201,6 +263,41 @@ async fn fetch_github_release(
     }
     let release: GhRelease = resp.json().await.context("解析 GitHub release JSON 失败")?;
     Ok(release)
+}
+
+/// 拉取最新可更新 release：取最近 N 条中版本最高的（含 prerelease，排除 draft）。
+/// 相比 /releases/latest（只认正式版），这样测试版（prerelease）也能被发现。
+async fn fetch_latest_release(
+    client: &reqwest::Client,
+    owner: &str,
+    repo: &str,
+) -> Result<GhRelease> {
+    let url = format!("https://api.github.com/repos/{owner}/{repo}/releases?per_page=10");
+    let resp = client
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "SeedVR2-Desktop")
+        .send()
+        .await
+        .with_context(|| format!("请求 GitHub API 失败: {url}"))?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(anyhow!("GitHub API 访问受限（速率限制或鉴权失败）"));
+    }
+    if !status.is_success() {
+        return Err(anyhow!("GitHub API 返回 HTTP {status}"));
+    }
+    let releases: Vec<GhRelease> = resp.json().await.context("解析 GitHub release 列表失败")?;
+    releases
+        .into_iter()
+        .filter(|r| !r.draft)
+        .filter(|r| parse_semver(&normalize_version(&r.tag_name)).is_ok())
+        .max_by(|a, b| {
+            let av = parse_semver(&normalize_version(&a.tag_name)).unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+            let bv = parse_semver(&normalize_version(&b.tag_name)).unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+            av.cmp(&bv)
+        })
+        .ok_or_else(|| anyhow!("未找到任何已发布版本"))
 }
 
 /// 从 release assets 解析 `app-v{ver}.zip`（下载地址、大小、.sha256 资产地址）
@@ -353,14 +450,11 @@ async fn do_check(app: &AppHandle, auto: bool) -> Result<Option<UpdateInfo>> {
         }
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .build()
-        .context("创建 HTTP 客户端失败")?;
+    let client = build_http_client(HTTP_TIMEOUT)?;
 
     let result = match &cfg.update_source {
         UpdateSource::Github { owner, repo } => {
-            let latest = fetch_github_release(&client, owner, repo, None).await?;
+            let latest = fetch_latest_release(&client, owner, repo).await?;
             let version = normalize_version(&latest.tag_name);
             let newer = parse_semver(&version).map(|v| v.gt(&current_semver)).unwrap_or(false);
             if !newer {
@@ -646,6 +740,27 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
 /// 而不保留这些目录，运行时与模型会丢失、用户历史会被清空——所以必须在 swap 前补进 `app.new/`。
 const PRESERVE_TOP_DIRS: &[&str] = &["runtime", "model", "data", "logs"];
 
+/// 换载时从旧 `app/` 保留到新 `app/` 的根级单文件（用户可修改/本机持有，丢失代价高）：
+/// - `config.yaml`：用户对端口/限流/日志/水印等的修改，整体换载会被新版默认配置覆盖；
+/// - `.watermark_key`：水印 HMAC 签名密钥，丢失即旧产物无法验证（溯源举证链断裂）。
+/// 保留旧文件优先（用户修改/本机密钥 > 新版默认），增量包不含这些文件，不会产生覆盖。
+const PRESERVE_ROOT_FILES: &[&str] = &["config.yaml", ".watermark_key"];
+
+/// 把旧 `app/` 根下的保留文件复制进 `app.new/`（目标已存在时不覆盖，以新包为准）。
+fn preserve_root_files(app_dir: &Path, app_new: &Path, on_file: &mut dyn FnMut(&str)) -> Result<()> {
+    for name in PRESERVE_ROOT_FILES {
+        let src = app_dir.join(name);
+        let dst = app_new.join(name);
+        if src.is_file() && !dst.exists() {
+            on_file(name);
+            fs::copy(&src, &dst).with_context(|| {
+                format!("保留应用根文件失败: {}", src.display())
+            })?;
+        }
+    }
+    Ok(())
+}
+
 /// 解压 `app.new/` 后、原子换载前：把旧 `app/` 中需要保留的顶层目录补进 `app.new/`。
 /// 更新包自带同名目录（整包更新场景）时不覆盖，以更新包为准。
 fn preserve_heavy_dirs(app_dir: &Path, app_new: &Path, on_dir: &mut dyn FnMut(&str)) -> Result<()> {
@@ -741,11 +856,7 @@ async fn do_update_steps(app: &AppHandle, info: &UpdateInfo) -> Result<()> {
         ));
     }
 
-    let client = reqwest::Client::builder()
-        .connect_timeout(HTTP_TIMEOUT)
-        .timeout(Duration::from_secs(3600))
-        .build()
-        .context("创建下载客户端失败")?;
+    let client = build_http_client(Duration::from_secs(3600))?;
 
     // 1. 下载（期间应用可正常使用）
     fs::create_dir_all(&paths.updates_dir).context("创建 updates 目录失败")?;
@@ -800,6 +911,16 @@ async fn do_update_steps(app: &AppHandle, info: &UpdateInfo) -> Result<()> {
     emit_progress(app, "swap", 0, "停止服务并保留数据…");
     let controller = state_controller(app);
     (controller.stop)();
+    // 释放壳自身占用的句柄：DualLogger 写 app\logs\seedvr2-shell.log，若不停开，
+    // 整体重命名 app -> app.bak 会报 os error 32（另一个程序正在使用此文件）。
+    crate::close_logger();
+    // 壳工作目录若落在 app 树内也会阻止重命名，换载期间切到临时目录（resolve_app_dir 不依赖 CWD）
+    if let Ok(td) = std::env::temp_dir().canonicalize() {
+        let _ = std::env::set_current_dir(&td);
+    } else {
+        let _ = std::env::set_current_dir(std::env::temp_dir());
+    }
+
 
     // 4.5 保留重型/用户目录（runtime、model、data、logs）：增量更新包不含这些，
     //     必须在换载前从旧 app/ 补进 app.new/，否则换载后运行时/模型/历史会丢失。
@@ -810,6 +931,14 @@ async fn do_update_steps(app: &AppHandle, info: &UpdateInfo) -> Result<()> {
     }) {
         let _ = (controller.restart)();
         return Err(anyhow!("保留运行时/模型目录失败，已恢复服务: {e:#}"));
+    }
+    // 根级用户文件（config.yaml 用户修改、.watermark_key 本机密钥）：不保留则
+    // 换载后用户配置被重置、水印密钥轮换导致旧产物无法验证（桌面端迁移问题 B-1）。
+    if let Err(e) = preserve_root_files(&paths.app_dir, &app_new, &mut |name| {
+        log::info!("保留应用根文件: {name}");
+    }) {
+        let _ = (controller.restart)();
+        return Err(anyhow!("保留应用根文件失败，已恢复服务: {e:#}"));
     }
 
     // 4.6 校验 app.new/version.json
@@ -843,7 +972,7 @@ async fn do_update_steps(app: &AppHandle, info: &UpdateInfo) -> Result<()> {
     // 6. 等待新服务就绪（端口可能变化）
     emit_progress(app, "restart", 30, "正在启动新版本…");
     match health_check::wait_for_ready(port, Duration::from_secs(120)).await {
-        Ok(()) => {
+        Ok(_) => {
             (controller.finalize)(port);
         }
         Err(e) => {
@@ -935,6 +1064,7 @@ mod tests {
 
     fn fixture(tag: &str) -> GhRelease {
         GhRelease {
+            draft: false,
             tag_name: tag.into(),
             body: Some(format!("## 修复\n- sha256: {}", "a".repeat(64))),
             assets: vec![

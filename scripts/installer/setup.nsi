@@ -5,7 +5,7 @@ Unicode true
 !include "LogicLib.nsh"
 
 Name "SeedVR2 桌面版"
-OutFile "SeedVR2-Setup-v1.5.1.exe"
+OutFile "SeedVR2-Setup-v1.5.4.exe"
 InstallDir "$LOCALAPPDATA\Programs\SeedVR2"
 InstallDirRegKey HKCU "Software\SeedVR2" "InstallDir"
 RequestExecutionLevel user
@@ -13,7 +13,7 @@ SetCompressor /SOLID lzma
 CRCCheck on
 BrandingText "SeedVR2"
 
-!define APP_VERSION "1.5.1"
+!define APP_VERSION "1.5.4"
 !define DATA_PREFIX "SeedVR2-Data.7z"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\SeedVR2"
 !define APP_ICON "C:\Users\Doro\SeedVR2-lite\desktop\src-tauri\icons\icon.ico"
@@ -74,6 +74,19 @@ Section "SeedVR2 桌面版" SEC_APP
     Abort
   ${EndIf}
 
+  ; 数据卷为旧基线（含旧壳/旧样式/旧版本号），此处用安装器内嵌文件覆盖为最新（壳更新无需重打 5GB 数据卷）
+  SetOutPath "$INSTDIR"
+  File "SeedVR2.exe"
+  SetOutPath "$INSTDIR\app\app\integrated_app\static\css"
+  File "style.css"
+  SetOutPath "$INSTDIR\app"
+  File "version.json"  SetOutPath "$INSTDIR\app"
+  File "pyproject.toml"
+  SetOutPath "$INSTDIR\app\app\integrated_app\routes\restore"
+  File "task.py"
+
+
+
   ; 校验主程序存在
   ${IfNot} ${FileExists} "$INSTDIR\SeedVR2.exe"
     MessageBox MB_ICONSTOP "安装异常：未找到 SeedVR2.exe，安装可能不完整。"
@@ -107,7 +120,7 @@ Section "SeedVR2 桌面版" SEC_APP
 SectionEnd
 
 ; ---------- 版本信息 ----------
-VIProductVersion "1.5.1.0"
+VIProductVersion "1.5.4.0"
 VIAddVersionKey "ProductName" "SeedVR2 桌面版"
 VIAddVersionKey "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey "FileDescription" "SeedVR2 桌面版安装程序"

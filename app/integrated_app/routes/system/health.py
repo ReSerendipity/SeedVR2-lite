@@ -11,11 +11,13 @@ API 端点：
 注意：SeedVR2 仅支持 NVIDIA CUDA GPU。
 """
 
+import asyncio
 import logging
+import os
 import platform
 import time
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -38,6 +40,39 @@ class PingResponse(BaseModel):
 router = APIRouter(prefix="/api/system", tags=["系统状态"])
 
 _start_time = time.time()
+
+
+@router.post("/shutdown")
+async def shutdown_server(request: Request) -> JSONResponse:
+    """本机优雅关闭端点（桌面端迁移 B-5）。
+
+    仅允许 127.0.0.1 / ::1 本机调用。触发共享的 shutdown_components 优雅关闭
+    （停队列、卸载模型、关历史库）后退出进程，供桌面壳替代 taskkill /F 使用。
+
+    API 端点：POST /api/system/shutdown
+
+    请求参数：无（调用方需为本机回环地址）
+
+    返回格式（JSON）：
+    {
+        "status": "shutting_down"
+    }
+    """
+    client_host = request.client.host if request.client else ""
+    if client_host not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(status_code=403, detail="仅允许本机调用")
+
+    from app.integrated_app.app_server import shutdown_components
+
+    async def _do_shutdown() -> None:
+        await asyncio.sleep(0.2)  # 让响应先发出再开始关闭
+        try:
+            await shutdown_components(request.app)
+        finally:
+            os._exit(0)
+
+    asyncio.create_task(_do_shutdown())
+    return JSONResponse({"status": "shutting_down"})
 
 
 @router.get("/ping", response_model=PingResponse)
@@ -77,6 +112,7 @@ async def api_health_check(
 
 @router.get("/health")
 async def health_check(
+    request: Request,
     model_manager: ModelManager = Depends(get_model_manager),
     gpu_backend: GPUBackendManager = Depends(get_gpu_backend),
 ):
@@ -89,6 +125,7 @@ async def health_check(
     - 系统信息（平台、Python 版本、CPU、内存）
     - 模型加载状态
     - GPU 信息（后端、设备名、可用性）
+    - 安全状态（核心模块完整性自检结果，供桌面壳展示篡改告警）
 
     请求参数：无
 
@@ -96,25 +133,24 @@ async def health_check(
     {
         "status": "ok",
         "uptime_seconds": float,
-        "system": {
-            "platform": str,
-            "python_version": str,
-            "cpu_count": int,
-            "memory_total_gb": float,
-            "memory_available_gb": float,
-            "memory_utilization_pct": float
-        },
+        "system": { ... },
         "model": { ... },      // 模型状态详情
-        "gpu": {
-            "backend": str,
-            "device_name": str,
-            "is_gpu_available": bool
+        "gpu": { ... },
+        "security": {
+            "integrity": {
+                "checked": bool,
+                "total": int,
+                "failed": int,
+                "failed_files": [str],
+                "manifest_signed": bool
+            }
         }
     }
 
     注意：如 psutil 未安装，系统资源字段返回 0。
 
     Args:
+        request: FastAPI 请求对象（读取 app.state 中的完整性自检状态）。
         model_manager: 模型管理器实例（通过依赖注入）。
         gpu_backend: GPU 后端管理器实例（通过依赖注入）。
 
@@ -139,6 +175,25 @@ async def health_check(
 
     uptime = round(time.time() - _start_time, 1)
 
+    integrity = getattr(request.app.state, "integrity_selfcheck", None)
+    if integrity is None:
+        integrity = {
+            "checked": False,
+            "total": 0,
+            "failed": 0,
+            "skipped": 0,
+            "failed_files": [],
+            "manifest_signed": False,
+        }
+
+    preflight = getattr(request.app.state, "startup_preflight", None)
+    if preflight is None:
+        preflight = {
+            "cuda_available": False,
+            "cuda_device": "",
+            "ffmpeg_available": False,
+        }
+
     return JSONResponse(
         {
             "status": "ok",
@@ -157,5 +212,7 @@ async def health_check(
                 "device_name": gpu_backend.device_name,
                 "is_gpu_available": gpu_backend.is_gpu_available,
             },
+            "security": {"integrity": integrity},
+            "preflight": preflight,
         }
     )

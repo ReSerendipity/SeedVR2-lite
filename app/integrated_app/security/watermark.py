@@ -56,7 +56,14 @@ _VIDEO_REPEAT = 3
 # 无密钥时嵌入旧格式未签名载荷（兼容旧版验证）；有密钥时嵌入签名载荷，
 # 未持有密钥者无法伪造可通过验证的水印，溯源举证以签名验证为准。
 _WATERMARK_KEY_ENV = "SEEDVR2_WATERMARK_KEY"
-_WATERMARK_KEY_FILE = Path(__file__).resolve().parent.parent.parent.parent / ".watermark_key"
+# 密钥位置策略（桌面端更新换载只保留 runtime/model/data/logs 四个顶层目录）：
+#   优先 data/.watermark_key —— 随用户数据保留，应用更新不丢密钥；
+#   回退项目根 .watermark_key —— 兼容旧部署，存在时自动迁入 data/（复制，不删旧文件）。
+_WATERMARK_KEY_FILE_DATA = Path(__file__).resolve().parents[3] / "data" / ".watermark_key"
+_WATERMARK_KEY_FILE_LEGACY = Path(__file__).resolve().parents[3] / ".watermark_key"
+# K-1 密钥轮换：rotate_watermark_key.py 把旧密钥备份为 data/.watermark_key.old，
+# 验证链同时尝试新旧密钥，轮换后历史产物仍可验明归属。
+_WATERMARK_KEY_FILE_OLD = Path(__file__).resolve().parents[3] / "data" / ".watermark_key.old"
 _HMAC_SEPARATOR = "|"
 
 # DCT 块大小
@@ -121,28 +128,88 @@ def _generate_watermark_payload() -> str:
 
 
 def _load_secret_key() -> bytes | None:
-    """加载水印签名密钥（环境变量优先，其次项目根 .watermark_key 文件）。
+    """加载水印签名密钥（环境变量优先，其次 data/.watermark_key，回退项目根旧位置）。
 
-    两者均未配置时首次运行自动生成密钥文件（等价 scripts/init_watermark_key.py），
+    三者均未配置时首次运行自动生成密钥文件（等价 scripts/init_watermark_key.py），
     保证新部署开箱即有可证伪归属；生成失败（只读文件系统等）才降级为未签名水印。
+
+    旧部署迁移：项目根 .watermark_key 存在而 data/ 无密钥时，自动复制到
+    data/.watermark_key（保留旧文件兜底），保证升级后历史密钥仍可验证旧产物。
     """
     env_key = os.environ.get(_WATERMARK_KEY_ENV, "").strip()
     if env_key:
         return env_key.encode("utf-8")
+
+    def _read_key_file(path: Path) -> bytes | None:
+        try:
+            if path.exists():
+                key = path.read_text(encoding="utf-8").strip()
+                if key:
+                    return key.encode("utf-8")
+        except OSError:
+            pass
+        return None
+
+    # 1) 优先新位置 data/.watermark_key（更新换载保留目录，密钥不随版本丢失）
+    key = _read_key_file(_WATERMARK_KEY_FILE_DATA)
+    if key is not None:
+        return key
+
+    # 2) 回退旧位置（项目根），并顺手迁入 data/（复制，保留旧文件兜底）
+    legacy = _read_key_file(_WATERMARK_KEY_FILE_LEGACY)
+    if legacy is not None:
+        try:
+            _WATERMARK_KEY_FILE_DATA.parent.mkdir(parents=True, exist_ok=True)
+            _WATERMARK_KEY_FILE_DATA.write_text(legacy.decode("utf-8") + "\n", encoding="utf-8")
+            logger.info(f"水印密钥已从旧位置迁移到 {_WATERMARK_KEY_FILE_DATA}")
+        except Exception as e:  # noqa: BLE001 — 迁移失败继续用旧位置，不阻断
+            logger.debug(f"水印密钥迁移失败（继续使用旧位置）: {e}")
+        return legacy
+
+    # 3) 首次运行自动生成（密钥文件已被 .gitignore 忽略，不会入库）
     try:
-        if _WATERMARK_KEY_FILE.exists():
-            key = _WATERMARK_KEY_FILE.read_text(encoding="utf-8").strip()
-            if key:
-                return key.encode("utf-8")
-        # 首次运行自动生成（密钥文件已被 .gitignore 忽略，不会入库）
         import secrets as _secrets
 
-        _WATERMARK_KEY_FILE.write_text(_secrets.token_hex(32) + "\n", encoding="utf-8")
-        logger.info(f"已自动生成水印签名密钥: {_WATERMARK_KEY_FILE}（请离线备份）")
-        return _WATERMARK_KEY_FILE.read_text(encoding="utf-8").strip().encode("utf-8")
+        _WATERMARK_KEY_FILE_DATA.parent.mkdir(parents=True, exist_ok=True)
+        _WATERMARK_KEY_FILE_DATA.write_text(_secrets.token_hex(32) + "\n", encoding="utf-8")
+        logger.info(f"已自动生成水印签名密钥: {_WATERMARK_KEY_FILE_DATA}（请离线备份）")
+        return _WATERMARK_KEY_FILE_DATA.read_text(encoding="utf-8").strip().encode("utf-8")
     except Exception as e:
         logger.debug(f"水印密钥文件读写失败: {e}")
     return None
+
+
+def _load_verify_keys() -> list[bytes]:
+    """加载用于水印签名验证的全部密钥（K-1 多密钥验证链）。
+
+    顺序：环境变量注入密钥（签发密钥）→ 当前 data/.watermark_key →
+    旧位置项目根 .watermark_key → 轮换备份 data/.watermark_key.old。
+    轮换后旧产物仍可用 .old 备份密钥验明归属；密钥轮换不破坏历史取证链。
+    """
+
+    def _read(path: Path) -> bytes | None:
+        try:
+            if path.exists():
+                key = path.read_text(encoding="utf-8").strip()
+                if key:
+                    return key.encode("utf-8")
+        except OSError:
+            pass
+        return None
+
+    keys: list[bytes] = []
+    env_key = os.environ.get(_WATERMARK_KEY_ENV, "").strip()
+    if env_key:
+        keys.append(env_key.encode("utf-8"))
+    for path in (
+        _WATERMARK_KEY_FILE_DATA,
+        _WATERMARK_KEY_FILE_LEGACY,
+        _WATERMARK_KEY_FILE_OLD,
+    ):
+        k = _read(path)
+        if k is not None and k not in keys:
+            keys.append(k)
+    return keys
 
 
 def _sign_payload(payload: str, key: bytes) -> str:
@@ -424,15 +491,16 @@ def verify_watermark(image_np: np.ndarray, *, expected_length: int = 2048) -> bo
     Returns:
         bool: True 表示检测到可信水印。
     """
-    key = _load_secret_key()
+    keys = _load_verify_keys()
     for alpha, repeat in _VERIFY_SCHEMES:
         try:
             extracted = extract_watermark(image_np, expected_length=expected_length, alpha=alpha, repeat=repeat)
             if not extracted:
                 continue
-            if key is not None:
-                if _verify_signature(extracted, key) is not None:
-                    return True
+            if keys:
+                for key in keys:
+                    if _verify_signature(extracted, key) is not None:
+                        return True
             elif "SeedVR2" in extracted:
                 return True
         except Exception as e:
