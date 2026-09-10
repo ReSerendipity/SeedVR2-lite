@@ -286,7 +286,7 @@ model/                                 # 15.35GB 级权重，元数据仅存 con
 | **P2** | VRAM 泄漏自动告警（连续 N 任务峰值单调涨） | 1 天 | 数据已落库，只差检测规则 |
 | **P3** | 输出水印绑定 task_id、输出→任务反查 API | 2-3 天 | 血缘可追溯闭环 |
 | **P3** | 统一速度口径文档 + per-step it/s | 1 天 | 指标口径治理 |
-| **P3** | `data/.seedvr2_secret` 权限收紧 + manifest 外置/签名 | 半天 | 安全加固 |
+| **P3** | `data/.seedvr2_secret` 权限收紧 + manifest 外置/签名 | 半天 | 安全加固 | **✅ 已完成（2026-09-10）**：权限收紧 `harden_secret_file_permissions`（POSIX 0600 + Windows icacls 去继承、仅当前用户）+ 读取时自愈（secret_key.py，P3-3，测试 15 passed）；manifest Ed25519 签名 + HMAC 回退已落地（json/.sig/.sig.ed25519/公钥四件套），CI 发布门禁全绿（SOP-19 定案 CI Secret 分发） |
 
 ### 9.3 最终评语
 
