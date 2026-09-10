@@ -34,7 +34,12 @@ import torch
 
 from app.integrated_app.engine_interface import RestoreEngine
 from app.integrated_app.engines.seedvr2_engine import SeedVR2Engine
-from app.integrated_app.gpu_utils import check_vram_available_for_load, clear_gpu_cache, estimate_model_vram
+from app.integrated_app.gpu_utils import (
+    check_vram_available_for_load,
+    clear_gpu_cache,
+    estimate_model_vram,
+    get_gpu_memory_info,
+)
 from app.integrated_app.model_registry import model_registry
 from app.integrated_app.utils.hashing import compute_file_sha256
 
@@ -147,6 +152,59 @@ class ModelManager:
         checkpoint_path = os.path.join(pretrained_dir, checkpoint)
         return os.path.exists(checkpoint_path)
 
+    def _min_footprint_gb(self, model_info: dict, precision: str, model_size: str) -> float:
+        """估算「最大降级（全量 BlockSwap）下的理论最小驻留」(GB)。
+
+        用 ``estimate_vram_requirements(..., blocks_to_swap=num_blocks-4)``（全量 BlockSwap 下界）
+        配合小图输入，近似「DiT 卸载 + 全量 BlockSwap」时的真实峰值，属乐观估计。
+        估算失败返回 0.0（调用方据此 fail-open 放行）。
+
+        Args:
+            model_info: 模型配置字典（config.yaml model.models.<size>）
+            precision: 精度标识
+            model_size: 模型尺寸标识（estimate_vram_requirements 需要）
+
+        Returns:
+            float: 理论最小驻留 (GB)；失败返回 0.0
+        """
+        try:
+            from app.integrated_app.gpu_utils import estimate_vram_requirements
+
+            num_blocks = int(model_info.get("num_blocks", 32) or 32)
+            max_swap = max(0, num_blocks - 4)
+            return estimate_vram_requirements(model_size, precision, 64, 64, 1, blocks_to_swap=max_swap)
+        except Exception:
+            return 0.0
+
+    def _precision_fits_vram(self, model_info: dict, precision: str, total_vram_gb: float, model_size: str) -> bool:
+        """按「最大降级（全量 BlockSwap）下的理论最小驻留」判断精度能否在本卡跑起来。
+
+        2026-09-10 修订（遵循 §5 资源门禁激进度铁律 / GOTCHAS #99/#100 的 fail-open 纪律）：
+        此前按 config.yaml 的 ``min_vram_<precision>_gb`` 硬挡，会在 12GB 卡上把 nvfp4 直接拒绝——
+        但 nvfp4 加载期反量化为 bf16（驻留≈fp16）后，配合本就默认开启的 BlockSwap（换 ~28/32 块）
+        可把 DiT 压到 ~0.8GB，再叠加 P0-1（解码前卸载 DiT）+ P0-2（按空闲显存选 tile），
+        **12GB 卡实际跑得动**。所以「拒绝条件必须是最大降级组合仍放不下」，而非「当前配置超预算」。
+
+        用 ``_min_footprint_gb`` 估算全量 BlockSwap 下界，再留 15% 余量；该下界已近似真实峰值，
+        属乐观估计，故偏放行。无法估算 / 显存查询失败（total_vram_gb<=0）时 fail-open 放行。
+
+        Args:
+            model_info: 模型配置字典（config.yaml model.models.<size>）
+            precision: 精度标识
+            total_vram_gb: GPU 总显存 (GB)；为 0 表示查询失败，此时不做拦截（fail-open）
+            model_size: 模型尺寸标识（estimate_vram_requirements 需要）
+
+        Returns:
+            bool: 最大降级组合仍放得下（或无法判断）返回 True
+        """
+        if total_vram_gb <= 0:
+            return True  # 查询失败不拦截，避免误拒
+        min_footprint = self._min_footprint_gb(model_info, precision, model_size)
+        if min_footprint <= 0:
+            return True  # 估算失败 fail-open，避免误拒
+        # 15% 余量，偏放行（fail-open 纪律）
+        return total_vram_gb >= min_footprint * 1.15
+
     def get_recommended_precision(self, model_size: str) -> str:
         """根据 GPU 显存和实际可用模型推荐最佳精度。
 
@@ -198,14 +256,27 @@ class ModelManager:
         if "fp16" in available and total_vram_gb >= min_fp16_gb:
             return "fp16"
 
-        # 显存不足或无 fp16 → 从低显存精度中按顺序选第一个可用的
+        # 显存不足或无 fp16 → 从低显存精度中按顺序选第一个**显存达标**的
+        # （P1-4：必须过 fail-open 显存门槛，否则会把 fp16 回退到同样驻留≈fp16 的 nvfp4）
         low_vram_order = ["fp8", "mxfp8", "int8_convrot", "nvfp4"]
+        rejected = []
         for p in low_vram_order:
-            if p in available:
+            if p not in available:
+                continue
+            if self._precision_fits_vram(model_info, p, total_vram_gb, model_size):
                 return p
+            need = self._min_footprint_gb(model_info, p, model_size) * 1.15
+            rejected.append(f"{p}(本卡需约{need:.1f}GB)")
 
-        # fallback：返回第一个可用精度
-        logger.warning(f"显存 {total_vram_gb:.1f}GB，可用精度 {available}，推荐 {available[0]}")
+        # 全部低精度都不达标：仍按历史行为返回第一个可用精度（fail-open），
+        # 但把被拒原因写进日志，避免用户以为「回退成功」实则必然 OOM
+        if rejected:
+            logger.warning(
+                f"显存 {total_vram_gb:.1f}GB 不满足任何低精度门槛（已排除 {', '.join(rejected)}），"
+                f"仍推荐 {available[0]}，加载时可能显存不足"
+            )
+        else:
+            logger.warning(f"显存 {total_vram_gb:.1f}GB，可用精度 {available}，推荐 {available[0]}")
         return available[0]
 
     # ==================== 权重完整性校验（数据治理 P1-3） ====================
@@ -400,21 +471,47 @@ class ModelManager:
                 all_precisions = ["fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4"]
                 tried = [precision, fallback_precision]
                 found = None
+                # P1-4（2026-09-10 修订，遵循 §5 fail-open 铁律 / GOTCHAS #99/#100）：
+                # 回退不能只看「文件是否存在」——否则会把 fp16 一路回退到 nvfp4，而 nvfp4
+                # 加载期反量化为 bf16、驻留与 fp16 同档，等于没省显存还降质。所以回退还需过
+                # 「最大降级（全量 BlockSwap）下仍放不下」的 fail-open 门槛。
+                # 关键：区分两类失败，避免误导用户以为「所有精度都文件缺失」：
+                #   - missing_precisions：config 配了 checkpoint 但磁盘上没有文件（需下载）
+                #   - vram_rejected：磁盘上有文件，但即便全量 BlockSwap 本卡也放不下（换卡/降分辨率）
+                total_vram_gb = get_gpu_memory_info().get("total_mb", 0) / 1024.0
+                vram_rejected: list[str] = []
+                missing_precisions: list[str] = []
                 for p in all_precisions:
                     if p in tried:
                         continue
-                    if model_cfg.get(f"checkpoint_{p}") and self.check_model_exists(model_size, p):
-                        found = p
-                        break
+                    if model_cfg.get(f"checkpoint_{p}") and not self.check_model_exists(model_size, p):
+                        missing_precisions.append(p)
+                        continue
+                    if not self.check_model_exists(model_size, p):
+                        continue
+                    if not self._precision_fits_vram(model_cfg, p, total_vram_gb, model_size):
+                        need = self._min_footprint_gb(model_cfg, p, model_size) * 1.15
+                        vram_rejected.append(f"{p}(本卡需约{need:.1f}GB)")
+                        continue
+                    found = p
+                    break
                 if found:
                     logger.warning(f"{precision}/{fallback_precision} 均不存在，回退到可用精度 {found}")
                     precision = found
                 else:
                     configured = [p for p in all_precisions if model_cfg.get(f"checkpoint_{p}")]
+                    parts = [f"已尝试 {', '.join(tried)} 均无对应文件"]
+                    if missing_precisions:
+                        parts.append(f"配置但未下载: {', '.join(missing_precisions)}")
+                    if vram_rejected:
+                        parts.append(
+                            f"磁盘上有文件但因显存不足被排除: {', '.join(vram_rejected)}"
+                            f"（即使全量 BlockSwap 仍放不下；本卡总显存约 {total_vram_gb:.1f}GB）"
+                        )
+                    if not missing_precisions and not vram_rejected:
+                        parts.append(f"已配置精度 {', '.join(configured) if configured else '无'} 均无对应文件")
                     raise FileNotFoundError(
-                        f"模型文件不存在: 已尝试 {', '.join(tried)}，"
-                        f"已配置精度 {', '.join(configured) if configured else '无'} 均无对应文件。"
-                        f"请下载模型权重到 {self.get_pretrained_dir()}/"
+                        "模型加载失败: " + "；".join(parts) + "。" f"请下载模型权重到 {self.get_pretrained_dir()}/"
                     )
 
         # 数据治理 P1-3：加载前权重 sha256 白名单校验

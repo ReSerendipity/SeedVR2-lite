@@ -28,11 +28,23 @@ from app.integrated_app.engines._memory_utils import (
     _log_memory,
     _tensor_to_uint8_np,
     build_dit_load_signature,
+    get_free_vram_gb,
+    offload_model_to_cpu,
+    restore_model_to_gpu,
 )
 from app.integrated_app.exceptions import InferenceCancelledError
 from app.integrated_app.gpu_utils import oom_protect
 
 logger = logging.getLogger(__name__)
+
+DIT_KEEP_RESIDENT_FREE_GB = 10.0
+"""阶段3 前是否保留 DiT 常驻显存的空闲显存阈值 (GB)。
+
+低于该值时把 DiT 卸载到 CPU（保留实例），为 VAE 解码让出显存。
+10GB 的取值依据：3B DiT 的 bf16 常驻约 6.3GB，若此时空闲仍 ≥10GB，
+说明这是一张 ≥20GB 的卡，解码峰值（tile 1024 实测 5.45GB）不会触碰上限，
+卸载反而白白多付两次 CPU↔GPU 拷贝。
+"""
 
 
 def _normalize_model_tag(model_size: str | None) -> str:
@@ -751,6 +763,9 @@ class _ImagePipelineMixin:
                 _check_memory()
             else:
                 logger.info("cache_model=True: 复用已缓存的 DiT 模型")
+                # P0-1 安全网：上一任务可能在 VAE 解码前把 DiT 卸载到了 CPU，
+                # 此处统一恢复（对 BlockSwap 模型会重建 blocks 设备分布）
+                restore_model_to_gpu(self.dit, self.device, "DiT")
 
             self._report_progress(current_frame=1, total_frames=4, progress=35.0, message="DiT 采样中...")
             text_embeds = self._get_text_embeds()
@@ -783,6 +798,28 @@ class _ImagePipelineMixin:
                 self._destroy_dit()
                 _log_memory("DiT销毁后")
                 _check_memory()
+            else:
+                # P0-1: dit_cache_model=True 时 DiT 会以 bf16 常驻（nvfp4 在加载期反量化，
+                # 3B 约 6.3GB）。VAE 解码峰值另需数 GB，两者叠加会超出物理显存，
+                # 触发 Windows WDDM 分页（表现为静默卡死，而非 OOM）。
+                # 这里把 DiT 整体卸载到 CPU：保留实例供下一任务复用，只让出显存。
+                free_gb = get_free_vram_gb(self.device)
+                if free_gb >= DIT_KEEP_RESIDENT_FREE_GB:
+                    logger.info(
+                        f"DiT 保持常驻（空闲显存 {free_gb:.2f}GB ≥ {DIT_KEEP_RESIDENT_FREE_GB:.1f}GB），跳过卸载"
+                    )
+                else:
+                    logger.info(
+                        f"空闲显存仅 {free_gb:.2f}GB（< {DIT_KEEP_RESIDENT_FREE_GB:.1f}GB），"
+                        "VAE 解码前将 DiT 卸载到 CPU 保留缓存"
+                    )
+                    if offload_model_to_cpu(
+                        self.dit,
+                        "DiT",
+                        reason=f"free VRAM for VAE decode (free={free_gb:.2f}GB)",
+                    ):
+                        _log_memory("DiT卸载到CPU后")
+                        _check_memory()
 
             # ==================== 阶段3: 加载VAE → 解码 → 销毁VAE ====================
             # REFACTOR [E4-1]: 阶段切换点检查取消信号

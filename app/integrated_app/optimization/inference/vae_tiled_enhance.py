@@ -47,14 +47,86 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def get_recommend_encoder_tile_size(device: torch.device | str | None = None) -> int:
-    """根据 GPU 显存推荐编码器 tile size
+def _resolve_device(device: torch.device | str | None = None) -> torch.device:
+    """把 str/None 归一化成 torch.device，默认 cuda:0"""
+    if device is None:
+        return torch.device("cuda:0")
+    if isinstance(device, str):
+        return torch.device(device)
+    return device
 
-    参考 SCST 的 get_recommend_encoder_tile_size 实现:
-    - >16GB VRAM: 3072
-    - >12GB VRAM: 2048
-    - >8GB VRAM: 1536
-    - <=8GB VRAM: 960
+
+def get_free_vram_gb(device: torch.device | str | None = None) -> float:
+    """查询**空闲**显存 (GB)，不可用时返回 0.0。
+
+    容量决策必须用空闲显存而非总显存：总显存不反映当前已驻留的模型，
+    按总显存选档会在「12GB 卡 + 已驻留 6.3GB DiT」这类场景下选出必然超预算的
+    tile size，最终触发 Windows WDDM 分页（表现为静默卡死而不是 OOM）。
+    """
+    if not torch.cuda.is_available():
+        return 0.0
+    try:
+        dev = _resolve_device(device)
+        idx = dev.index if dev.index is not None else 0
+        free_bytes, _total_bytes = torch.cuda.mem_get_info(idx)
+        return free_bytes / (1024**3)
+    except Exception:
+        return 0.0
+
+
+# 解码峰值显存经验模型（2026-09-10 在 RTX 5070 Ti Laptop / 11.94GB 实测标定）：
+#   tile=512  -> peak 1.79GB
+#   tile=1024 -> peak 5.45GB
+# 拟合为 peak_gb ≈ VAE_WEIGHTS_GB + PEAK_COEFF * tile_px ** 2
+VAE_WEIGHTS_GB = 0.51
+"""VAE 权重常驻部分 (GB)，与 tile 大小无关"""
+
+PEAK_COEFF_PER_PX2 = 4.88e-6
+"""解码激活峰值系数 (GB / 输出像素²)"""
+
+TILE_HEADROOM = 1.3
+"""安全系数：要求的空闲显存 = 预测峰值 × 该系数（留出碎片与并发余量）"""
+
+_TILE_LADDER = (256, 512, 768, 1024, 1536, 2048, 3072)
+"""允许的 tile size 档位（输出像素空间，且为 16 的倍数）"""
+
+
+def _predict_decode_peak_gb(tile_px: int) -> float:
+    """预测给定 tile size 下的解码峰值显存 (GB)"""
+    return VAE_WEIGHTS_GB + PEAK_COEFF_PER_PX2 * (tile_px**2)
+
+
+def _recommend_tile_from_free_vram(free_gb: float, ceiling: int) -> int:
+    """按空闲显存挑选不超过 ceiling 的最大可行 tile 档位
+
+    Args:
+        free_gb: 当前空闲显存 (GB)
+        ceiling: 该场景允许的最大 tile（编码器 2048 / 解码器 2048 等）
+
+    Returns:
+        tile size；free_gb 为 0（无法查询）时保守返回 512
+    """
+    if free_gb <= 0:
+        # 查询失败：不假设大卡，保守取值，由 _vae_pipeline 的 OOM 回退兜底
+        return 512
+
+    chosen = _TILE_LADDER[0]
+    for tile in _TILE_LADDER:
+        if tile > ceiling:
+            break
+        if free_gb >= _predict_decode_peak_gb(tile) * TILE_HEADROOM:
+            chosen = tile
+        else:
+            break
+    return chosen
+
+
+def get_recommend_encoder_tile_size(device: torch.device | str | None = None) -> int:
+    """根据**空闲** GPU 显存推荐编码器 tile size
+
+    ⚠️ 历史实现按「总显存」分档（>16GB→3072 / >12GB→2048 / >8GB→1536 / else→960），
+    在模型已占用大量显存时会严重高估可用容量。2026-09-10 改为按空闲显存 + 峰值
+    预测模型选档，见 ``_recommend_tile_from_free_vram``。
 
     Args:
         device: GPU 设备，None 时使用 cuda:0
@@ -62,26 +134,12 @@ def get_recommend_encoder_tile_size(device: torch.device | str | None = None) ->
     Returns:
         推荐的编码器 tile size
     """
-    if torch.cuda.is_available():
-        if device is None:
-            device = torch.device("cuda:0")
-        elif isinstance(device, str):
-            device = torch.device(device)
-        try:
-            total_memory_mb = torch.cuda.get_device_properties(device).total_memory // (2**20)
-        except Exception:
-            total_memory_mb = 8 * 1000  # fallback to 8GB
-
-        if total_memory_mb > 16 * 1000:
-            return 3072
-        elif total_memory_mb > 12 * 1000:
-            return 2048
-        elif total_memory_mb > 8 * 1000:
-            return 1536
-        else:
-            return 960
-    else:
+    if not torch.cuda.is_available():
         return 512
+
+    free_gb = get_free_vram_gb(device)
+    # 编码器激活峰值通常低于解码器，这里沿用同一模型并按 0.8 折算
+    return _recommend_tile_from_free_vram(free_gb / 0.8, ceiling=3072)
 
 
 def get_recommend_decoder_tile_size(device: torch.device | str | None = None) -> int:
@@ -94,34 +152,23 @@ def get_recommend_decoder_tile_size(device: torch.device | str | None = None) ->
 
     默认 decode_tile_size=1024 (对应潜空间 128)
 
+    ⚠️ 历史实现按「总显存」分档（>30GB→2048 / >16GB→1536 / >12GB→1024 / >8GB→768 /
+    else→512）。11.94GB 的卡会被判成 1024，即使此时 DiT 已占掉 6.3GB。
+    2026-09-10 改为按**空闲显存** + 实测标定的峰值模型选档。
+    实测佐证：同一 latent 下 tile=1024 与 tile=512 总耗时几乎相同（8.34s vs 8.32s），
+    但峰值显存差 3 倍（5.45GB vs 1.79GB）——1024 在此 VAE 上是纯亏。
+
     Args:
         device: GPU 设备，None 时使用 cuda:0
 
     Returns:
         推荐的解码器 tile size (输出像素空间)
     """
-    if torch.cuda.is_available():
-        if device is None:
-            device = torch.device("cuda:0")
-        elif isinstance(device, str):
-            device = torch.device(device)
-        try:
-            total_memory_mb = torch.cuda.get_device_properties(device).total_memory // (2**20)
-        except Exception:
-            total_memory_mb = 8 * 1000  # fallback to 8GB
-
-        if total_memory_mb > 30 * 1000:
-            return 2048
-        elif total_memory_mb > 16 * 1000:
-            return 1536
-        elif total_memory_mb > 12 * 1000:
-            return 1024
-        elif total_memory_mb > 8 * 1000:
-            return 768
-        else:
-            return 512
-    else:
+    if not torch.cuda.is_available():
         return 512
+
+    free_gb = get_free_vram_gb(device)
+    return _recommend_tile_from_free_vram(free_gb, ceiling=2048)
 
 
 def get_optimal_tile_size(
@@ -149,6 +196,12 @@ def get_optimal_tile_size(
     else:
         recommended = get_recommend_encoder_tile_size(device)
         overlap = min(128, recommended // 8)  # overlap ~= tile_size/8
+
+    if torch.cuda.is_available():
+        logger.info(
+            f"[tile 选型] {'解码' if is_decoder else '编码'} 空闲显存 {get_free_vram_gb(device):.2f}GB -> "
+            f"推荐 tile={recommended} (预测峰值 {_predict_decode_peak_gb(recommended):.2f}GB)"
+        )
 
     if max_tile_size is not None:
         recommended = min(recommended, max_tile_size)
@@ -425,6 +478,14 @@ def custom_group_norm(
 
 class GroupNormAccumulator:
     """GroupNorm 跨 tile 统计累积器
+
+    ⚠️ **未接线（2026-09-10 查证）**：本类自实现以来从未真正生效。
+    `accumulate_from_tile()` 需要由 VAE 在每个 tile 前向时回调，但
+    `model_lib/video_vae_v3/modules/attn_video_vae.py` 的 `tiled_decode` /
+    `tiled_encode` 没有任何回调点，因此 `_var_lists` 恒为空、下游
+    `apply_accumulated_stats()` 是空操作。此前 `_vae_pipeline` 会安装它并在日志里
+    打印 `groupnorm_accum=True`，属于误导。要真正启用必须在 model_lib 侧加钩子
+    （model_lib 为禁改目录，改动需单独评估）。
 
     在 tiled VAE 编解码中，单个 tile 的 GroupNorm 统计（mean/var）会有偏差，
     导致不同 tile 的输出在接缝处不一致。此累积器在所有 tile 上收集
@@ -1223,6 +1284,12 @@ class CacheQuantizer:
 
 class TiledVAEHook:
     """VAE Tiled 解码 Hook - 捕获内部 tile 输出并应用高斯权重混合
+
+    ⚠️ **未接线（2026-09-10 查证）**：本类依赖 VAE 上存在 `_internal_tile_state`
+    属性来读取 tile 输出，但 `model_lib/.../attn_video_vae.py` 从未设置该属性，
+    于是 `_last_tile_outputs` 恒为 `None`，`_vae_pipeline` 里的 Gaussian 混合分支
+    永不执行。此前日志打印的 `gaussian_blend=True` 属误导。
+    tile 接缝目前由 VAE 自带的余弦斜坡融合（`tiled_decode` 内的 ramp 权重）负责。
 
     SeedVR2 的原生 VAE tiled decode 在内部处理 tile 拼接，
     不暴露单个 tile 的输出。此类通过 monkey-patch VAE 的 tiled decode

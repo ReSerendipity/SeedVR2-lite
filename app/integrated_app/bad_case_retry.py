@@ -309,11 +309,16 @@ def adjust_params_for_retry(
             new_params = _replace_nested_config(new_params, resolution=new_res)
             strategies.append(RetryStrategy.RESOLUTION_DECREASE)
 
-    # 3. 第三次及以后：精度降级（按显存/质量从高到低：fp16 → fp8 → mxfp8 → int8_convrot → nvfp4）
-    #    v1.5.1 起支持五精度，不再硬编码 fp16→fp8。
+    # 3. 第三次及以后：精度降级
+    #    ⚠️ 2026-09-10 修正（P1-5）：历史实现无条件按
+    #    fp16 → fp8 → mxfp8 → int8_convrot → nvfp4 一路往下走，
+    #    但 mxfp8/int8_convrot/nvfp4 都在**加载期**反量化为 bf16（见 quant_dequant.py），
+    #    驻留显存与 fp16 同档 —— fp16→nvfp4 一点显存都不省，只白白降质。
+    #    这里只跳到「驻留档位确实更小」的精度（当前实际上只有 fp8）。
     if attempt >= 3 and cfg.enable_precision_fallback:
         dit_model = _get_param(new_params, "dit_model", default="")
         if dit_model:
+            from app.integrated_app.gpu_utils import precision_saves_vram
             from app.integrated_app.spec import model_size_from_dit_model, precision_from_dit_model
 
             size = model_size_from_dit_model(dit_model)
@@ -321,11 +326,20 @@ def adjust_params_for_retry(
             fallback_chain = ["fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4"]
             if prec and prec in fallback_chain:
                 idx = fallback_chain.index(prec)
-                if idx + 1 < len(fallback_chain):
-                    next_prec = fallback_chain[idx + 1]
+                next_prec = None
+                for candidate in fallback_chain[idx + 1 :]:
+                    if precision_saves_vram(prec, candidate):
+                        next_prec = candidate
+                        break
+                if next_prec:
                     new_dit = f"{size}_{next_prec}"
                     new_params = _replace_nested_config(new_params, dit_model=new_dit)
                     strategies.append(RetryStrategy.PRECISION_FALLBACK)
+                else:
+                    logger.info(
+                        f"OOM 降级跳过精度降级: {prec} 之后的候选精度均为加载期反量化格式，"
+                        "驻留显存与 fp16 相同，降级不省显存只会降质"
+                    )
 
     # 始终换种子
     if cfg.enable_seed_rotation:

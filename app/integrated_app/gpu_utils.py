@@ -27,6 +27,7 @@
 import functools
 import gc
 import logging
+import math
 from collections.abc import Callable, Sequence
 from functools import lru_cache
 
@@ -182,8 +183,13 @@ def _tile_tiers() -> list[dict[str, float]]:
     return normalized or [dict(t) for t in _FALLBACK_TILE_TIERS]
 
 
-# BlockSwap 开启时模型权重显存削减比例（默认 swap 32/36 块，约 50% 削减）
-_BLOCKSWAP_REDUCTION = 0.5
+# BlockSwap 削减量按「换出块数 / 总块数」线性计算（见 blockswap_reduction_gb），
+# 历史实现是「只要 blocks_to_swap>0 就固定砍 50%」，与换出块数无关，
+# 导致推荐值与实际显存收益脱钩（换 4 块和换 32 块估出同样的收益）。
+# BlockSwap 至少保留在 GPU 上的块数（I/O 组件 + 少量常驻块）
+_BLOCKSWAP_MIN_GPU_BLOCKS = 4
+# 计算「够用即可」的换出块数时的安全系数
+_BLOCKSWAP_SAFETY = 1.2
 # 安全阈值：推荐参数时使用可用显存的 90% 作为安全线
 _SAFE_THRESHOLD_RATIO = 0.9
 # 分辨率额外开销系数：超过 1080p 后每单位 resolution_factor 增加 2GB
@@ -211,6 +217,26 @@ def _precision_residency_key(precision: str | None) -> str:
         str: 显存基线查表用的档位键（`"fp16"` 或 `"fp8"`）。
     """
     return "fp8" if precision == "fp8" else "fp16"
+
+
+def precision_saves_vram(current: str | None, candidate: str | None) -> bool:
+    """判断从 ``current`` 精度降级到 ``candidate`` 是否**真的**能减少显存驻留。
+
+    mxfp8 / int8_convrot / nvfp4 只是**磁盘上**更小，加载期就被反量化为 bf16
+    （见 ``engines/quant_dequant.py``），驻留显存与 fp16 同档。因此
+    ``fp16 → nvfp4`` 对 OOM 重试毫无帮助：显存一点没省，质量却降了。
+
+    2026-09-10 修正：bad_case_retry 的精度降级链曾无条件 fp16→fp8→mxfp8→int8_convrot→nvfp4，
+    在 12GB 卡上会一路降到 nvfp4 然后照样 OOM。
+
+    Args:
+        current: 当前精度标识
+        candidate: 候选降级精度标识
+
+    Returns:
+        bool: 降级后驻留档位确实变小返回 True
+    """
+    return _precision_residency_key(candidate) == "fp8" and _precision_residency_key(current) == "fp16"
 
 
 def get_gpu_memory_info() -> dict:
@@ -417,6 +443,80 @@ def _normalize_model_name(model_name: str) -> str:
     return key
 
 
+def _weights_gb(model_name: str, precision: str) -> float:
+    """模型权重基线 (GB)，按**驻留**档位取值（量化包按 fp16 计）。"""
+    model_key = _normalize_model_name(model_name)
+    table = _weights_vram_mb().get(model_key, _DEFAULT_MODEL_VRAM_MB)
+    return table.get(_precision_residency_key(precision), table["fp16"]) / 1024.0
+
+
+def blockswap_reduction_gb(model_name: str, precision: str, blocks_to_swap: int) -> float:
+    """BlockSwap 换出 ``blocks_to_swap`` 个块后削减的常驻权重显存 (GB)。
+
+    2026-09-10 修正：历史实现是「只要 blocks_to_swap>0 就固定砍 50%」，与换出块数
+    无关。改为按换出块数占总块数的比例线性削减，这样「换 4 块」和「换 32 块」
+    才会估出不同的收益，上层也才能按缺口推荐**刚好够用**的块数（P1-6）。
+
+    Args:
+        model_name: 模型名称
+        precision: 精度标识
+        blocks_to_swap: 换出到 CPU 的块数，0 表示未启用
+
+    Returns:
+        float: 削减的显存 (GB)
+    """
+    if blocks_to_swap <= 0:
+        return 0.0
+    model_key = _normalize_model_name(model_name)
+    num_blocks = _model_num_blocks().get(model_key, 36)
+    if num_blocks <= 0:
+        return 0.0
+    weights = _weights_gb(model_name, precision)
+    if weights <= 0:
+        return 0.0
+    return weights * min(blocks_to_swap, num_blocks) / num_blocks
+
+
+def recommend_blocks_to_swap(
+    model_name: str,
+    precision: str,
+    needed_gb: float,
+    available_gb: float,
+) -> int:
+    """按显存缺口推荐「刚好够用」的 BlockSwap 换出块数。
+
+    历史行为：一旦决定开 BlockSwap 就固定换出 ``num_blocks - 4`` 块（3B=28、7B=32），
+    于是 12GB 卡上即使只差 1GB 也会被换出 28 块，推理速度被无谓地拖慢一个数量级。
+    这里按缺口反推：只换出补上缺口所需的块数（再乘安全系数）。
+
+    Args:
+        model_name: 模型名称
+        precision: 精度标识（按驻留档位查权重基线）
+        needed_gb: 不开 BlockSwap 时的估算需求 (GB)
+        available_gb: 可用显存 (GB)
+
+    Returns:
+        int: 推荐换出块数；无需换出返回 0
+    """
+    shortfall = needed_gb - available_gb
+    if shortfall <= 0:
+        return 0
+
+    model_key = _normalize_model_name(model_name)
+    num_blocks = _model_num_blocks().get(model_key, 36)
+    max_swap = max(0, num_blocks - _BLOCKSWAP_MIN_GPU_BLOCKS)
+    if max_swap <= 0:
+        return 0
+
+    weights = _weights_gb(model_name, precision)
+    if weights <= 0:
+        return max_swap
+
+    per_block_gb = weights / num_blocks
+    needed_blocks = int(math.ceil((shortfall * _BLOCKSWAP_SAFETY) / per_block_gb))
+    return max(1, min(needed_blocks, max_swap))
+
+
 def estimate_vram_requirements(
     model_name: str,
     precision: str,
@@ -443,7 +543,8 @@ def estimate_vram_requirements(
         input_height: 输入高度（像素）。
         num_frames: 帧数，图像=1，视频=实际帧数。
         blocks_to_swap: BlockSwap 换出到 CPU 的块数，0 表示未启用。启用时按
-            权重基线的 `_BLOCKSWAP_REDUCTION` 比例削减常驻显存（速度换显存）。
+            「换出块数 / 总块数」线性削减权重常驻显存（见 blockswap_reduction_gb，
+            速度换显存；只削减权重，不削减激活/VAE/分辨率开销）。
 
     Returns:
         float: 估算所需 VRAM（GB），保留两位小数。
@@ -454,7 +555,7 @@ def estimate_vram_requirements(
     residency_key = _precision_residency_key(precision)
     base = base_vram.get(residency_key, base_vram["fp16"])
     if blocks_to_swap > 0:
-        base -= base * _BLOCKSWAP_REDUCTION
+        base -= blockswap_reduction_gb(model_name, precision, blocks_to_swap)
 
     # 分辨率额外开销（平方根缩放，1080p 为基准）
     resolution_factor = max(1.0, ((input_width * input_height) / _BASE_RESOLUTION_PIXELS) ** 0.5)
@@ -484,7 +585,8 @@ def recommend_params(
         2. fp8 不开 BlockSwap → **仅当磁盘上真实存在 fp8 检查点**才作为降档台阶
            （risk=low）；量化包 mxfp8/int8_convrot/nvfp4 为加载期反量化、权重仍以
            fp16 驻留，**不是**省显存台阶，不参与降档
-        3. BlockSwap 换出大部分块（约 50% 权重削减）→ 装得下则放行（risk=medium）
+        3. BlockSwap 按显存缺口换出「刚好够用」的块（线性削减权重驻留，
+           不再固定砍 50%）→ 装得下则放行（risk=medium）
         4. 以上均不满足 → 报告 risk=high（由调用方决定拒绝还是放行）
 
     安全阈值 = 可用显存 × 0.9（预留 10% 安全余量）。
@@ -516,8 +618,6 @@ def recommend_params(
         available_vram_gb = info["available_mb"] / 1024.0
 
     model_key = _normalize_model_name(model_name)
-    base_table = _model_vram_base_gb()
-    base_vram = base_table.get(model_key, base_table["3b"])
     num_blocks = _model_num_blocks().get(model_key, 36)
 
     # 精度可用性：None = 不掌握磁盘事实，沿用旧语义（fp16/fp8 都当作可用）
@@ -532,14 +632,16 @@ def recommend_params(
 
     # fp8 只有在磁盘上真实存在时才是省显存台阶（量化包反量化后仍以 fp16 驻留，不算）
     prefer_fp8 = fp8_needed < fp16_needed and (unrestricted or "fp8" in owned)
-    # BlockSwap 削减模型权重显存（按所选档位的权重基线削减约 50%）
-    fp16_base = base_vram.get("fp16", 16.0)
-    swap_base = base_vram.get("fp8", fp16_base / 2) if prefer_fp8 else fp16_base
+    # BlockSwap 削减模型权重显存：按「换出块数 / 总块数」线性削减（P1-6）
     swap_precision = "fp8" if prefer_fp8 else fp16_label
     swap_needed = fp8_needed if prefer_fp8 else fp16_needed
-    swap_with_blockswap = swap_needed - swap_base * _BLOCKSWAP_REDUCTION
+    # 先用「几乎全换」估算能否装得下（决定 risk），再按缺口细化到具体块数
+    max_swap = max(0, num_blocks - _BLOCKSWAP_MIN_GPU_BLOCKS)
+    swap_with_blockswap = swap_needed - blockswap_reduction_gb(model_name, swap_precision, max_swap)
 
     safe_threshold = available_vram_gb * _SAFE_THRESHOLD_RATIO
+    # 按缺口细化换出块数（供 risk 分支文案与最终推荐值使用）
+    graded_blocks = recommend_blocks_to_swap(model_name, swap_precision, swap_needed, available_vram_gb)
 
     warning = ""
 
@@ -560,8 +662,8 @@ def recommend_params(
         risk = "medium"
         warning = (
             f"显存偏紧：按当前配置估算需 {fp16_needed:.1f}GB，可用 {available_vram_gb:.1f}GB。"
-            f"建议开启 BlockSwap（换出 {num_blocks - 4} 块到 CPU，估算降至 {estimated:.1f}GB），"
-            f"推理速度会明显变慢。"
+            f"建议开启 BlockSwap（按缺口换出 {graded_blocks}/{num_blocks} 块到 CPU，"
+            f"估算降至 {estimated:.1f}GB），块换出越多推理越慢。"
         )
     else:
         precision = swap_precision
@@ -573,8 +675,12 @@ def recommend_params(
             f"建议降低分辨率、减少帧数或使用更小的模型。"
         )
 
-    # BlockSwap 推荐换出块数（保留 4 块在 GPU，其余换出）
-    blocks_to_swap = num_blocks - 4 if enable_blockswap else 0
+    # BlockSwap 推荐换出块数：按显存缺口「够用即可」，而不是一律换到只剩 4 块
+    if enable_blockswap:
+        blocks_to_swap = recommend_blocks_to_swap(model_name, swap_precision, swap_needed, available_vram_gb)
+        estimated = max(0.0, swap_needed - blockswap_reduction_gb(model_name, swap_precision, blocks_to_swap))
+    else:
+        blocks_to_swap = 0
 
     # VAE tile 分块推荐：按可用显存匹配 config.yaml gpu.vram_tile_tiers 档位（降序）
     tile_size = 256

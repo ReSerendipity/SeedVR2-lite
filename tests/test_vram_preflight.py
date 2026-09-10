@@ -78,13 +78,21 @@ class TestQuantizedPrecisionSemantics:
         )
 
     def test_blocks_to_swap_reduces_estimate(self):
-        """BlockSwap 换出权重后估算应下降（约为基线的一半）。"""
+        """BlockSwap 换出越多块，估算下降越多（按换出比例线性削减权重驻留）。"""
         from app.integrated_app import gpu_utils
 
         full = gpu_utils.estimate_vram_requirements("3b", "fp16", 2048, 2048)
         swapped = gpu_utils.estimate_vram_requirements("3b", "fp16", 2048, 2048, blocks_to_swap=28)
         assert swapped < full
-        assert full - swapped == pytest.approx(8.0, abs=0.01)
+        # 削减量 = 权重基线 × (换出块数 / 总块数)，与公共 helper 完全一致
+        expected_reduction = gpu_utils.blockswap_reduction_gb("3b", "fp16", 28)
+        assert full - swapped == pytest.approx(expected_reduction, abs=0.02)
+        # 换出更多块应削减更多（P1-6 修正：不再固定砍 50%）
+        swapped_fewer = gpu_utils.estimate_vram_requirements("3b", "fp16", 2048, 2048, blocks_to_swap=14)
+        assert (full - swapped_fewer) < (full - swapped)
+        # 且削减量近似与换出块数成正比（28/14 ≈ 2x）
+        ratio = (full - swapped) / (full - swapped_fewer)
+        assert ratio == pytest.approx(28 / 14, rel=0.05)
 
 
 class TestRecommendParamsPrecisionAvailability:

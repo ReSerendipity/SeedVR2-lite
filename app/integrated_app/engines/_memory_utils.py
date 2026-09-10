@@ -79,6 +79,7 @@ import contextlib  # noqa: E402
 from app.integrated_app.engine_interface import RestoreEngine  # noqa: E402
 from app.integrated_app.optimization.gpu.memory_manager import (  # noqa: E402
     clear_memory,
+    manage_model_device,
 )
 
 logger = logging.getLogger(__name__)
@@ -435,6 +436,74 @@ def _force_release_memory():
             ctypes.CDLL("libc.so.6").malloc_trim(0)
     except Exception:
         pass
+
+
+def get_free_vram_gb(device: "torch.device | str | None" = None) -> float:
+    """查询当前**空闲**显存 (GB)，失败时返回 0.0。
+
+    注意：必须用空闲显存而不是总显存做容量决策。
+    用总显存判断会导致「12GB 卡上已占用 6.3GB 仍按 12GB 选档」，
+    进而触发 Windows WDDM 分页（表现为静默卡死而非 OOM）。
+    """
+    try:
+        if not torch.cuda.is_available():
+            return 0.0
+        idx = 0
+        if device is not None:
+            idx = torch.device(device).index if torch.device(device).index is not None else 0
+        free_bytes, _total_bytes = torch.cuda.mem_get_info(idx)
+        return free_bytes / (1024**3)
+    except Exception:
+        return 0.0
+
+
+def offload_model_to_cpu(model, model_name: str = "Model", reason: str = "") -> bool:
+    """把模型整体卸载到 CPU（保留实例，供后续任务复用）。
+
+    与直接调用 ``model.to("cpu")`` 的区别：走 ``manage_model_device``，
+    会自动处理 BlockSwap 的 ``_protect_model_from_move`` 保护
+    （否则会出现 "Blocked attempt to move BlockSwap model ..." 且权重留在显存）。
+
+    Returns:
+        bool: 实际发生了卸载返回 True；模型为空/已在 CPU/失败返回 False。
+    """
+    if model is None:
+        return False
+    try:
+        moved = manage_model_device(
+            model,
+            torch.device("cpu"),
+            model_name=model_name,
+            reason=reason or "freeing VRAM",
+        )
+    except Exception as e:  # 卸载失败不应中断推理
+        logger.warning(f"{model_name} 卸载到 CPU 失败（已忽略）: {e}")
+        return False
+
+    if moved and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return bool(moved)
+
+
+def restore_model_to_gpu(model, device, model_name: str = "Model") -> bool:
+    """把 ``offload_model_to_cpu`` 卸载的模型恢复回 GPU。
+
+    对 BlockSwap 模型会按 ``_block_swap_config`` 重新分布 blocks 与 I/O 组件。
+    """
+    if model is None:
+        return False
+    try:
+        return bool(
+            manage_model_device(
+                model,
+                torch.device(device),
+                model_name=model_name,
+                reason="restoring for next task",
+            )
+        )
+    except Exception as e:
+        logger.warning(f"{model_name} 恢复到 GPU 失败（已忽略）: {e}")
+        return False
 
 
 def _cleanup_cuda_cache(deep: bool = True):

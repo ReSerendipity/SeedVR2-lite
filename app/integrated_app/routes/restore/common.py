@@ -19,6 +19,7 @@ API 路由前缀：/api/restore（由子模块注册）
 """
 
 import logging
+import math
 import os
 from collections.abc import Sequence
 
@@ -311,6 +312,16 @@ def parse_unified_params(
     return _params
 
 
+DOUBLE_RES_MAX_PIXELS = 8_000_000
+"""两倍模式下输出像素上限（约 4K/8MP）。
+
+「短边×2」意味着**像素数变成 4 倍**。一张 1672×941 的图会被放大到 3344×1882
+（≈6.3MP），VAE 解码峰值实测 5.45GB（tile=1024），叠加 DiT 常驻 6.3GB 后
+12GB 卡直接显存超卖 → WDDM 分页 → 表现为静默卡死（2026-09-10 实测）。
+这里设上限并按比例回缩短边，超限时记录 warning 而不是静默放大。
+"""
+
+
 def enforce_double_resolution_if_enabled(
     raw_params: UnifiedRestoreParams,
     detected_type: str | None,
@@ -362,6 +373,26 @@ def enforce_double_resolution_if_enabled(
 
     short_edge = min(width, height)
     target_res = short_edge * 2
+
+    # P1-7：像素上限保护。输出像素 = 输入像素 × (target_res / short_edge)²，
+    # 「短边×2」即 4 倍像素；超限则按比例回缩 target_res（向下取整到 8 的倍数）。
+    input_pixels = width * height
+    if input_pixels > 0 and DOUBLE_RES_MAX_PIXELS > 0:
+        projected_pixels = input_pixels * (target_res / short_edge) ** 2
+        if projected_pixels > DOUBLE_RES_MAX_PIXELS:
+            capped_res = int(short_edge * math.sqrt(DOUBLE_RES_MAX_PIXELS / input_pixels))
+            capped_res = max(8, (capped_res // 8) * 8)
+            if capped_res < target_res:
+                logger.warning(
+                    "[double_res] 短边×2 将产生 %.1fMP 输出，超过上限 %.1fMP；" "分辨率由 %d 回缩到 %d (输出约 %.1fMP)",
+                    projected_pixels / 1e6,
+                    DOUBLE_RES_MAX_PIXELS / 1e6,
+                    target_res,
+                    capped_res,
+                    input_pixels * (capped_res / short_edge) ** 2 / 1e6,
+                )
+                target_res = capped_res
+
     original_res = raw_params.resolution
     raw_params.resolution = target_res
 

@@ -6,6 +6,10 @@ Extracted from seedvr2_engine.py as part of structural refactoring
 
 import contextlib
 import logging
+import sys
+import threading
+import time
+import traceback
 
 import torch
 from einops import rearrange
@@ -13,9 +17,134 @@ from einops import rearrange
 from app.integrated_app.engines._memory_utils import (
     DEFAULT_SCALING_FACTOR,
     _force_release_memory,
+    get_free_vram_gb,
 )
 
 logger = logging.getLogger(__name__)
+
+VAE_STALL_WARN_SECONDS = 20.0
+"""VAE 解码超过该秒数即视为疑似卡死，看门狗开始打栈（不打断内核）"""
+
+VAE_STALL_REPEAT_SECONDS = 20.0
+"""疑似卡死后重复的告警间隔（秒）"""
+
+
+class _TileProgressLogger:
+    """给 tiled 编解码加每 tile 进度日志（不修改 model_lib 源码）。
+
+    ``tiled_decode`` / ``tiled_encode`` 内部每个 tile 会调用一次
+    ``self.slicing_decode`` / ``self.slicing_encode``。这里在**实例**上临时替换
+    这两个方法做计数与计时，退出时删除实例属性还原类方法。
+    ``model_lib/`` 是禁改目录，因此采用实例级钩子而不是直接改源码。
+    """
+
+    def __init__(self, vae, stage: str = "decode", total: int | None = None):
+        self.vae = vae
+        self.stage = stage
+        self.total = total
+        self.count = 0
+        self.elapsed = 0.0
+        self._patched: dict[str, object] = {}
+
+    def __enter__(self) -> "_TileProgressLogger":
+        for name in ("slicing_decode", "slicing_encode"):
+            original = getattr(self.vae, name, None)
+            if original is None or not callable(original):
+                continue
+            self._patched[name] = original
+            setattr(self.vae, name, self._make_wrapper(name, original))
+        self._t0 = time.monotonic()
+        return self
+
+    def __exit__(self, *exc_info) -> bool:
+        self.elapsed = time.monotonic() - self._t0
+        for name in self._patched:
+            with contextlib.suppress(Exception):
+                if name in getattr(self.vae, "__dict__", {}):
+                    delattr(self.vae, name)
+        self._patched.clear()
+        if self.count:
+            logger.info(
+                f"[VAE tiled {self.stage}] 共 {self.count} 个 tile，"
+                f"总耗时 {self.elapsed:.2f}s（均值 {self.elapsed / self.count:.2f}s/tile）"
+            )
+        return False
+
+    def _make_wrapper(self, name: str, original):
+        def wrapped(*args, **kwargs):
+            tile_index = self.count + 1
+            tile_t0 = time.monotonic()
+            try:
+                return original(*args, **kwargs)
+            finally:
+                cost = time.monotonic() - tile_t0
+                self.count = tile_index
+                total_hint = f"/{self.total}" if self.total else ""
+                logger.info(
+                    f"[VAE tiled {self.stage}] tile {tile_index}{total_hint} 用时 {cost:.2f}s，"
+                    f"空闲显存 {get_free_vram_gb():.2f}GB"
+                )
+
+        return wrapped
+
+
+class _VaeStallWatchdog:
+    """VAE 解码看门狗：疑似卡死时把主线程栈与显存状态打到日志。
+
+    显存超卖时 Windows WDDM 会把显存分页到系统内存，内核耗时膨胀 2~3 个数量级，
+    表现为「无日志、无报错、永久卡住」，且 torch 不会抛 OOM。
+    看门狗**不打断** CUDA 内核（从 Python 侧打断不安全），只负责让卡死可见、可定位。
+    """
+
+    def __init__(
+        self,
+        stage: str,
+        warn_after: float = VAE_STALL_WARN_SECONDS,
+        repeat: float = VAE_STALL_REPEAT_SECONDS,
+    ):
+        self.stage = stage
+        self.warn_after = warn_after
+        self.repeat = repeat
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._start = 0.0
+
+    def __enter__(self) -> "_VaeStallWatchdog":
+        self._start = time.monotonic()
+        self._thread = threading.Thread(target=self._run, name="vae-stall-watchdog", daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc_info) -> bool:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        logger.info(f"[VAE 看门狗] {self.stage} 实际耗时 {time.monotonic() - self._start:.1f}s")
+        return False
+
+    def _run(self) -> None:
+        next_warn = self.warn_after
+        while not self._stop.wait(0.5):
+            if time.monotonic() - self._start < next_warn:
+                continue
+            with contextlib.suppress(Exception):
+                self._dump()
+            next_warn += self.repeat
+
+    def _dump(self) -> None:
+        elapsed = time.monotonic() - self._start
+        free_gb = get_free_vram_gb()
+        logger.warning(
+            f"[VAE 看门狗] {self.stage} 已运行 {elapsed:.0f}s（阈值 {self.warn_after:.0f}s），"
+            f"空闲显存 {free_gb:.2f}GB。这不是正常的计算耗时，绝大多数是"
+            "显存超卖触发的 WDDM 分页（显存被换出到系统内存，内核慢 2~3 个数量级）。"
+            "处理建议：调小 decode_tile_size / 开启 dit 卸载 / 降低输出分辨率。当前栈："
+        )
+        for _tid, frame in sys._current_frames().items():
+            stack = "".join(traceback.format_stack(frame))
+            if "vae" in stack or "attn_video_vae" in stack:
+                logger.warning(f"[VAE 看门狗] 卡住位置:\n{stack}")
+                break
 
 
 class _VAEPipelineMixin:
@@ -137,7 +266,6 @@ class _VAEPipelineMixin:
         return latents
 
     @torch.no_grad()
-    @torch.no_grad()
     def _vae_decode(self, latents: list[torch.Tensor]) -> list[torch.Tensor]:
         """VAE 解码: 潜空间 -> 像素空间，支持 tiled 解码
 
@@ -145,8 +273,6 @@ class _VAEPipelineMixin:
         集成 SCST 启发的自动 tile size 推荐、OOM 回退和 NaN 检测。
         """
         from app.integrated_app.optimization.inference.vae_tiled_enhance import (
-            GroupNormAccumulator,
-            TiledVAEHook,
             detect_nan,
             get_optimal_tile_size,
         )
@@ -162,32 +288,20 @@ class _VAEPipelineMixin:
         tile_size = tiled_cfg.get("decode_tile_size", 1024)
         tile_overlap = tiled_cfg.get("decode_tile_overlap", 128)
         auto_tile_size = tiled_cfg.get("auto_tile_size", True)
-        gaussian_blend = tiled_cfg.get("gaussian_blend", True)
-        use_groupnorm_accum = tiled_cfg.get("groupnorm_accumulate", True)
+
+        # 2026-09-10 清理：此前这里会安装 GroupNormAccumulator / TiledVAEHook 并把
+        # gaussian_blend / groupnorm_accum 打进日志，但两者都是空转：
+        #   - GroupNormAccumulator.accumulate_from_tile() 从未被 VAE 调用，
+        #     apply_accumulated_stats() 因此是空操作；
+        #   - TiledVAEHook 找的 vae._internal_tile_state 在 VAE 上不存在，
+        #     _last_tile_outputs 恒为 None，Gaussian 混合分支永不执行。
+        # tile 接缝目前由 VAE 自带的余弦斜坡融合（attn_video_vae.tiled_decode）负责，
+        # 移除死代码只影响日志真实性，不改变输出。
 
         if isinstance(scale, list):
             scale = torch.tensor(scale, device=self.device, dtype=dtype)
         if isinstance(shift, list):
             shift = torch.tensor(shift, device=self.device, dtype=dtype)
-
-        # 准备 GroupNorm 累积器和 TiledVAEHook
-        groupnorm_accum = None
-        tiled_hook = None
-        if decode_tiled and use_groupnorm_accum:
-            try:
-                groupnorm_accum = GroupNormAccumulator(self.vae)
-                groupnorm_accum.start_accumulation()
-            except Exception as e:
-                logger.debug(f"GroupNormAccumulator init failed: {e}")
-                groupnorm_accum = None
-
-        if decode_tiled and gaussian_blend:
-            try:
-                tiled_hook = TiledVAEHook(self.vae)
-                tiled_hook.install()
-            except Exception as e:
-                logger.debug(f"TiledVAEHook install failed: {e}")
-                tiled_hook = None
 
         samples = []
         oom_fallback_used = False
@@ -231,16 +345,16 @@ class _VAEPipelineMixin:
                 if decode_tiled:
                     logger.info(
                         f"VAE tiled 解码: tile_size={current_tile_size}, "
-                        f"overlap={current_tile_overlap}, gaussian_blend={gaussian_blend}, "
-                        f"groupnorm_accum={use_groupnorm_accum}"
+                        f"overlap={current_tile_overlap}, 空闲显存={get_free_vram_gb():.2f}GB"
                     )
                     try:
-                        dec_result = self.vae.decode(
-                            batch,
-                            tiled=True,
-                            tile_size=(current_tile_size, current_tile_size),
-                            tile_overlap=(current_tile_overlap, current_tile_overlap),
-                        )
+                        with _TileProgressLogger(self.vae, "decode"), _VaeStallWatchdog("VAE tiled 解码"):
+                            dec_result = self.vae.decode(
+                                batch,
+                                tiled=True,
+                                tile_size=(current_tile_size, current_tile_size),
+                                tile_overlap=(current_tile_overlap, current_tile_overlap),
+                            )
                     except RuntimeError as e:
                         if "out of memory" in str(e).lower() and not oom_fallback_used:
                             logger.warning("VAE 解码 OOM，尝试更小的 tile size")
@@ -267,31 +381,6 @@ class _VAEPipelineMixin:
 
                     sample = dec_result.sample
 
-                    # Gaussian 权重混合增强 (SCST/VEncancer inspired)
-                    if gaussian_blend and getattr(self.vae, "_last_tile_outputs", None):
-                        try:
-                            from app.integrated_app.optimization.inference.vae_tiled_enhance import blend_tiles_gaussian
-
-                            tile_outputs = self.vae._last_tile_outputs
-                            tile_positions = self.vae._last_tile_positions
-                            if tile_outputs and tile_positions:
-                                output_h, output_w = sample.shape[-2:]
-                                # tile_size 已经是像素空间
-                                actual_tile_size = getattr(self.vae, "_last_tile_size", current_tile_size)
-                                actual_tile_overlap = getattr(self.vae, "_last_tile_overlap", current_tile_overlap)
-                                sample = blend_tiles_gaussian(
-                                    tile_outputs,
-                                    tile_positions,
-                                    (output_h, output_w),
-                                    actual_tile_size,
-                                    actual_tile_overlap,
-                                    device=self.device,
-                                    dtype=sample.dtype,
-                                )
-                                logger.info(f"VAE tiled: Gaussian 混合完成, {len(tile_outputs)} tiles")
-                        except Exception as e:
-                            logger.debug(f"Gaussian 混合失败: {e}")
-
                     # NaN 检测
                     if detect_nan(sample, "vae_decode_sample") and not nan_fallback_used:
                         logger.warning("VAE 解码检测到 NaN，回退到非 tiled 解码")
@@ -301,7 +390,8 @@ class _VAEPipelineMixin:
                         sample = dec_result.sample
                         nan_fallback_used = True
                 else:
-                    dec_result = self.vae.decode(batch)
+                    with _VaeStallWatchdog("VAE 非 tiled 解码"):
+                        dec_result = self.vae.decode(batch)
                     sample = dec_result.sample
 
                 if hasattr(self.vae, "postprocess"):
@@ -314,15 +404,10 @@ class _VAEPipelineMixin:
 
                 samples.append(sample.squeeze(0))
         finally:
-            # 清理 hook 和累积器
-            if tiled_hook is not None:
-                with contextlib.suppress(Exception):
-                    tiled_hook.uninstall()
-            if groupnorm_accum is not None:
-                try:
-                    groupnorm_accum.apply_accumulated_stats()
-                except Exception as e:
-                    logger.debug(f"GroupNorm stats apply failed: {e}")
+            # 2026-09-10: 原先在此卸载 TiledVAEHook 并应用 GroupNorm 累积统计，
+            # 两者经查证均为空转（详见上方注释）已移除；保留 finally 用于收尾计数，
+            # 异常路径下也能看到已完成的 latent 数。
+            logger.info(f"[VAE 解码] 完成 {len(samples)}/{len(latents)} 个 latent")
 
         return samples
 

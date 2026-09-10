@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.5.6] - 2026-09-10
+
+VAE 解码阶段卡死根治 + 3B nvfp4 在 12GB 卡上 503 修复（延续 1.5.5 的显存门禁 fail-open 纪律）。
+
+### Fixed
+* **VAE 解码阶段卡死 / 显存超预算根治**（GOTCHAS #105–#110）：① 阶段3 解码前经 `manage_model_device` 将 DiT 卸载到 CPU（仅当空闲 <10GB 才卸，复用分支自动恢复，P0-1）；② tiled 解码 tile size 改按 `mem_get_info` 空闲显存 + 实测峰值模型（`peak≈0.51+4.88e-6·tile²`）选型，弃用总显存（P0-2）；③ tiled 解码加每 tile 进度日志 + 卡死看门狗（>20s 打主线程栈 + 显存状态并提示 WDDM 分页，不打断 CUDA 内核，P0-3）；④ 精度回退门禁改为 fail-open（全量 BlockSwap 下界 ×1.15），12GB 卡 + 仅 nvfp4 权重不再 503（P1-4 / GOTCHAS #111）；⑤ `bad_case_retry` 降级链改用 `precision_saves_vram`，只在驻留档位确实变小（仅 fp8）时降级，删掉不省显存的 `fp16→nvfp4`（P1-5）；⑥ `recommend_blocks_to_swap` 按显存缺口「够用即可」反推换出块数，削减量改按换出块数/总块数线性（P1-6）；⑦ `double_res` 加最大像素上限 8MP，防止一次放大到显存放不下（P1-7）；⑧ 清理 `GroupNormAccumulator`/`TiledVAEHook` 死路径与误导日志（P1-8）。
+* **503「模型文件不存在」误导信息修正**（GOTCHAS #111）：回退失败信息拆分为「配置但未下载」与「磁盘有文件但显存不足被排除」两类，不再把「存在但被门槛排除」与「文件缺失」混为一谈；实测 12GB 卡 + 仅 nvfp4 权重 → 正常加载，且权重 SHA256 与 config 一致、通过 P1-3 校验。
+
+### Docs
+* 新增 `docs/VAE_STALL_DIAGNOSIS_20260910.md` 根因诊断与修复报告。
+
 ## [1.5.5] - 2026-09-10
 
 本次发布要点：**显存/内存检测激进导致「完全无法使用」根治**（12GB 卡 + 仅下载量化权重的机器上任何任务提交即 503，见下方 Fixed 首条）；同批携带桌面壳（Tauri v2）、成本/数据/服务治理三轨、五精度与 cu132 torch 交付轨统一、便携包发布链路与签名密钥体系、安全加固（CSP 收紧、PathGuard 白名单、水印抗转码增强）等自 1.5.1 以来累积的全部变更。真机验收：RTX 5070 Ti Laptop 12GB A/B（基线 503 → 修复后任务完成，实测显存峰值 11.2GB）。

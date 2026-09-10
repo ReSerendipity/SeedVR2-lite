@@ -417,12 +417,20 @@ class TestRecommendParams:
         assert result["blocks_to_swap"] == 0
 
     def test_blocks_to_swap_positive_when_blockswap(self):
-        """开 BlockSwap 时 blocks_to_swap 为正数"""
+        """开 BlockSwap 时 blocks_to_swap 为正数，且按显存缺口「够用即可」细化。"""
         result = gpu_utils.recommend_params("7b", 1920, 1080, available_vram_gb=8.0)
         assert result["enable_blockswap"] is True
         assert result["blocks_to_swap"] > 0
-        # 7B 有 36 块，保留 4 块，换出 32 块
-        assert result["blocks_to_swap"] == 32
+        # 新语义（P1-6）：不再固定换出 num_blocks-4 块，而是按缺口恰好够用即可，
+        # 换出块数不超过上限（7B 共 36 块，上限 36-4=32）。
+        num_blocks = gpu_utils._model_num_blocks().get("7b", 36)
+        max_swap = num_blocks - gpu_utils._BLOCKSWAP_MIN_GPU_BLOCKS
+        assert result["blocks_to_swap"] <= max_swap
+        # 按缺口细化后，推荐估算应降到可用线以下（不超额）。
+        assert result["estimated_vram_gb"] <= 8.0 + 0.05
+        # 可用显存更大（缺口更小）时应换出更少块 → 证明是按缺口细化而非一刀切。
+        fewer = gpu_utils.recommend_params("7b", 1920, 1080, available_vram_gb=12.0)
+        assert fewer["blocks_to_swap"] < result["blocks_to_swap"]
 
     def test_auto_detect_vram_when_not_provided(self):
         """available_vram_gb=None 时自动探测"""
