@@ -54,6 +54,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  diagnose-winpython:
+    # 独立诊断（GOTCHAS #98）：WinPython 便携 python 能否 import cryptography 并完成
+    # Ed25519 PEM 加载/验签。主链构建 27 分钟/轮，此 job ~10 分钟给出环境侧答案。
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 下载并解压 WinPython（构建脚本同款发行）
+        shell: powershell
+        run: |
+          $url = 'https://github.com/winpython/winpython/releases/download/16.5.20250614/Winpython64-3.12.10.1dotb4.exe'
+          $sha = '4061f0e936289ca1df48fc8e7357a4c30e6010f053ffd2f986f518a09bbf03e8'
+          $exe = Join-Path $env:RUNNER_TEMP 'wp.exe'
+          Invoke-WebRequest -Uri $url -OutFile $exe
+          $h = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          if ($h -ne $sha) { throw "WinPython 哈希不匹配: $h" }
+          $dest = Join-Path $env:RUNNER_TEMP 'wp'
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          Start-Process -FilePath $exe -ArgumentList @('-y', '-o', $dest) -Wait -NoNewWindow
+      - name: 便携 python 能力探测
+        shell: powershell
+        run: |
+          $py = Get-ChildItem -Path (Join-Path $env:RUNNER_TEMP 'wp') -Recurse -Filter python.exe |
+              Where-Object { $_.FullName -match 'python-3\.12' } | Select-Object -First 1
+          Write-Host "PYTHON: $($py.FullName)"
+          if (-not $py) { throw "便携 python 未找到" }
+          & $py.FullName .\scripts\diag_winpython_probe.py
+          if ($LASTEXITCODE -ne 0) { throw "WinPython 能力探测失败" }
+
   build-bundles:
     runs-on: windows-latest
     timeout-minutes: 120
@@ -240,8 +268,8 @@ jobs:
           $portablePy = Get-ChildItem -Path $appDir -Recurse -Filter python.exe -ErrorAction SilentlyContinue |
               Where-Object { $_.FullName -match 'WPy' } | Select-Object -First 1
           if ($portablePy) {
-              $diag = & $portablePy.FullName -c "import sys; sys.path.insert(0, r'$appDir'); from app.integrated_app.security.secret_key import verify_manifest_signature_ed25519 as v; m=r'$appDir\app\integrated_app\security\integrity_manifest.json'; print('PORTABLE_VERIFY:', v(m))" 2>&1
-              Write-Host "  [诊断] 便携 python 验签: $diag"
+              $diag = & $portablePy.FullName .\scripts\diag_portable_verify.py --app-dir $appDir 2>&1
+              $diag | ForEach-Object { Write-Host "  [诊断] $_" }
           } else {
               Write-Host "  [诊断] 未找到便携 python"
           }
