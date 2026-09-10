@@ -34,7 +34,7 @@ import torch
 
 from app.integrated_app.engine_interface import RestoreEngine
 from app.integrated_app.engines.seedvr2_engine import SeedVR2Engine
-from app.integrated_app.gpu_utils import check_vram_available, clear_gpu_cache, estimate_model_vram
+from app.integrated_app.gpu_utils import check_vram_available_for_load, clear_gpu_cache, estimate_model_vram
 from app.integrated_app.model_registry import model_registry
 from app.integrated_app.utils.hashing import compute_file_sha256
 
@@ -422,12 +422,14 @@ class ModelManager:
         await self.verify_weight_hashes(model_size, precision)
 
         required_vram = estimate_model_vram(model_size, precision=precision)
-        can_load, available_vram = check_vram_available(required_vram)
+        # 预算含本进程已保留(reserved)显存：模型常驻时权重就住在缓存分配器里，
+        # 按裸 available 检查会对同一份权重二次扣减，导致「第二次提交反而显存不足」
+        can_load, available_vram = check_vram_available_for_load(required_vram)
         if not can_load:
-            logger.warning(f"显存不足: 需要 {required_vram}MB，可用 {available_vram}MB")
+            logger.warning(f"显存不足: 需要 {required_vram}MB，可用预算 {available_vram}MB")
             if device == "auto" and precision == "fp16":
                 fp8_vram = estimate_model_vram(model_size, precision="fp8")
-                can_load_fp8, available_fp8 = check_vram_available(fp8_vram)
+                can_load_fp8, available_fp8 = check_vram_available_for_load(fp8_vram)
                 if can_load_fp8 and self.check_model_exists(model_size, "fp8"):
                     logger.warning("尝试切换到 FP8 精度以减少显存需求")
                     precision = "fp8"

@@ -310,7 +310,7 @@ class TestLoadModel:
         with (
             patch("app.integrated_app.gpu_backend.gpu_manager") as mock_gpu,
             patch.object(manager, "check_model_exists", side_effect=mock_check_exists),
-            patch("app.integrated_app.model_manager.check_vram_available", return_value=(True, 16000)),
+            patch("app.integrated_app.model_manager.check_vram_available_for_load", return_value=(True, 16000)),
             patch("app.integrated_app.model_manager.estimate_model_vram", return_value=8000),
             patch("app.integrated_app.model_manager.SeedVR2Engine", return_value=mock_engine),
         ):
@@ -326,7 +326,7 @@ class TestLoadModel:
         with (
             patch("app.integrated_app.gpu_backend.gpu_manager") as mock_gpu,
             patch.object(manager, "check_model_exists", return_value=True),
-            patch("app.integrated_app.model_manager.check_vram_available", return_value=(False, 2000)),
+            patch("app.integrated_app.model_manager.check_vram_available_for_load", return_value=(False, 2000)),
             patch("app.integrated_app.model_manager.estimate_model_vram", return_value=16000),
         ):
             mock_gpu.is_gpu_available = True
@@ -353,7 +353,7 @@ class TestLoadModel:
         with (
             patch("app.integrated_app.gpu_backend.gpu_manager") as mock_gpu,
             patch.object(manager, "check_model_exists", return_value=True),
-            patch("app.integrated_app.model_manager.check_vram_available", side_effect=mock_check_vram),
+            patch("app.integrated_app.model_manager.check_vram_available_for_load", side_effect=mock_check_vram),
             patch("app.integrated_app.model_manager.estimate_model_vram", side_effect=mock_estimate),
             patch("app.integrated_app.model_manager.SeedVR2Engine", return_value=mock_engine),
         ):
@@ -370,7 +370,7 @@ class TestLoadModel:
         with (
             patch("app.integrated_app.gpu_backend.gpu_manager") as mock_gpu,
             patch.object(manager, "check_model_exists", return_value=True),
-            patch("app.integrated_app.model_manager.check_vram_available", return_value=(True, 24000)),
+            patch("app.integrated_app.model_manager.check_vram_available_for_load", return_value=(True, 24000)),
             patch("app.integrated_app.model_manager.estimate_model_vram", return_value=8000),
             patch("app.integrated_app.model_manager.SeedVR2Engine", return_value=mock_engine),
         ):
@@ -389,7 +389,7 @@ class TestLoadModel:
         with (
             patch("app.integrated_app.gpu_backend.gpu_manager") as mock_gpu,
             patch.object(manager, "check_model_exists", return_value=True),
-            patch("app.integrated_app.model_manager.check_vram_available", return_value=(True, 24000)),
+            patch("app.integrated_app.model_manager.check_vram_available_for_load", return_value=(True, 24000)),
             patch("app.integrated_app.model_manager.estimate_model_vram", return_value=8000),
             patch("app.integrated_app.model_manager.SeedVR2Engine", return_value=mock_engine),
             patch.object(manager, "get_recommended_precision", return_value="fp16"),
@@ -649,7 +649,7 @@ class TestConcurrentLoad:
             patch("app.integrated_app.model_manager.SeedVR2Engine", FakeEngine),
             patch.object(manager, "check_model_exists", return_value=True),
             patch("app.integrated_app.model_manager.estimate_model_vram", return_value=8192),
-            patch("app.integrated_app.model_manager.check_vram_available", return_value=(True, 16384)),
+            patch("app.integrated_app.model_manager.check_vram_available_for_load", return_value=(True, 16384)),
         ):
             mock_gpu.is_gpu_available = True
             results = await asyncio.gather(
@@ -691,7 +691,7 @@ class TestConcurrentLoad:
             patch("app.integrated_app.model_manager.SeedVR2Engine", FakeEngine),
             patch.object(manager, "check_model_exists", return_value=True),
             patch("app.integrated_app.model_manager.estimate_model_vram", return_value=8192),
-            patch("app.integrated_app.model_manager.check_vram_available", return_value=(True, 16384)),
+            patch("app.integrated_app.model_manager.check_vram_available_for_load", return_value=(True, 16384)),
         ):
             mock_gpu.is_gpu_available = True
             await manager.load_model(model_size="3b", precision="fp16")

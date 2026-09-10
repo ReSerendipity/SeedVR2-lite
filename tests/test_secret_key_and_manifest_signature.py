@@ -200,3 +200,30 @@ class TestIcaclsSubprocessDecoding:
         assert captured.get("encoding") == "utf-8"
         assert captured.get("errors") == "replace"
         assert captured.get("text") is True
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="icacls 仅 Windows 提供")
+    def test_icacls_runs_when_temp_env_unset_and_file_under_cwd(self, tmp_path, monkeypatch):
+        """TEMP/TMP 未设置 + 密钥位于 cwd 之下：不得被误判为「临时目录内」而跳过收紧。
+
+        `os.path.realpath("")` 返回**当前工作目录**，早退判定若不先判空，就会把
+        temp_root 算成项目根，令仓内所有路径命中 startswith → icacls 静默不执行。
+        """
+        import subprocess as _subprocess
+
+        workdir = tmp_path / "repo" / "data"
+        workdir.mkdir(parents=True)
+        monkeypatch.chdir(tmp_path / "repo")
+        monkeypatch.delenv("TEMP", raising=False)
+        monkeypatch.delenv("TMP", raising=False)
+
+        called: list[str] = []
+        monkeypatch.setattr(
+            _subprocess,
+            "run",
+            lambda cmd, **kw: called.append(str(cmd[0])) or _subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+        )
+
+        key_file = workdir / "under-cwd.key"
+        key_file.write_text(TEST_KEY.hex(), encoding="utf-8")
+        assert harden_secret_file_permissions(key_file) is True
+        assert called == ["icacls"]

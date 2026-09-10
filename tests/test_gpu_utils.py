@@ -53,6 +53,47 @@ class TestCheckVramAvailable:
         assert available == 4000
 
 
+class TestCheckVramAvailableForLoad:
+    """加载期预算：必须把本进程 reserved 显存计回，否则模型常驻会二次扣减误拒。"""
+
+    def test_reserved_counts_back_into_budget(self):
+        mock_info = {
+            "available_mb": 3476,
+            "reserved_mb": 7000,
+            "allocated_mb": 6800,
+            "total_mb": 12227,
+            "utilization_pct": 71.0,
+        }
+        with patch.object(gpu_utils, "get_gpu_memory_info", return_value=mock_info):
+            ok, budget = gpu_utils.check_vram_available_for_load(8192)
+        assert ok is True
+        assert budget == 10476
+
+    def test_still_rejects_when_genuinely_short(self):
+        mock_info = {
+            "available_mb": 500,
+            "reserved_mb": 600,
+            "allocated_mb": 500,
+            "total_mb": 12227,
+            "utilization_pct": 96.0,
+        }
+        with patch.object(gpu_utils, "get_gpu_memory_info", return_value=mock_info):
+            ok, budget = gpu_utils.check_vram_available_for_load(8192)
+        assert ok is False
+        assert budget == 1100
+
+
+class TestPrecisionResidencyKey:
+    """存储精度 → 显存驻留档位映射（量化包加载期反量化，驻留≈fp16）。"""
+
+    @pytest.mark.parametrize("p", ["fp16", "mxfp8", "int8_convrot", "nvfp4", "unknown", None])
+    def test_fp16_residency_bucket(self, p):
+        assert gpu_utils._precision_residency_key(p) == "fp16"
+
+    def test_real_fp8_bucket(self):
+        assert gpu_utils._precision_residency_key("fp8") == "fp8"
+
+
 class TestEstimateModelVram:
     """estimate_model_vram 测试"""
 

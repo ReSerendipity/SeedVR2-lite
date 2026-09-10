@@ -169,7 +169,11 @@ def harden_secret_file_permissions(path: str | os.PathLike) -> bool:
         if os.name == "nt":
             os.chmod(p, stat.S_IREAD | stat.S_IWRITE)
             # 临时目录内不跑 icacls：修改 ACL 会破坏 pytest 临时目录回收（WinError 5）
-            temp_root = os.path.realpath(os.environ.get("TEMP", "") or os.environ.get("TMP", "") or "")
+            # ⚠ 必须先判空再 realpath：os.path.realpath("") 返回**当前工作目录**，
+            #   TEMP/TMP 未设置时若不判空会把 temp_root 算成项目根，于是仓内所有路径
+            #   都被误判为「临时目录内」，icacls 收紧静默失效（Windows CI/裸机无 TEMP 时命中）
+            temp_env = os.environ.get("TEMP", "") or os.environ.get("TMP", "")
+            temp_root = os.path.realpath(temp_env) if temp_env else ""
             if temp_root and os.path.realpath(str(p)).startswith(temp_root):
                 return True
             try:

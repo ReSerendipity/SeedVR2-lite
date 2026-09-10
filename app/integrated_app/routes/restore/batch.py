@@ -195,15 +195,19 @@ async def batch_restore_from_folder(
     use_model_size = model_size_from_dit_model(dit_model)
 
     # ============== 显存预检门禁（成本治理 P1-2） ==============
-    # 以首个文件为代表估算显存需求（批量内 OOM 差异由运行期批级降级重试兜底）：
-    # 超预算直接拒绝（InsufficientVramError → 全局处理器 503，消息含降档建议），
-    # medium 风险放行但把 warning 返回给前端并写入批量任务状态缓存
+    # 以首个文件为代表、按**实际会执行的配置**估算（精度经 model_manager 回退链解析，
+    # BlockSwap 取表单值与 config inference.blocks_to_swap 的较大者）：
+    # 仅「最大降级仍放不下」才拒绝（InsufficientVramError → 全局处理器 503，消息含可操作
+    # 降档建议），显存偏紧一律放行并把 warning 返回前端 + 写入批量任务状态缓存
+    # （批量内 OOM 差异由运行期批级降级重试兜底）
     vram_preflight = vram_preflight_gate(
         config,
         use_model_size,
         precision_from_dit_model(dit_model) or (config.get("model", {}) or {}).get("default_precision", "fp16"),
         media_files[0][0],
         actual_type,
+        blocks_to_swap=max(int(raw_params.blocks_to_swap or 0), common.config_blocks_to_swap(config)),
+        model_manager=model_manager,
     )
     vram_warning = (vram_preflight or {}).get("warning", "")
 

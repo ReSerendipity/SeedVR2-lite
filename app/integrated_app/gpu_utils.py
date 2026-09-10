@@ -27,7 +27,7 @@
 import functools
 import gc
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
@@ -195,6 +195,24 @@ _FRAME_BYTES_PER_PIXEL = 3 * 2
 _GB = 1024**3  # 1 GB 的字节数
 
 
+def _precision_residency_key(precision: str | None) -> str:
+    """把「存储精度」映射到「显存驻留精度档位」（估算查表用）。
+
+    显存估算只关心权重在 GPU 上实际驻留多大：
+
+    - `fp8`：真 fp8 检查点，驻留减半 → 返回 `"fp8"`
+    - `mxfp8` / `int8_convrot` / `nvfp4`：加载期反量化，驻留 ≈ fp16 → 返回 `"fp16"`
+    - 其它/未知精度（含 None）：保守按 `"fp16"` 档位
+
+    Args:
+        precision: 存储精度标识。
+
+    Returns:
+        str: 显存基线查表用的档位键（`"fp16"` 或 `"fp8"`）。
+    """
+    return "fp8" if precision == "fp8" else "fp16"
+
+
 def get_gpu_memory_info() -> dict:
     """获取 GPU 显存详细信息（使用 mem_get_info 获取实际可用显存）
 
@@ -254,6 +272,25 @@ def check_vram_available(required_mb: int) -> tuple[bool, int]:
     return available >= required_mb, available
 
 
+def check_vram_available_for_load(required_mb: int) -> tuple[bool, int]:
+    """模型加载前的显存预算检查（把本进程已保留的显存计回预算）。
+
+    与 `check_vram_available` 的区别：驱动层的 `available` **不包含**本进程缓存
+    分配器已保留（reserved）的显存。模型常驻时（`cache_model` 命中、或空闲卸载
+    尚未触发）权重就住在 reserved 里，若仍按裸 `available` 索要权重基线，等于对
+    同一份权重二次扣减 → 加载被误拒（表现为「第二次提交反而报显存不足」）。
+
+    Args:
+        required_mb: 需要的显存大小（MB）
+
+    Returns:
+        tuple[bool, int]: (预算是否够, 计入 reserved 后的可用预算MB)
+    """
+    info = get_gpu_memory_info()
+    budget = info["available_mb"] + info["reserved_mb"]
+    return budget >= required_mb, budget
+
+
 def estimate_model_vram(model_size: str, resolution: tuple | None = None, precision: str = "fp16") -> int:
     """估算模型加载和推理所需的总显存（MB）
 
@@ -266,14 +303,16 @@ def estimate_model_vram(model_size: str, resolution: tuple | None = None, precis
     Args:
         model_size: 模型大小标识，支持 "3b" / "7b"
         resolution: 目标分辨率 (height, width) 元组；为 None 时仅计算权重显存
-        precision: 计算精度，支持 "fp16" / "fp8" / "mxfp8" / "int8_convrot" / "nvfp4"（量化格式回退 fp16 基线）
+        precision: 存储精度，支持 "fp16" / "fp8" / "mxfp8" / "int8_convrot" / "nvfp4"。
+            权重**驻留**显存按 `_precision_residency_key` 归档：量化包与 fp8 检查点均在
+            加载期反量化为 fp16（见 engines/quant_dequant.py），故与 fp16 同档。
 
     Returns:
         int: 估算的总显存需求（MB）
     """
     # 查表获取模型权重显存基线（config.yaml 单一事实来源，P0-3）
     model_vram = _weights_vram_mb().get(model_size, _DEFAULT_MODEL_VRAM_MB)
-    base_vram = model_vram.get(precision, model_vram["fp16"])
+    base_vram = model_vram.get(_precision_residency_key(precision), model_vram["fp16"])
 
     if resolution:
         h, w = resolution
@@ -384,21 +423,27 @@ def estimate_vram_requirements(
     input_width: int,
     input_height: int,
     num_frames: int = 1,
+    blocks_to_swap: int = 0,
 ) -> float:
-    """估算推理所需 VRAM（GB），不含 BlockSwap 优化。
+    """估算推理所需 VRAM（GB）。
 
     估算公式：
-        总显存 = 模型基线 + 分辨率额外开销 + 视频帧缓冲
+        总显存 = 模型基线（含 BlockSwap 削减） + 分辨率额外开销 + 视频帧缓冲
         - 模型基线：根据模型大小和精度查表（与 config.yaml min_vram_*_gb 对齐）
         - 分辨率额外开销：超过 1080p 后按平方根缩放，每单位增加 2GB
         - 视频帧缓冲：每帧 (W×H×3×2) 字节 × num_frames × 1.5 倍冗余
 
     Args:
         model_name: 模型名称，支持 "3b" / "7b" / "7b-sharp" / "7b_sharp"。
-        precision: 计算精度，"fp16" / "fp8" / "mxfp8" / "int8_convrot" / "nvfp4"（量化格式回退 fp16 基线）。
+        precision: 计算精度，"fp16" / "fp8" / "mxfp8" / "int8_convrot" / "nvfp4"。
+            ⚠ 量化格式（mxfp8/int8_convrot/nvfp4）是**存储/加载期**反量化，权重以
+            bf16/fp16 驻留显存（见 engines/quant_dequant.py），故按 fp16 同档计入；
+            只有真 fp8 检查点驻留减半。仅用文件体积判断精度会低估需求。
         input_width: 输入宽度（像素）。
         input_height: 输入高度（像素）。
         num_frames: 帧数，图像=1，视频=实际帧数。
+        blocks_to_swap: BlockSwap 换出到 CPU 的块数，0 表示未启用。启用时按
+            权重基线的 `_BLOCKSWAP_REDUCTION` 比例削减常驻显存（速度换显存）。
 
     Returns:
         float: 估算所需 VRAM（GB），保留两位小数。
@@ -406,7 +451,10 @@ def estimate_vram_requirements(
     model_key = _normalize_model_name(model_name)
     base_table = _model_vram_base_gb()
     base_vram = base_table.get(model_key, base_table["3b"])
-    base = base_vram.get(precision, base_vram["fp16"])
+    residency_key = _precision_residency_key(precision)
+    base = base_vram.get(residency_key, base_vram["fp16"])
+    if blocks_to_swap > 0:
+        base -= base * _BLOCKSWAP_REDUCTION
 
     # 分辨率额外开销（平方根缩放，1080p 为基准）
     resolution_factor = max(1.0, ((input_width * input_height) / _BASE_RESOLUTION_PIXELS) ** 0.5)
@@ -427,17 +475,19 @@ def recommend_params(
     input_height: int,
     num_frames: int = 1,
     available_vram_gb: float | None = None,
+    available_precisions: Sequence[str] | None = None,
 ) -> dict:
     """根据输入参数和可用显存推荐精度/分块/BlockSwap 参数组合。
 
     推荐逻辑（逐级回退）：
-        1. FP16 不开 BlockSwap → 如果满足安全阈值，推荐此组合（risk=low）
-        2. FP8 不开 BlockSwap → 如果满足安全阈值，推荐此组合（risk=low）
-        3. FP8 + BlockSwap → 如果满足可用显存，推荐此组合（risk=medium）
-        4. 以上均不满足 → 强制 FP8 + BlockSwap（risk=high）
+        1. fp16 档（按实际持有精度展示）不开 BlockSwap → 满足安全阈值即推荐（risk=low）
+        2. fp8 不开 BlockSwap → **仅当磁盘上真实存在 fp8 检查点**才作为降档台阶
+           （risk=low）；量化包 mxfp8/int8_convrot/nvfp4 为加载期反量化、权重仍以
+           fp16 驻留，**不是**省显存台阶，不参与降档
+        3. BlockSwap 换出大部分块（约 50% 权重削减）→ 装得下则放行（risk=medium）
+        4. 以上均不满足 → 报告 risk=high（由调用方决定拒绝还是放行）
 
     安全阈值 = 可用显存 × 0.9（预留 10% 安全余量）。
-    BlockSwap 开启时模型权重显存削减约 50%。
 
     Args:
         model_name: 模型名称，支持 "3b" / "7b" / "7b-sharp" / "7b_sharp"。
@@ -445,11 +495,13 @@ def recommend_params(
         input_height: 输入高度（像素）。
         num_frames: 帧数，图像=1，视频=实际帧数。
         available_vram_gb: 可用显存（GB），None 时自动探测。
+        available_precisions: 用户磁盘上真实存在的精度集合。None 表示未知/不限制
+            （保持既有调用方与测试语义）；显式传入时，推荐结果只会落在该集合内。
 
     Returns:
         dict: 推荐参数组合，包含以下键：
             - precision (str): 推荐精度，"fp16" / "fp8" / "mxfp8" / "int8_convrot" / "nvfp4"
-            - enable_blockswap (bool): 是否开启 BlockSwap
+            - enable_blockswap (bool): 是否建议开启 BlockSwap
             - blocks_to_swap (int): 推荐换出块数（BlockSwap 开启时有效）
             - tile_size (int): 推荐 VAE tile 分块大小
             - vram_tile_overlap (int): 推荐 tile 重叠像素
@@ -468,41 +520,53 @@ def recommend_params(
     base_vram = base_table.get(model_key, base_table["3b"])
     num_blocks = _model_num_blocks().get(model_key, 36)
 
+    # 精度可用性：None = 不掌握磁盘事实，沿用旧语义（fp16/fp8 都当作可用）
+    unrestricted = available_precisions is None
+    owned = set(available_precisions or ())
+    # fp16 档展示用的实际精度标识：优先用户持有的非 fp8 精度（量化包驻留≈fp16）
+    fp16_label = next((p for p in ("fp16", "mxfp8", "int8_convrot", "nvfp4") if unrestricted or p in owned), "fp16")
+
     # 估算各方案所需显存
     fp16_needed = estimate_vram_requirements(model_name, "fp16", input_width, input_height, num_frames)
     fp8_needed = estimate_vram_requirements(model_name, "fp8", input_width, input_height, num_frames)
 
-    # BlockSwap 削减模型权重显存
-    fp8_base = base_vram["fp8"]
-    fp8_with_blockswap = fp8_needed - fp8_base * _BLOCKSWAP_REDUCTION
+    # fp8 只有在磁盘上真实存在时才是省显存台阶（量化包反量化后仍以 fp16 驻留，不算）
+    prefer_fp8 = fp8_needed < fp16_needed and (unrestricted or "fp8" in owned)
+    # BlockSwap 削减模型权重显存（按所选档位的权重基线削减约 50%）
+    fp16_base = base_vram.get("fp16", 16.0)
+    swap_base = base_vram.get("fp8", fp16_base / 2) if prefer_fp8 else fp16_base
+    swap_precision = "fp8" if prefer_fp8 else fp16_label
+    swap_needed = fp8_needed if prefer_fp8 else fp16_needed
+    swap_with_blockswap = swap_needed - swap_base * _BLOCKSWAP_REDUCTION
 
     safe_threshold = available_vram_gb * _SAFE_THRESHOLD_RATIO
 
     warning = ""
 
     if fp16_needed <= safe_threshold:
-        precision = "fp16"
+        precision = fp16_label
         enable_blockswap = False
         estimated = fp16_needed
         risk = "low"
-    elif fp8_needed <= safe_threshold:
+    elif prefer_fp8 and fp8_needed <= safe_threshold:
         precision = "fp8"
         enable_blockswap = False
         estimated = fp8_needed
         risk = "low"
-    elif fp8_with_blockswap <= available_vram_gb:
-        precision = "fp8"
+    elif swap_with_blockswap <= available_vram_gb:
+        precision = swap_precision
         enable_blockswap = True
-        estimated = fp8_with_blockswap
+        estimated = swap_with_blockswap
         risk = "medium"
         warning = (
-            f"VRAM 紧张：估算 {estimated}GB，可用 {available_vram_gb:.1f}GB。"
-            f"已开启 BlockSwap 换出 {num_blocks - 4} 块到 CPU，推理速度可能较慢。"
+            f"显存偏紧：按当前配置估算需 {fp16_needed:.1f}GB，可用 {available_vram_gb:.1f}GB。"
+            f"建议开启 BlockSwap（换出 {num_blocks - 4} 块到 CPU，估算降至 {estimated:.1f}GB），"
+            f"推理速度会明显变慢。"
         )
     else:
-        precision = "fp8"
+        precision = swap_precision
         enable_blockswap = True
-        estimated = fp8_with_blockswap
+        estimated = swap_with_blockswap
         risk = "high"
         warning = (
             f"VRAM 严重不足：估算 {estimated}GB（含 BlockSwap），可用 {available_vram_gb:.1f}GB。"

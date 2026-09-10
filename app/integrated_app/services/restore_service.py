@@ -29,6 +29,7 @@ P0-2 分层治理：将原 routes/restore/upload.py 与 routes/restore/batch.py 
 import asyncio
 import contextlib
 import dataclasses
+import inspect
 import json
 import logging
 import os
@@ -140,42 +141,147 @@ def _probe_media_geometry(input_path: str, media_type: str) -> tuple[int, int, i
         return None
 
 
+_PRECISION_LOAD_ORDER = ("fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4")
+
+
+def _list_owned_precisions(model_manager: object | None, model_size: str) -> list[str] | None:
+    """列出磁盘上真实存在的检查点精度（无从探测时返回 None = 不限制）。
+
+    Args:
+        model_manager: ModelManager 实例（None 时无法探测）。
+        model_size: 模型尺寸标识（"3b" / "7b" / "7b_sharp"）。
+
+    Returns:
+        list[str] | None: 存在的精度列表；无 manager 或列表为空（如 CI/无权重
+        环境）时返回 None，调用方按「不掌握磁盘事实」的保守旧语义处理。
+    """
+    if model_manager is None:
+        return None
+    try:
+        owned: list[str] = []
+        for p in _PRECISION_LOAD_ORDER:
+            exists = model_manager.check_model_exists(model_size, p)  # type: ignore[attr-defined]
+            if inspect.isawaitable(exists):
+                # 测试用 AsyncMock 注入的 manager：探测同步语义不成立，放弃探测（不阻塞提交）
+                exists.close()  # type: ignore[attr-defined]
+                return None
+            if exists:
+                owned.append(p)
+    except Exception as e:  # noqa: BLE001 — 探测失败不得阻塞任务提交
+        logger.debug(f"精度可用性探测失败（按不限制处理）: {e}")
+        return None
+    return owned or None
+
+
+def _resolve_effective_precision(
+    model_manager: object | None,
+    model_size: str,
+    requested: str,
+    owned: list[str] | None,
+) -> str:
+    """复刻 model_manager 的加载期精度回退链，得出**实际会加载**的精度。
+
+    预检若按「用户所选但磁盘上不存在」的精度估算，会用错基线档位（如按 fp16
+    的 16GB 门槛评估一个只有 nvfp4 的任务），造成系统性误拒。
+
+    Args:
+        model_manager: ModelManager 实例（None 时不探测）。
+        model_size: 模型尺寸标识。
+        requested: 用户/配置所选精度。
+        owned: `_list_owned_precisions` 结果（None 时直接采纳 requested）。
+
+    Returns:
+        str: 实际会用于加载的精度标识。
+    """
+    if owned is None:
+        return requested
+    if requested in owned:
+        return requested
+    # 与 model_manager._load_model_locked 一致：先 fp16↔fp8 互备，再按固定顺序取第一个存在的
+    counterpart = "fp8" if requested == "fp16" else "fp16"
+    if counterpart in owned:
+        return counterpart
+    return next((p for p in _PRECISION_LOAD_ORDER if p in owned), requested)
+
+
+def _max_degraded_fit(model_size: str, width: int, height: int, num_frames: int, owned: list[str] | None) -> float:
+    """最大降级组合下的显存估算（GB）：fp8 存在则先换 fp8，再叠加全量 BlockSwap。
+
+    这是门禁判定「真的装不下」的唯一依据 —— 只要该组合能容纳，任务就应该放行，
+    由运行期 OOM 阶梯（`blocks_to_swap↑ → resolution↓`）继续兜底。
+
+    Args:
+        model_size: 模型尺寸标识。
+        width: 输入宽度（像素）。
+        height: 输入高度（像素）。
+        num_frames: 帧数。
+        owned: 磁盘持有的精度列表（None = 不掌握磁盘事实）。
+
+    Returns:
+        float: 降级后的估算显存需求（GB）。
+    """
+    num_blocks = _model_num_blocks_for(model_size)
+    precision = "fp8" if (owned is None or "fp8" in owned) else "fp16"
+    return estimate_vram_requirements(
+        model_size, precision, width, height, num_frames, blocks_to_swap=max(1, num_blocks - 4)
+    )
+
+
+def _model_num_blocks_for(model_size: str) -> int:
+    """取模型 Transformer 块数（回退 32，与内置默认一致）。
+
+    Args:
+        model_size: 模型尺寸标识。
+
+    Returns:
+        int: 块数。
+    """
+    from app.integrated_app.gpu_utils import _model_num_blocks
+
+    return int(_model_num_blocks().get(model_size, 32))
+
+
 def vram_preflight_gate(
     app_config: dict | None,
     model_size: str,
     precision: str | None,
     input_path: str,
     media_type: str,
+    blocks_to_swap: int = 0,
+    model_manager: object | None = None,
 ) -> dict | None:
     """任务提交前的显存预检门禁（成本治理 P1-2）。
 
-    估算「用户所选配置」的显存需求并与可用预算比较：
+    估算「实际会执行的配置」的显存需求并与可用预算比较。门禁的定位是
+    **拦截必然 OOM 的任务**，不是替用户决定是否值得尝试：
 
-    - 预算 = mem_get_info 驱动层可用显存 + 本进程已分配显存。模型已加载时
-      权重驻留显存会被 mem_get_info 计为不可用，需加回避免与估算公式中
-      的权重基线二次扣减导致误拒。
-    - 估算需求超预算，或 recommend_params 判定 risk=high（含 BlockSwap 在内
-      的任何降档组合都放不下）→ 抛出 InsufficientVramError（全局处理器转
-      HTTP 503），拒绝任务入队。
-    - risk=medium（需 BlockSwap 才能装下）→ 放行，返回 warning 供调用方
-      写入任务状态与响应，提示用户推理速度可能明显变慢。
-    - 开关关闭 / 无 GPU / 媒体探测失败 → fail-open 放行返回 None：
-      预检本身不成为阻塞点，OOM 由运行期批级降级重试兜底。
+    - 先按 model_manager 的加载期回退链解析**实际精度**（用户所选精度文件
+      常不存在，按所选精度估算会拿错基线档位造成误拒）；
+    - 预算 = mem_get_info 驱动层可用显存 + 本进程已分配显存（模型已加载时
+      权重驻留会被计为不可用，需加回，避免与估算公式的权重基线二次扣减）；
+    - 估算按任务实际生效的 BlockSwap 折算；
+    - 只有**最大降级组合（fp8 可用则降 fp8 + 全量 BlockSwap）仍超预算**（risk=high）
+      才拒绝（InsufficientVramError → HTTP 503）；其余情形一律放行，tight 时
+      把降档建议写入 warning 交前端提示，OOM 由运行期降级阶梯重试兜底。
 
     Args:
         app_config: 应用配置（读取 runtime.vram_preflight_enabled）。
         model_size: 模型尺寸标识（"3b" / "7b" / "7b_sharp"）。
-        precision: 精度标识（"fp16" / "fp8" / 量化变体）；None 时按 fp16 基线估算。
+        precision: 用户/配置所选精度；None 时按 fp16 基线估算。
         input_path: 输入媒体文件路径（用于探测宽高与帧数）。
         media_type: "image" 或 "video"。
+        blocks_to_swap: 任务实际生效的 BlockSwap 换出块数（计入估算）。
+        model_manager: 模型管理器，用于探测磁盘上真实存在的精度并复刻回退链；
+            None 时不探测（按所选精度与「不限制」语义评估）。
 
     Returns:
         dict | None: 放行时的预检结果（estimated_vram_gb / available_vram_gb /
-        risk / warning / input_width / input_height / num_frames）；
+        risk / warning / input_width / input_height / num_frames /
+        requested_precision / effective_precision / blocks_to_swap）；
         fail-open 跳过时返回 None。
 
     Raises:
-        InsufficientVramError: 预估显存超过可用预算时抛出（HTTP 503）。
+        InsufficientVramError: 最大降级仍放不下时抛出（HTTP 503）。
     """
     if not ((app_config or {}).get("runtime", {}) or {}).get("vram_preflight_enabled", True):
         return None
@@ -192,19 +298,48 @@ def vram_preflight_gate(
     # 而估算公式的权重基线又包含它们，直接用 available 会双重扣减
     budget_gb = (info["available_mb"] + info["allocated_mb"]) / 1024.0
 
-    effective_precision = precision or "fp16"
-    estimated = estimate_vram_requirements(model_size, effective_precision, width, height, num_frames)
-    recommendation = recommend_params(model_size, width, height, num_frames, available_vram_gb=budget_gb)
+    requested_precision = precision or "fp16"
+    owned = _list_owned_precisions(model_manager, model_size)
+    effective_precision = _resolve_effective_precision(model_manager, model_size, requested_precision, owned)
 
-    if estimated > budget_gb or recommendation.get("risk") == "high":
+    swap = max(0, int(blocks_to_swap or 0))
+    estimated = estimate_vram_requirements(model_size, effective_precision, width, height, num_frames, swap)
+    recommendation = recommend_params(
+        model_size, width, height, num_frames, available_vram_gb=budget_gb, available_precisions=owned
+    )
+    risk = str(recommendation.get("risk", "low"))
+    degraded_fit = _max_degraded_fit(model_size, width, height, num_frames, owned)
+
+    warnings: list[str] = []
+    if effective_precision != requested_precision:
+        owned_text = "/".join(owned) if owned else "未知"
+        warnings.append(
+            f"所选精度 {requested_precision} 的权重文件不存在，本次将自动改用已下载的 {effective_precision}（{owned_text}）。"
+        )
+    if risk == "medium":
+        # 需要的降档（BlockSwap 等）尚未体现在任务配置里 → 把推荐原样转达用户
+        warnings.append(str(recommendation.get("warning") or "").strip())
+    if estimated > budget_gb:
+        if risk != "medium":
+            warnings.append("显存偏紧，建议开启 BlockSwap 或降低分辨率。")
+        if swap == 0:
+            warnings.append("若推理中途提示显存不足，系统会自动加大 BlockSwap 重试（速度变慢但可完成）。")
+
+    # 唯一硬拒条件：连最大降级组合都放不下
+    if risk == "high" and degraded_fit > budget_gb:
         raise InsufficientVramError(
-            f"预估显存 {estimated:.1f}GB 超过当前可用 {budget_gb:.1f}GB，任务大概率 OOM，已拒绝启动。"
-            "建议：① 切换更小模型或 FP8 精度；② 降低分辨率或帧数；③ 开启 BlockSwap（速度换显存）。",
+            f"当前可用显存 {budget_gb:.1f}GB 不足以完成本次任务：即使降到低显存精度并把 BlockSwap 开到最大"
+            f"仍需约 {degraded_fit:.1f}GB。建议：① 降低分辨率或减少帧数；② 开启 BlockSwap（速度换显存）；"
+            f"③ 改用更小的模型，或用 scripts/download_model.py 下载更省显存的精度权重。",
             detail={
                 "estimated_vram_gb": estimated,
+                "degraded_vram_gb": round(degraded_fit, 2),
                 "available_vram_gb": round(budget_gb, 2),
                 "model_size": model_size,
                 "precision": effective_precision,
+                "requested_precision": requested_precision,
+                "owned_precisions": owned,
+                "blocks_to_swap": swap,
                 "input_width": width,
                 "input_height": height,
                 "num_frames": num_frames,
@@ -215,11 +350,14 @@ def vram_preflight_gate(
     return {
         "estimated_vram_gb": estimated,
         "available_vram_gb": round(budget_gb, 2),
-        "risk": recommendation.get("risk", "low"),
-        "warning": recommendation.get("warning", "") if recommendation.get("risk") == "medium" else "",
+        "risk": risk,
+        "warning": " ".join(w for w in warnings if w),
         "input_width": width,
         "input_height": height,
         "num_frames": num_frames,
+        "requested_precision": requested_precision,
+        "effective_precision": effective_precision,
+        "blocks_to_swap": swap,
     }
 
 

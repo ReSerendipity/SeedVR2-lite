@@ -117,6 +117,25 @@ def detect_media_type(file_ext: str) -> str | None:
     return None
 
 
+def config_blocks_to_swap(config: dict | None) -> int:
+    """读取引擎加载期生效的 BlockSwap 换出块数（`inference.blocks_to_swap`）。
+
+    该值与表单的 `blocks_to_swap` 是两个来源：引擎在加载模型时按配置换块
+    （`engines/seedvr2_engine.py`），显存预检若只看表单值会低估实际生效配置、
+    高估显存需求。调用方按「两者取大」估算即可覆盖真实驻留。
+
+    Args:
+        config: 应用配置 dict。
+
+    Returns:
+        int: 换出块数，缺失/非法时返回 0（视为不启用）。
+    """
+    try:
+        return int(((config or {}).get("inference", {}) or {}).get("blocks_to_swap", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def validate_local_media_files(media_files: Sequence[tuple[str, str | None]], config: dict) -> None:
     """folder 模式本地媒体文件安全校验（大小上限 + 魔数，数据治理 P1-2）。
 

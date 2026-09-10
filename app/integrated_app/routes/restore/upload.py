@@ -315,15 +315,19 @@ async def upload_and_restore(
     use_model_size = model_size_from_dit_model(dit_model)
 
     # ============== 显存预检门禁（成本治理 P1-2） ==============
-    # 提交前估算所选配置的显存需求：超过可用预算直接拒绝（InsufficientVramError
-    # → 全局处理器 503，消息含降档建议），避免任务入队白跑数分钟后 OOM；
-    # medium 风险放行但把 warning 返回给前端并写入任务状态缓存
+    # 按**实际会执行的配置**估算：精度经 model_manager 的加载期回退链解析（用户所选
+    # 精度文件常不存在），BlockSwap 取表单值与 config inference.blocks_to_swap 的较大者
+    # （引擎加载期换块与表单无关）。仅当「最大降级仍放不下」才拒绝（InsufficientVramError
+    # → 全局处理器 503）；显存偏紧一律放行并把降档建议写入响应 warning 与任务状态缓存，
+    # 真 OOM 由运行期降级阶梯（blocks_to_swap↑ → resolution↓）兜底
     vram_preflight = vram_preflight_gate(
         config,
         use_model_size,
         precision_from_dit_model(dit_model) or (config.get("model", {}) or {}).get("default_precision", "fp16"),
         input_path,
         task_type,
+        blocks_to_swap=max(int(raw_params.blocks_to_swap or 0), common.config_blocks_to_swap(config)),
+        model_manager=model_manager,
     )
     vram_warning = (vram_preflight or {}).get("warning", "")
 
