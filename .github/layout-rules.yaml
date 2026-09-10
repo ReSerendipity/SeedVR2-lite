@@ -60,6 +60,7 @@ root_allowlist:
   - .dockerignore
   - .env.example
   - .gitattributes
+  - .githooks
   - .github
   - .gitignore
   - .pre-commit-config.yaml
