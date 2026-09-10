@@ -239,6 +239,13 @@ jobs:
           $appDir = Join-Path $smokeRoot 'SeedVR2-Portable'
           if (-not (Test-Path $appDir)) { throw "unpack did not produce $appDir" }
 
+          # Integrity gate (2026-09-10, GOTCHAS #114): the release config.yaml ships with
+          # integrity_enforce=true, so a manifest that drifted from the shipped bytes makes the
+          # user-side startup self-check REFUSE TO BOOT. Verify the unpacked payload against its own
+          # manifest + Ed25519 signature before spending 30 min on the smoke run.
+          & python .\scripts\verify_release_integrity.py --app-root $appDir --require-enforce
+          if ($LASTEXITCODE -ne 0) { throw "integrity gate failed on unpacked payload: $appDir" }
+
           # Smoke: start portable server -> health -> CSRF double-submit -> restore task -> verify output.
           # Hosted windows runners have no GPU, so real inference is not required here; but any packaging
           # level error (server won't boot, 404 route, 403 CSRF, import failure, corrupt output) fails hard.

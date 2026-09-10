@@ -182,3 +182,14 @@ jobs:
         run: |
           test -f requirements-lock.txt || (echo "FAIL: 缺少 requirements-lock.txt" && exit 1)
           echo "PASS: 依赖锁存在"
+      - name: Setup Python (for integrity gate)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 完整性清单一致性（发布门禁）
+        # 发布版 config.yaml 为 integrity_enforce: true（构建期注入），清单与代码一旦漂移，
+        # 用户端启动自检会**直接拒绝启动**而非仅告警（GOTCHAS #114）。此处提前拦截漂移进入 main。
+        run: |
+          python -m pip install --quiet --disable-pip-version-check pyyaml cryptography
+          python scripts/verify_release_integrity.py
+          echo "PASS: 核心模块完整性清单与代码一致且签名有效"
