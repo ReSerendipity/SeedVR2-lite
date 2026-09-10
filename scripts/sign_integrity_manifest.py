@@ -83,6 +83,13 @@ def main() -> int:
         if sig_path is None:
             print("[FAIL] Ed25519 签名写入失败")
             return 1
+        # 签名后立即用内置公钥回验——密钥错配（私钥与内置公钥不配套）或签名
+        # 写入异常在构建期立刻暴露，而不是等完整构建完成后在冒烟门禁才失败
+        # （GOTCHAS #98，2026-09-10：CI 4 轮构建均在最后冒烟验签失败）。
+        if not verify_manifest_signature_ed25519(args.manifest):
+            print("[FAIL] Ed25519 签名回验失败：私钥与内置公钥不匹配或签名文件异常")
+            print("       请检查 data/.manifest_signing_key 与 security/manifest_signing_public_key.pem 是否配套")
+            return 1
         print(f"[OK] 已签名(Ed25519): {args.manifest} -> {sig_path}")
         return 0
 

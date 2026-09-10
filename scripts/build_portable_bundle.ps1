@@ -834,6 +834,21 @@ foreach ($id in $Component) {
                 throw "A-6 便携包清单签名失败: $($sig.Text)"
             }
             Write-Host "  [A-6/B-8] 已重算清单并签名（Ed25519）；config.yaml enforce=true"
+            # A-6 诊断：payload 内置公钥必须与仓库公钥一致，否则用户端验签必然失败
+            # （GOTCHAS #98：CI 冒烟曾在验签失败，payload 公钥来源需与签名私钥配套）。
+            $pubPayload = Join-Path $payloadAppDir 'security\manifest_signing_public_key.pem'
+            $pubRepo = Join-Path $Root 'app\integrated_app\security\manifest_signing_public_key.pem'
+            if ((Test-Path -LiteralPath $pubPayload) -and (Test-Path -LiteralPath $pubRepo)) {
+                $h1 = (Get-FileHash -LiteralPath $pubPayload -Algorithm SHA256).Hash
+                $h2 = (Get-FileHash -LiteralPath $pubRepo -Algorithm SHA256).Hash
+                if ($h1 -eq $h2) {
+                    Write-Host "  [A-6] 诊断：payload 公钥 == 仓库公钥（SHA256 $h1）"
+                } else {
+                    throw "A-6 诊断失败：payload 公钥与仓库公钥不一致（$h1 vs $h2），验签必败"
+                }
+            } else {
+                Write-Warning "A-6 诊断：公钥文件缺失（payload=$pubPayload, repo=$pubRepo）"
+            }
         }
         'torch' {
             $built = New-SeedVR2TorchPayload -PayloadDir $payload -WheelDir $TorchWheelDir
