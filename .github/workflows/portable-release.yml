@@ -234,8 +234,27 @@ jobs:
           # On a self-hosted GPU runner, set require_gpu_inference=true to force a real restore.
           $extra = @()
           if ('${{ github.event.inputs.require_gpu_inference }}' -eq 'true') { $extra += '--require-inference' }
+
+          # 冒烟前诊断（GOTCHAS #98）：用便携 python + payload 闭源 pyd 直接验签，
+          # 与服务器启动自检同一函数，True/False 直接区分「pyd/环境问题」与「启动路径问题」。
+          $portablePy = Get-ChildItem -Path $appDir -Recurse -Filter python.exe -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match 'WPy' } | Select-Object -First 1
+          if ($portablePy) {
+              $diag = & $portablePy.FullName -c "import sys; sys.path.insert(0, r'$appDir'); from app.integrated_app.security.secret_key import verify_manifest_signature_ed25519 as v; m=r'$appDir\app\integrated_app\security\integrity_manifest.json'; print('PORTABLE_VERIFY:', v(m))" 2>&1
+              Write-Host "  [诊断] 便携 python 验签: $diag"
+          } else {
+              Write-Host "  [诊断] 未找到便携 python"
+          }
+
           & python .\scripts\smoke_portable_bundle.py --app-dir $appDir --boot-timeout 900 --submit-timeout 900 --task-timeout 1800 --resolution 512 --keep-log @extra
-          if ($LASTEXITCODE -ne 0) { throw "post-unpack smoke gate failed, refusing to publish" }
+          if ($LASTEXITCODE -ne 0) {
+              $smokeLog = Join-Path $appDir 'logs\smoke_portable.log'
+              if (Test-Path $smokeLog) {
+                  Write-Host "  | ---- smoke_portable.log tail ----"
+                  Get-Content $smokeLog -Tail 30 -Encoding UTF8 | ForEach-Object { Write-Host "  | $_" }
+              }
+              throw "post-unpack smoke gate failed, refusing to publish"
+          }
           $log = Join-Path $appDir 'logs\smoke_portable.log'
           if (Test-Path $log) { Get-Content $log -Tail 20 -Encoding UTF8 | ForEach-Object { Write-Host "  | $_" } }
 
