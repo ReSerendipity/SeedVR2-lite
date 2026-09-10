@@ -71,7 +71,8 @@ jobs:
           if ($h -ne $sha) { throw "WinPython 哈希不匹配: $h" }
           $dest = Join-Path $env:RUNNER_TEMP 'wp'
           New-Item -ItemType Directory -Path $dest -Force | Out-Null
-          Start-Process -FilePath $exe -ArgumentList @('-y', '-o', $dest) -Wait -NoNewWindow
+          # WinPython 发行是 NSIS 安装器：静默 /S，目录 /D=xxx（必须最后、无引号）
+          Start-Process -FilePath $exe -ArgumentList @('/S', "/D=$dest") -Wait -NoNewWindow
       - name: 便携 python 能力探测
         shell: powershell
         run: |

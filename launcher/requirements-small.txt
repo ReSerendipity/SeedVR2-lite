@@ -44,6 +44,7 @@ aiofiles==25.1.0
 psutil==7.2.2
 rich==15.0.0
 PyWavelets==1.9.0
+cryptography==50.0.1  # 启动自检 Ed25519 验签依赖（GOTCHAS #98：WinPython 7z 解 NSIS 后预装 cryptography 丢失，便携包必须显式安装）
 
 # Flash Attention (需要 CUDA 编译环境，Windows 下可能需要预编译包)
 # 如果安装失败，请从以下地址下载预编译 whl：
