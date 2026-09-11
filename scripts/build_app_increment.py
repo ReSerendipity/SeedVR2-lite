@@ -24,7 +24,6 @@ import argparse
 import contextlib
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -101,7 +100,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="增量包打包（门禁先行）")
     parser.add_argument("--version", required=True, help="版本号，如 1.5.7")
     parser.add_argument("--staging", default=str(DEFAULT_STAGING), help="增量包源目录（默认 staging\\App）")
-    parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR), help="输出目录（默认 dist\\tauri-release\\installer）")
+    parser.add_argument(
+        "--out-dir", default=str(DEFAULT_OUT_DIR), help="输出目录（默认 dist\\tauri-release\\installer）"
+    )
     parser.add_argument("--7za", dest="seven_zip", default=None, help="7za.exe 路径；缺省自动探测")
     parser.add_argument("--python", default=sys.executable, help="用于跑门禁的解释器（需 cryptography）")
     parser.add_argument("--skip-gate", action="store_true", help="[危险] 跳过完整性门禁，仅供调试")

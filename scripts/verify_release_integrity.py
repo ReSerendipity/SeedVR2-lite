@@ -30,7 +30,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import importlib
-import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -80,6 +80,58 @@ def _read_enforce(config_path: Path) -> bool | None:
     node = (data.get("runtime") or {}).get("security") or {}
     value = node.get("integrity_enforce")
     return None if value is None else bool(value)
+
+
+# 清单换行归一化漂移检测目标（仅这两份：前者是 Ed25519 签名输入，后者是签名本身）。
+# HMAC `.sig` 由运行时经 read_text().strip() 读取、换行无关，不纳入本项以免误报。
+_STATE_SENSITIVE_RELS = (
+    "app/integrated_app/security/integrity_manifest.json",
+    "app/integrated_app/security/integrity_manifest.json.sig.ed25519",
+)
+
+
+def _git_repo_blob(repo_root: Path, rel: str) -> bytes | None:
+    """读取文件的仓库态字节：优先索引（即将入库内容），回退 HEAD；非 git 环境返回 None。"""
+    for spec in (f":{rel}", f"HEAD:{rel}"):
+        try:
+            r = subprocess.run(["git", "show", spec], cwd=str(repo_root), capture_output=True)
+        except OSError:  # pragma: no cover - git 不可用
+            return None
+        if r.returncode == 0:
+            return r.stdout
+    return None
+
+
+def check_repo_state_normalization(repo_root: Path) -> list[str]:
+    """仓库模式下校验：清单与 Ed25519 签名的**磁盘字节**必须等于**仓库态字节**。
+
+    动机（GOTCHAS #103）：`run_startup_selfcheck` 只读工作区磁盘字节，而
+    `.gitattributes` 的 `*.json text eol=lf` 会在 `git add` 时把 CRLF 归一成 LF 入库。
+    若签名算自 CRLF 工作区，则本地门禁读磁盘（CRLF）判绿，但 CI/干净检出与用户端拿到的是
+    LF 清单，Ed25519 验签对不上 → 「本地绿、CI 红、发出去用户端拒绝启动」。本项把该漂移
+    前移到提交前拦截。发布态（--app-root 指向 payload/staging）无 git 索引可比，返回空跳过。
+
+    Args:
+        repo_root: 仓库根目录。
+
+    Returns:
+        list[str]: 漂移问题描述（无 git 环境或无漂移时为空）。
+    """
+    if subprocess.run(["git", "rev-parse", "--git-dir"], cwd=str(repo_root), capture_output=True).returncode != 0:
+        return []
+    problems: list[str] = []
+    for rel in _STATE_SENSITIVE_RELS:
+        path = repo_root / rel
+        if not path.is_file():
+            continue
+        stored = _git_repo_blob(repo_root, rel)
+        if stored is not None and stored != path.read_bytes():
+            problems.append(
+                f"{Path(rel).name}: 工作区字节 ≠ 仓库态字节（换行归一化漂移，#103）—— "
+                "CI/用户端按归一后的仓库态验签将失败；请以 `git show :<路径>` 的字节覆写工作区后"
+                "重跑 sign_integrity_manifest.py"
+            )
+    return problems
 
 
 def main() -> int:
@@ -138,14 +190,10 @@ def main() -> int:
         problems.append(f"清单哈希与实际文件不一致: {', '.join(failed_files)}")
     if not signed:
         problems.append(
-            "清单缺少有效签名（先跑 scripts/generate_integrity_manifest.py 再跑 "
-            "scripts/sign_integrity_manifest.py）"
+            "清单缺少有效签名（先跑 scripts/generate_integrity_manifest.py 再跑 " "scripts/sign_integrity_manifest.py）"
         )
     if total != core_count:
-        problems.append(
-            f"清单条目数 {total} ≠ 核心模块数 {core_count}"
-            "（可能是闭源注入态清单与实际 payload 不匹配）"
-        )
+        problems.append(f"清单条目数 {total} ≠ 核心模块数 {core_count}" "（可能是闭源注入态清单与实际 payload 不匹配）")
     if skipped > 0:
         problems.append(f"有 {skipped} 个模块被跳过（文件缺失或清单条目为空）")
     if passed != core_count and failed == 0 and skipped == 0:
@@ -155,9 +203,14 @@ def main() -> int:
     enforce = _read_enforce(config_path)
     print(f"  config.yaml integrity_enforce: {enforce}（{config_path.name}）")
     if args.require_enforce and enforce is not True:
-        problems.append(
-            f"要求发布态强制模式，但 integrity_enforce={enforce}（期望 true）：{config_path}"
-        )
+        problems.append(f"要求发布态强制模式，但 integrity_enforce={enforce}（期望 true）：{config_path}")
+
+    if args.app_root is None:
+        drift = check_repo_state_normalization(repo_root)
+        print(f"  仓库态字节归一漂移（#103）: {'发现问题' if drift else '无（磁盘==索引/HEAD）'}")
+        problems.extend(drift)
+    else:
+        print("  仓库态字节归一漂移（#103）: 跳过（发布态 --app-root 无 git 索引可比）")
 
     print("-" * 68)
     if problems:

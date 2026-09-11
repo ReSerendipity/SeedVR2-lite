@@ -335,3 +335,6 @@ scripts/installer/*.exe
 data/.manifest_signing_key
 data/.manifest_signing_key.old
 data/.manifest_signing_key.old.*
+
+# 本地 worktree 备份目录（勿入库；ruff/black 亦随之跳过，2026-09-11）
+backups/
