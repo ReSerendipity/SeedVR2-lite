@@ -22,7 +22,7 @@ API 端点：
 import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -287,37 +287,41 @@ async def download_history_file(
 @router.delete("/{record_id}")
 async def delete_history_record(
     record_id: int,
+    request: Request,
     history_db: HistoryDB = Depends(get_history_db),
     config: dict = Depends(get_config),
 ):
-    """删除单条历史记录。
+    """删除单条历史记录（默认软删除进入回收站，防误删）。
 
     API 端点：DELETE /api/system/history/{record_id}
 
-    数据治理 P1-1：删除记录时连带清理落盘产物（输出文件经 PathGuard
-    校验后删除 + 关联任务的断点续跑 JSON），落实隐私政策「历史可清」。
+    默认软删除：仅标记 deleted_at，记录与输出文件保留，可经回收站恢复。
+    ``hard=true`` 时物理删除并连带清理落盘产物（输出文件 + 断点续跑 JSON），
+    落实隐私政策「历史可清」。
 
     路径参数：
     - record_id: 历史记录 ID
 
+    查询参数：
+    - hard (bool, 默认 false): True=物理删除（不可恢复）。
+
     返回格式（JSON）：
     {
         "success": bool,
+        "mode": "recycled" | "hard",
         "removed_files": int
     }
-
-    Args:
-        record_id: 要删除的记录 ID。
-        history_db: 历史数据库实例（通过依赖注入）。
-        config: 应用配置（通过依赖注入）。
-
-    Returns:
-        包含删除结果的字典。
     """
     record = await history_db.get_record(record_id)
-    success = await history_db.delete_record(record_id)
-    removed_files = await remove_record_artifacts([record], history_db, config) if record else 0
-    return {"success": success, "removed_files": removed_files}
+    if not record:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    hard = request.query_params.get("hard", "false").lower() == "true"
+    if hard:
+        success = await history_db.delete_record(record_id, soft=False)
+        removed_files = await remove_record_artifacts([record], history_db, config)
+        return {"success": success, "mode": "hard", "removed_files": removed_files}
+    success = await history_db.delete_record(record_id, soft=True)
+    return {"success": success, "mode": "recycled", "removed_files": 0}
 
 
 @router.post("/{record_id}/cancel")
@@ -418,37 +422,68 @@ async def pin_history_record(
 async def clear_history(
     before_date: str | None = None,
     status: str | None = None,
+    hard: bool = Query(False, description="True=物理删除(连带清理文件)；默认 False=软删除进回收站"),
     history_db: HistoryDB = Depends(get_history_db),
     config: dict = Depends(get_config),
 ):
-    """批量清除历史记录。
+    """批量清除历史记录（默认软删除进入回收站，防误删）。
 
     API 端点：DELETE /api/system/history
 
-    数据治理 P1-1：清除记录前先取落盘路径，删除记录后连带清理
-    输出文件（PathGuard 校验）与断点续跑 JSON。
+    默认软删除：标记 deleted_at，记录与文件保留，可经回收站恢复。
+    ``hard=true`` 时物理删除并连带清理落盘产物（输出文件 + 断点续跑 JSON）。
 
     查询参数：
     - before_date (optional): 清除此日期之前的记录。
-    - status (optional): 仅清除指定状态的记录（如 "failed"、"cancelled"）；
-      不提供则清除所有状态（保留已完成记录应传 status=failed 或 status=cancelled）。
-
-    返回格式（JSON）：
-    {
-        "deleted_count": int,
-        "removed_files": int
-    }
-
-    Args:
-        before_date: 截止日期，可选。
-        status: 按状态过滤，可选。
-        history_db: 历史数据库实例。
-        config: 应用配置（通过依赖注入）。
+    - status (optional): 仅清除指定状态的记录（如 "failed"、"cancelled"）。
+    - hard (bool, 默认 false): True=物理删除（不可恢复）。
 
     Returns:
-        包含删除数量的字典。
+        {"deleted_count": int, "removed_files": int, "mode": "recycled"|"hard"}
     """
-    records = await history_db.get_records_filtered(before_date, status=status)
-    count = await history_db.clear_records(before_date, status=status)
-    removed_files = await remove_record_artifacts(records, history_db, config)
-    return {"deleted_count": count, "removed_files": removed_files}
+    if hard:
+        records = await history_db.get_records_filtered(before_date, status=status)
+        count = await history_db.clear_records(before_date, status=status, soft=False)
+        removed_files = await remove_record_artifacts(records, history_db, config)
+        return {"deleted_count": count, "removed_files": removed_files, "mode": "hard"}
+    count = await history_db.clear_records(before_date, status=status, soft=True)
+    return {"deleted_count": count, "removed_files": 0, "mode": "recycled"}
+
+
+@router.get("/recycle")
+async def list_recycle(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    history_db: HistoryDB = Depends(get_history_db),
+):
+    """GET /api/system/history/recycle — 列出回收站（已软删除的记录）。"""
+    records, total = await history_db.list_deleted_records(limit=page_size, offset=(page - 1) * page_size)
+    return {
+        "records": [vars(r) for r in records],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+    }
+
+
+@router.post("/recycle/restore")
+async def restore_recycle(
+    record_ids: list[int] = Query(default=[]),
+    history_db: HistoryDB = Depends(get_history_db),
+):
+    """POST /api/system/history/recycle/restore — 从回收站恢复记录。"""
+    if not record_ids:
+        raise HTTPException(status_code=400, detail="record_ids required")
+    count = await history_db.restore_records(record_ids)
+    return {"restored": count}
+
+
+@router.delete("/recycle/purge")
+async def purge_recycle(
+    keep_days: int = Query(30, ge=0, description="彻底清理超过该天数的回收站记录"),
+    history_db: HistoryDB = Depends(get_history_db),
+):
+    """DELETE /api/system/history/recycle/purge — 彻底清理回收站中超期记录。"""
+    count = await history_db.purge_deleted_records(keep_days)
+    return {"purged": count}

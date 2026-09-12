@@ -24,7 +24,7 @@ import os
 import sqlite3
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import aiosqlite
 
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # 历史库 schema 当前版本（数据治理 P0-2）。
 # 约定：新增列/索引等结构变更时 +1，并在 _MIGRATIONS 登记对应迁移步骤（v0 表示
 # 未打版本标记的历史旧库）。首次建表即包含全部列，因此新库从 v0 一步推进到最新版。
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 async def _migrate_v2_to_v3(db: aiosqlite.Connection) -> None:
@@ -67,6 +67,17 @@ async def _migrate_v1_to_v2(db: aiosqlite.Connection) -> None:
         await db.execute("ALTER TABLE history ADD COLUMN input_sha256 TEXT DEFAULT ''")
 
 
+async def _migrate_v3_to_v4(db: aiosqlite.Connection) -> None:
+    """v3 → v4：history 表新增 deleted_at 列（回收站 / 防误删）。
+
+    必须幂等：列已存在时 no-op。
+    """
+    cursor = await db.execute("PRAGMA table_info(history)")
+    existing_cols = {row[1] for row in await cursor.fetchall()}
+    if existing_cols and "deleted_at" not in existing_cols:
+        await db.execute("ALTER TABLE history ADD COLUMN deleted_at TEXT DEFAULT NULL")
+
+
 async def _migrate_v0_to_v1(db: aiosqlite.Connection) -> None:
     """v0（未打版本标记的旧库）→ v1：补列 output_size_bytes / vram_peak_mb。
 
@@ -91,6 +102,7 @@ _MIGRATIONS: tuple[tuple[int, str, Callable[[aiosqlite.Connection], Awaitable[No
     (1, "补列 output_size_bytes / vram_peak_mb（旧库兼容）", _migrate_v0_to_v1),
     (2, "补列 input_sha256（源文件内容寻址血缘，P1-1）", _migrate_v1_to_v2),
     (3, "补列 pinned（用户标记保留，retention 清理豁免，数据治理 P1-5）", _migrate_v2_to_v3),
+    (4, "补列 deleted_at（软删除 / 回收站，防误删）", _migrate_v3_to_v4),
 )
 
 
@@ -235,7 +247,8 @@ class HistoryDB:
                 output_size_bytes INTEGER DEFAULT 0,
                 vram_peak_mb REAL DEFAULT 0.0,
                 input_sha256 TEXT DEFAULT '',
-                pinned INTEGER DEFAULT 0
+                pinned INTEGER DEFAULT 0,
+                deleted_at TEXT DEFAULT NULL
             )
         """)
 
@@ -594,6 +607,8 @@ class HistoryDB:
         if status:
             conditions.append("status = ?")
             params.append(status)
+        # 回收站隔离：正常列表永远排除已软删除的记录
+        conditions.append("deleted_at IS NULL")
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -684,8 +699,23 @@ class HistoryDB:
                     break
         return dirs
 
-    async def delete_record(self, record_id: int) -> bool:
-        """删除记录"""
+    async def delete_record(self, record_id: int, soft: bool = True) -> bool:
+        """删除记录。
+
+        默认软删除（回收站）：仅标记 deleted_at，记录与输出文件均保留，可恢复。
+        ``soft=False`` 时物理删除。
+
+        Returns:
+            记录存在且更新/删除成功返回 True。
+        """
+        if soft:
+            ts = datetime.now().isoformat()
+            rowcount = await self._execute_write(
+                "UPDATE history SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+                (ts, record_id),
+                want_rowcount=True,
+            )
+            return rowcount > 0
         await self._execute_write("DELETE FROM history WHERE id = ?", (record_id,))
         return True
 
@@ -759,13 +789,16 @@ class HistoryDB:
         rows = await self._fetch_all(f"SELECT * FROM history{where}", params)
         return [self._row_to_record(row) for row in rows]
 
-    async def clear_records(self, before_date: str | None = None, status: str | None = None) -> int:
+    async def clear_records(self, before_date: str | None = None, status: str | None = None, soft: bool = True) -> int:
         """清除记录。
+
+        默认软删除（回收站）：标记 deleted_at，记录与文件保留，可经回收站恢复。
+        ``soft=False`` 时物理删除（供彻底清空 / 数据治理清理使用）。
 
         Args:
             before_date: 仅清除此日期之前的记录，为 None 则不限日期。
             status: 仅清除指定状态的记录，为 None 则清除所有状态。
-                    支持 "failed"、"cancelled"、"pending"、"processing" 等。
+            soft: True=软删除（默认），False=物理删除。
         """
         conditions = []
         params: list = []
@@ -776,7 +809,52 @@ class HistoryDB:
             conditions.append("status = ?")
             params.append(status)
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        if soft:
+            ts = datetime.now().isoformat()
+            # 仅标记未删除的；已软删的不重复更新时间戳
+            soft_where = where + (" AND deleted_at IS NULL" if where else " WHERE deleted_at IS NULL")
+            return await self._execute_write(
+                f"UPDATE history SET deleted_at = ?{soft_where}", [ts, *params], want_rowcount=True
+            )
         return await self._execute_write(f"DELETE FROM history{where}", params, want_rowcount=True)
+
+    async def restore_records(self, record_ids: list[int]) -> int:
+        """从回收站恢复记录（清除 deleted_at）。"""
+        if not record_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in record_ids)
+        return await self._execute_write(
+            f"UPDATE history SET deleted_at = NULL WHERE id IN ({placeholders})",
+            list(record_ids),
+            want_rowcount=True,
+        )
+
+    async def list_deleted_records(self, limit: int = 50, offset: int = 0) -> tuple[list[HistoryRecord], int]:
+        """列出回收站中的记录（已软删除）。"""
+        total_row = await self._fetch_one("SELECT COUNT(*) FROM history WHERE deleted_at IS NOT NULL")
+        total = total_row[0] if total_row else 0
+        rows = await self._fetch_all(
+            "SELECT * FROM history WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT ? OFFSET ?",
+            [limit, offset],
+        )
+        return [self._row_to_record(row) for row in rows], total
+
+    async def purge_deleted_records(self, keep_days: int = 30) -> int:
+        """彻底清理回收站中超过 keep_days 天的记录（删除 DB 行；输出文件由 retention 负责）。
+
+        超过保留期的软删除记录才物理删除，既防误删又避免回收站无限膨胀。
+        """
+        cutoff = (datetime.now() - timedelta(days=keep_days)).isoformat()
+        # 用 ISO 字符串字典序比较（datetime.isoformat 为定长、可排序）
+        row = await self._fetch_one(
+            "SELECT COUNT(*) FROM history WHERE deleted_at IS NOT NULL AND deleted_at < ?", (cutoff,)
+        )
+        count = row[0] if row else 0
+        if count:
+            await self._execute_write(
+                "DELETE FROM history WHERE deleted_at IS NOT NULL AND deleted_at < ?", (cutoff,)
+            )
+        return count
 
     async def count_records(self) -> int:
         """统计当前历史记录总数。"""

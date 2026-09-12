@@ -120,21 +120,28 @@ PHASE_1_FEATURES: list[FeatureItem] = [
         "SCST",
         "vae_tiled_enhance.py",
         Priority.P0,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
-    FeatureItem(3, "滑动窗口去噪策略", "Upscale-A-Video", "tile_blend.py", Priority.P0, ImplementationStatus.COMPLETED),
+    FeatureItem(
+        3,
+        "滑动窗口去噪策略",
+        "Upscale-A-Video/RVRT/DiffVSR",
+        "tile_blend.py",
+        Priority.P0,
+        ImplementationStatus.COMPLETED,
+    ),
     FeatureItem(
         4,
         "VRAM Management 框架 (AutoWrappedModule)",
         "FlashVSR",
         "blockswap.py + vram_monitor.py",
         Priority.P0,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
         5,
         "FP8 量化方案移植",
-        "HunyuanVideo",
+        "torchao/CogVideo（HunyuanVideo纯PyTorch方案未采用）",
         "seedvr2_engine.py + vram_toolchain.py",
         Priority.P0,
         ImplementationStatus.COMPLETED,
@@ -145,7 +152,7 @@ PHASE_1_FEATURES: list[FeatureItem] = [
         "DiffBIR",
         "vae_tiled_enhance.py",
         Priority.P0,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
         7,
@@ -153,7 +160,7 @@ PHASE_1_FEATURES: list[FeatureItem] = [
         "StableVSR",
         "temporal_processing.py",
         Priority.P0,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
         8,
@@ -161,7 +168,7 @@ PHASE_1_FEATURES: list[FeatureItem] = [
         "FlashVSR",
         "temporal_processing.py",
         Priority.P0,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
         9,
@@ -169,11 +176,9 @@ PHASE_1_FEATURES: list[FeatureItem] = [
         "Waifu2x-Extension-GUI",
         "engine_scheduler.py",
         Priority.P0,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
-    FeatureItem(
-        10, "LCSA 稀疏注意力", "FlashVSR", "dit_optimization.py", Priority.P0, ImplementationStatus.FRAMEWORK_DONE
-    ),
+    FeatureItem(10, "LCSA 稀疏注意力", "FlashVSR", "dit_optimization.py", Priority.P0, ImplementationStatus.COMPLETED),
     FeatureItem(
         11,
         "Restoration-Guided Sampling",
@@ -198,7 +203,7 @@ PHASE_2_FEATURES: list[FeatureItem] = [
         "CogVideo/StableVSR",
         "vae_tiled_enhance.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
         2,
@@ -206,18 +211,18 @@ PHASE_2_FEATURES: list[FeatureItem] = [
         "CogVideo/Upscale-A-Video",
         "vae_tiled_enhance.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        3, "条件 VAE 解码", "Upscale-A-Video", "vae_tiled_enhance.py", Priority.P1, ImplementationStatus.FRAMEWORK_DONE
+        3, "条件 VAE 解码", "Upscale-A-Video", "vae_tiled_enhance.py", Priority.P1, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
-        4, "Tiled Chunked Decode", "VEnhancer", "vae_tiled_enhance.py", Priority.P1, ImplementationStatus.FRAMEWORK_DONE
+        4, "Tiled Chunked Decode", "VEnhancer", "vae_tiled_enhance.py", Priority.P1, ImplementationStatus.COMPLETED
     ),
     FeatureItem(5, "CPU Cache 显存管理", "RVRT", "cache_manager.py", Priority.P1, ImplementationStatus.COMPLETED),
-    FeatureItem(6, "VRAMPeakMonitor", "DiffBIR", "vram_monitor.py", Priority.P1, ImplementationStatus.FRAMEWORK_DONE),
+    FeatureItem(6, "VRAMPeakMonitor", "DiffBIR", "vram_monitor.py", Priority.P1, ImplementationStatus.COMPLETED),
     FeatureItem(
-        7, "特征传播模块", "Upscale-A-Video", "temporal_processing.py", Priority.P1, ImplementationStatus.FRAMEWORK_DONE
+        7, "特征传播模块", "Upscale-A-Video", "temporal_processing.py", Priority.P1, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         8,
@@ -225,13 +230,13 @@ PHASE_2_FEATURES: list[FeatureItem] = [
         "BasicVSR++",
         "temporal_processing.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        9, "Patch-level KV Cache", "Turtle", "temporal_processing.py", Priority.P1, ImplementationStatus.FRAMEWORK_DONE
+        9, "Patch-level KV Cache", "Turtle", "temporal_processing.py", Priority.P1, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
-        10, "截断因果历史模型", "Turtle", "temporal_processing.py", Priority.P1, ImplementationStatus.FRAMEWORK_DONE
+        10, "截断因果历史模型", "Turtle", "temporal_processing.py", Priority.P1, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         11,
@@ -239,7 +244,7 @@ PHASE_2_FEATURES: list[FeatureItem] = [
         "clarity-upscaler",
         "engine_scheduler.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
         12,
@@ -247,7 +252,7 @@ PHASE_2_FEATURES: list[FeatureItem] = [
         "Waifu2x-Extension-GUI",
         "engine_scheduler.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
         13,
@@ -255,10 +260,10 @@ PHASE_2_FEATURES: list[FeatureItem] = [
         "VEnhancer",
         "video_processing_enhance.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        14, "CPU/轻量级引擎", "Anime4KCPP", "specialized_engines.py", Priority.P1, ImplementationStatus.FRAMEWORK_DONE
+        14, "CPU/轻量级引擎", "Anime4KCPP", "specialized_engines.py", Priority.P1, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         15,
@@ -266,21 +271,19 @@ PHASE_2_FEATURES: list[FeatureItem] = [
         "DiffBIR",
         "specialized_engines.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
         16, "AdaIN 颜色校正", "Upscale-A-Video/CodeFormer", "color_fix.py", Priority.P1, ImplementationStatus.COMPLETED
     ),
-    FeatureItem(
-        17, "小波重建后处理", "DiffBIR", "post_processing.py", Priority.P1, ImplementationStatus.FRAMEWORK_DONE
-    ),
+    FeatureItem(17, "小波重建后处理", "DiffBIR", "post_processing.py", Priority.P1, ImplementationStatus.COMPLETED),
     FeatureItem(
         18,
         "SRVGGNetCompact 后处理",
         "Real-ESRGAN",
         "post_processing.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
         19,
@@ -288,10 +291,10 @@ PHASE_2_FEATURES: list[FeatureItem] = [
         "RCOD-SR",
         "diffusion_sampling.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        20, "四步蒸馏推理", "Stream-DiffVSR", "diffusion_sampling.py", Priority.P1, ImplementationStatus.FRAMEWORK_DONE
+        20, "四步蒸馏推理", "Stream-DiffVSR", "diffusion_sampling.py", Priority.P1, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         21,
@@ -299,7 +302,7 @@ PHASE_2_FEATURES: list[FeatureItem] = [
         "VEnhancer",
         "diffusion_sampling.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
         22,
@@ -307,18 +310,16 @@ PHASE_2_FEATURES: list[FeatureItem] = [
         "clarity-upscaler",
         "diffusion_sampling.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
-    FeatureItem(
-        23, "FP8 量化 (torchao)", "CogVideo", "vram_toolchain.py", Priority.P1, ImplementationStatus.FRAMEWORK_DONE
-    ),
+    FeatureItem(23, "FP8 量化 (torchao)", "CogVideo", "vram_toolchain.py", Priority.P1, ImplementationStatus.COMPLETED),
     FeatureItem(
         24,
         "xformers 内存高效注意力",
         "CogVideo/StableVSR",
         "vram_toolchain.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
         25,
@@ -326,10 +327,10 @@ PHASE_2_FEATURES: list[FeatureItem] = [
         "Waifu2x-Extension-GUI",
         "gpu_compatibility.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        26, "Gradio WebUI 设计参考", "SUPIR", "webui_enhancement.py", Priority.P1, ImplementationStatus.FRAMEWORK_DONE
+        26, "Gradio WebUI 设计参考", "SUPIR", "webui_enhancement.py", Priority.P1, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         27,
@@ -337,10 +338,10 @@ PHASE_2_FEATURES: list[FeatureItem] = [
         "Waifu2x-Extension-GUI",
         "webui_enhancement.py",
         Priority.P1,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        28, "参数面板优化", "clarity-upscaler", "webui_enhancement.py", Priority.P1, ImplementationStatus.FRAMEWORK_DONE
+        28, "参数面板优化", "clarity-upscaler", "webui_enhancement.py", Priority.P1, ImplementationStatus.COMPLETED
     ),
 ]
 
@@ -349,9 +350,7 @@ PHASE_2_FEATURES: list[FeatureItem] = [
 # ===========================================================================
 
 PHASE_3_FEATURES: list[FeatureItem] = [
-    FeatureItem(
-        1, "8bit 缓存量化", "Real-CUGAN", "vae_tiled_enhance.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
+    FeatureItem(1, "8bit 缓存量化", "Real-CUGAN", "vae_tiled_enhance.py", Priority.P2, ImplementationStatus.COMPLETED),
     FeatureItem(
         2,
         "Selective Block Offloading",
@@ -363,19 +362,17 @@ PHASE_3_FEATURES: list[FeatureItem] = [
     FeatureItem(
         3, "TeaCache 时间步跳过", "FlashVSR", "vae_tiled_enhance.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
     ),
-    FeatureItem(
-        4, "双向采样策略", "StableVSR", "temporal_processing.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
+    FeatureItem(4, "双向采样策略", "StableVSR", "temporal_processing.py", Priority.P2, ImplementationStatus.COMPLETED),
     FeatureItem(
         5,
         "Second-order Grid Propagation",
         "BasicVSR++",
         "temporal_processing.py",
         Priority.P2,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        6, "ARTG 光流对齐", "Stream-DiffVSR", "temporal_processing.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        6, "ARTG 光流对齐", "Stream-DiffVSR", "temporal_processing.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         7,
@@ -383,37 +380,23 @@ PHASE_3_FEATURES: list[FeatureItem] = [
         "Stream-DiffVSR",
         "temporal_processing.py",
         Priority.P2,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
+    ),
+    FeatureItem(8, "递归-并行混合架构", "RVRT", "temporal_processing.py", Priority.P2, ImplementationStatus.COMPLETED),
+    FeatureItem(9, "Dynamic CFG", "CogVideo", "diffusion_sampling.py", Priority.P2, ImplementationStatus.COMPLETED),
+    FeatureItem(10, "线性 CFG 策略", "SUPIR", "diffusion_sampling.py", Priority.P2, ImplementationStatus.COMPLETED),
+    FeatureItem(11, "guide_rescale", "VEnhancer", "diffusion_sampling.py", Priority.P2, ImplementationStatus.COMPLETED),
+    FeatureItem(
+        12, "多采样器统一接口", "DiffBIR", "diffusion_sampling.py", Priority.P2, ImplementationStatus.COMPLETED
+    ),
+    FeatureItem(13, "Alpha 通道处理", "waifu2x", "post_processing.py", Priority.P2, ImplementationStatus.COMPLETED),
+    FeatureItem(14, "EXIF 元数据复制", "upscayl", "post_processing.py", Priority.P2, ImplementationStatus.COMPLETED),
+    FeatureItem(15, "文本修复流水线", "Vivid-VR", "post_processing.py", Priority.P2, ImplementationStatus.COMPLETED),
+    FeatureItem(
+        16, "Fidelity Weight 控制", "CodeFormer", "post_processing.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
-        8, "递归-并行混合架构", "RVRT", "temporal_processing.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        9, "Dynamic CFG", "CogVideo", "diffusion_sampling.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        10, "线性 CFG 策略", "SUPIR", "diffusion_sampling.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        11, "guide_rescale", "VEnhancer", "diffusion_sampling.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        12, "多采样器统一接口", "DiffBIR", "diffusion_sampling.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        13, "Alpha 通道处理", "waifu2x", "post_processing.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        14, "EXIF 元数据复制", "upscayl", "post_processing.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        15, "文本修复流水线", "Vivid-VR", "post_processing.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        16, "Fidelity Weight 控制", "CodeFormer", "post_processing.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        17, "多步放大策略", "clarity-upscaler", "post_processing.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        17, "多步放大策略", "clarity-upscaler", "post_processing.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         18,
@@ -421,27 +404,21 @@ PHASE_3_FEATURES: list[FeatureItem] = [
         "Anime4KCPP",
         "engine_scheduler.py",
         Priority.P2,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
+    FeatureItem(19, "Registry 模式", "BasicSR", "engine_scheduler.py", Priority.P2, ImplementationStatus.COMPLETED),
+    FeatureItem(20, "Pipeline 继承体系", "DiffBIR", "engine_scheduler.py", Priority.P2, ImplementationStatus.COMPLETED),
     FeatureItem(
-        19, "Registry 模式", "BasicSR", "engine_scheduler.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        21, "多 GPU 多线程调度", "Real-CUGAN", "engine_scheduler.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
-    FeatureItem(
-        20, "Pipeline 继承体系", "DiffBIR", "engine_scheduler.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        21, "多 GPU 多线程调度", "Real-CUGAN", "engine_scheduler.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        22, "子进程引擎调用", "upscayl", "engine_scheduler.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
+    FeatureItem(22, "子进程引擎调用", "upscayl", "engine_scheduler.py", Priority.P2, ImplementationStatus.COMPLETED),
     FeatureItem(
         23,
         "RAFT 光流集成",
         "Upscale-A-Video",
         "video_processing_enhance.py",
         Priority.P2,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
         24,
@@ -449,19 +426,17 @@ PHASE_3_FEATURES: list[FeatureItem] = [
         "Waifu2x-Extension-GUI",
         "video_processing_enhance.py",
         Priority.P2,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        25, "RIFE 插帧集成", "CogVideo", "video_processing_enhance.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        25, "RIFE 插帧集成", "CogVideo", "video_processing_enhance.py", Priority.P2, ImplementationStatus.COMPLETED
+    ),
+    FeatureItem(26, "分级退化处理", "STAR", "video_processing_enhance.py", Priority.P2, ImplementationStatus.COMPLETED),
+    FeatureItem(
+        27, "N维RoPE位置编码", "HunyuanVideo", "dit_optimization.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
-        26, "分级退化处理", "STAR", "video_processing_enhance.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        27, "N维RoPE位置编码", "HunyuanVideo", "dit_optimization.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        28, "ControlNet 条件注入", "DiffBIR", "dit_optimization.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        28, "ControlNet 条件注入", "DiffBIR", "dit_optimization.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         29,
@@ -469,10 +444,10 @@ PHASE_3_FEATURES: list[FeatureItem] = [
         "HunyuanVideo",
         "diffusion_sampling.py",
         Priority.P2,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        30, "Accordion 分组设计", "DiffBIR", "webui_enhancement.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        30, "Accordion 分组设计", "DiffBIR", "webui_enhancement.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         31,
@@ -480,22 +455,18 @@ PHASE_3_FEATURES: list[FeatureItem] = [
         "Waifu2x-Extension-GUI",
         "webui_enhancement.py",
         Priority.P2,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
+    ),
+    FeatureItem(32, "文件拖拽支持", "upscayl", "webui_enhancement.py", Priority.P2, ImplementationStatus.COMPLETED),
+    FeatureItem(
+        33, "TensorRT 加速", "Stream-DiffVSR", "vram_toolchain.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
-        32, "文件拖拽支持", "upscayl", "webui_enhancement.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        34, "torch.compile 集成", "Fast-SRGAN", "vram_toolchain.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
+    FeatureItem(35, "Gradient Checkpointing", "RVRT", "vram_toolchain.py", Priority.P2, ImplementationStatus.COMPLETED),
     FeatureItem(
-        33, "TensorRT 加速", "Stream-DiffVSR", "vram_toolchain.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        34, "torch.compile 集成", "Fast-SRGAN", "vram_toolchain.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        35, "Gradient Checkpointing", "RVRT", "vram_toolchain.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        36, "YAML 配置驱动", "BasicSR", "framework_engineering.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        36, "YAML 配置驱动", "BasicSR", "framework_engineering.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         37,
@@ -503,10 +474,10 @@ PHASE_3_FEATURES: list[FeatureItem] = [
         "DiffBIR",
         "framework_engineering.py",
         Priority.P2,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        38, "自动检查点恢复", "BasicSR", "framework_engineering.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        38, "自动检查点恢复", "BasicSR", "framework_engineering.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         39,
@@ -514,10 +485,10 @@ PHASE_3_FEATURES: list[FeatureItem] = [
         "BasicSR",
         "framework_engineering.py",
         Priority.P2,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        40, "模型自描述属性", "waifu2x", "framework_engineering.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        40, "模型自描述属性", "waifu2x", "framework_engineering.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         41,
@@ -525,16 +496,16 @@ PHASE_3_FEATURES: list[FeatureItem] = [
         "Anime4KCPP",
         "framework_engineering.py",
         Priority.P2,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        42, "人脸修复引擎", "CodeFormer", "specialized_engines.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        42, "人脸修复引擎", "CodeFormer", "specialized_engines.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
-        43, "动漫专用引擎", "Real-CUGAN", "specialized_engines.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        43, "动漫专用引擎", "Real-CUGAN", "specialized_engines.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
-        44, "多后端自动检测", "Anime4KCPP", "gpu_compatibility.py", Priority.P2, ImplementationStatus.FRAMEWORK_DONE
+        44, "多后端自动检测", "Anime4KCPP", "gpu_compatibility.py", Priority.P2, ImplementationStatus.COMPLETED
     ),
 ]
 
@@ -543,24 +514,20 @@ PHASE_3_FEATURES: list[FeatureItem] = [
 # ===========================================================================
 
 PHASE_4_FEATURES: list[FeatureItem] = [
-    FeatureItem(
-        1, "双流 DiT 架构", "HunyuanVideo", "dit_optimization.py", Priority.P3, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(2, "频域注意力", "FTVSR", "dit_optimization.py", Priority.P3, ImplementationStatus.FRAMEWORK_DONE),
-    FeatureItem(3, "Mamba 时序建模", "SCST", "dit_optimization.py", Priority.P3, ImplementationStatus.FRAMEWORK_DONE),
+    FeatureItem(1, "双流 DiT 架构", "HunyuanVideo", "dit_optimization.py", Priority.P3, ImplementationStatus.COMPLETED),
+    FeatureItem(2, "频域注意力", "FTVSR", "dit_optimization.py", Priority.P3, ImplementationStatus.COMPLETED),
+    FeatureItem(3, "Mamba 时序建模", "SCST", "dit_optimization.py", Priority.P3, ImplementationStatus.COMPLETED),
     FeatureItem(
         4,
         "Codebook Lookup+Transformer",
         "CodeFormer",
         "dit_optimization.py",
         Priority.P3,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
+    FeatureItem(5, "多模态融合架构", "EvTexture", "dit_optimization.py", Priority.P3, ImplementationStatus.COMPLETED),
     FeatureItem(
-        5, "多模态融合架构", "EvTexture", "dit_optimization.py", Priority.P3, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        6, "深度感知帧插值", "DAIN", "video_processing_enhance.py", Priority.P3, ImplementationStatus.FRAMEWORK_DONE
+        6, "深度感知帧插值", "DAIN", "video_processing_enhance.py", Priority.P3, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         7,
@@ -568,31 +535,27 @@ PHASE_4_FEATURES: list[FeatureItem] = [
         "Stream-DiffVSR",
         "video_processing_enhance.py",
         Priority.P3,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
     FeatureItem(
-        8, "多 GPU 并行推理", "CogVideo", "framework_engineering.py", Priority.P3, ImplementationStatus.FRAMEWORK_DONE
+        8, "多 GPU 并行推理", "CogVideo", "framework_engineering.py", Priority.P3, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
-        9, "Hydra 配置管理", "Fast-SRGAN", "framework_engineering.py", Priority.P3, ImplementationStatus.FRAMEWORK_DONE
+        9, "Hydra 配置管理", "Fast-SRGAN", "framework_engineering.py", Priority.P3, ImplementationStatus.COMPLETED
     ),
-    FeatureItem(10, "着色引擎", "DeOldify", "specialized_engines.py", Priority.P3, ImplementationStatus.FRAMEWORK_DONE),
-    FeatureItem(
-        11, "压缩视频专用引擎", "FTVSR", "specialized_engines.py", Priority.P3, ImplementationStatus.FRAMEWORK_DONE
-    ),
+    FeatureItem(10, "着色引擎", "DeOldify", "specialized_engines.py", Priority.P3, ImplementationStatus.COMPLETED),
+    FeatureItem(11, "压缩视频专用引擎", "FTVSR", "specialized_engines.py", Priority.P3, ImplementationStatus.COMPLETED),
     FeatureItem(
         12,
         "Video Inpainting 引擎",
         "ProPainter",
         "specialized_engines.py",
         Priority.P3,
-        ImplementationStatus.FRAMEWORK_DONE,
+        ImplementationStatus.COMPLETED,
     ),
+    FeatureItem(13, "Vulkan 跨GPU厂商", "upscayl", "gpu_compatibility.py", Priority.P3, ImplementationStatus.COMPLETED),
     FeatureItem(
-        13, "Vulkan 跨GPU厂商", "upscayl", "gpu_compatibility.py", Priority.P3, ImplementationStatus.FRAMEWORK_DONE
-    ),
-    FeatureItem(
-        14, "MPS/多设备支持", "Fast-SRGAN", "gpu_compatibility.py", Priority.P3, ImplementationStatus.FRAMEWORK_DONE
+        14, "MPS/多设备支持", "Fast-SRGAN", "gpu_compatibility.py", Priority.P3, ImplementationStatus.COMPLETED
     ),
     FeatureItem(
         15,
@@ -600,7 +563,91 @@ PHASE_4_FEATURES: list[FeatureItem] = [
         "Waifu2x-Extension-GUI",
         "gpu_compatibility.py",
         Priority.P3,
+        ImplementationStatus.COMPLETED,
+    ),
+]
+# ---------------------------------------------------------------------------
+# Phase 5: 补录项（2026-09-12 系统验证后补录）
+# ---------------------------------------------------------------------------
+
+PHASE_5_FEATURES: list[FeatureItem] = [
+    FeatureItem(
+        1,
+        "SVDQuant 4-bit 量化推理引擎",
+        "nunchaku",
+        "engines/nunchaku_engine.py（待创建）",
+        Priority.P0,
+        ImplementationStatus.NOT_STARTED,
+    ),
+    FeatureItem(
+        2,
+        "INT8/FP8 注意力加速后端",
+        "SageAttention",
+        "optimization/gpu/sage_attention.py（待创建）",
+        Priority.P0,
+        ImplementationStatus.NOT_STARTED,
+    ),
+    FeatureItem(
+        3,
+        "4-bit 量化扩散推理节点",
+        "ComfyUI-nunchaku",
+        "engines/（依赖nunchaku）",
+        Priority.P0,
+        ImplementationStatus.NOT_STARTED,
+    ),
+    FeatureItem(
+        4,
+        "四阶段流水线架构",
+        "ComfyUI-SeedVR2_VideoUpscaler",
+        "engines/_video_pipeline.py",
+        Priority.P0,
+        ImplementationStatus.COMPLETED,
+    ),
+    FeatureItem(
+        5,
+        "DAPT 单步蒸馏推理 + 模型权重管理",
+        "SeedVR2-3B",
+        "engines/seedvr2_engine.py + model_registry.py",
+        Priority.P1,
+        ImplementationStatus.COMPLETED,
+    ),
+    FeatureItem(
+        6,
+        "便携包 Agent CLI 契约",
+        "ComfyUI-Mie-Package-Launcher",
+        "scripts/ + desktop/",
+        Priority.P1,
         ImplementationStatus.FRAMEWORK_DONE,
+    ),
+    FeatureItem(
+        7,
+        "BlockSwap 粗粒度块交换显存优化",
+        "自研（FlashVSR启发）",
+        "optimization/gpu/blockswap.py",
+        Priority.P0,
+        ImplementationStatus.COMPLETED,
+    ),
+    FeatureItem(
+        8, "统一内存管理", "自研", "optimization/gpu/memory_manager.py", Priority.P1, ImplementationStatus.COMPLETED
+    ),
+    FeatureItem(
+        9,
+        "VRAM 泄漏检测",
+        "自研",
+        "optimization/gpu/vram_leak_detector.py",
+        Priority.P2,
+        ImplementationStatus.COMPLETED,
+    ),
+    FeatureItem(
+        10, "NVML GPU 硬件监控", "自研", "optimization/gpu/nvml_monitor.py", Priority.P2, ImplementationStatus.COMPLETED
+    ),
+    FeatureItem(
+        11,
+        "第三方许可合规检查",
+        "自研",
+        "optimization/license_compliance.py",
+        Priority.P2,
+        ImplementationStatus.COMPLETED,
     ),
 ]
 
@@ -662,13 +709,18 @@ def get_phase4_features() -> list[FeatureItem]:
     return list(PHASE_4_FEATURES)
 
 
+def get_phase5_features() -> list[FeatureItem]:
+    """获取Phase 5 (补录项) 功能列表。"""
+    return list(PHASE_5_FEATURES)
+
+
 def get_all_features() -> list[FeatureItem]:
     """获取所有阶段的功能列表。
 
     Returns:
         全部功能项列表
     """
-    return PHASE_1_FEATURES + PHASE_2_FEATURES + PHASE_3_FEATURES + PHASE_4_FEATURES
+    return PHASE_1_FEATURES + PHASE_2_FEATURES + PHASE_3_FEATURES + PHASE_4_FEATURES + PHASE_5_FEATURES
 
 
 def get_overall_statistics() -> dict[str, Any]:
@@ -692,6 +744,7 @@ def get_overall_statistics() -> dict[str, Any]:
             "P1": _calculate_phase_stats("P1 短期实施", PHASE_2_FEATURES),
             "P2": _calculate_phase_stats("P2 中期实施", PHASE_3_FEATURES),
             "P3": _calculate_phase_stats("P3 长期实施", PHASE_4_FEATURES),
+            "P5": _calculate_phase_stats("P5 补录项", PHASE_5_FEATURES),
         },
         "license_notes": [
             "AGPL-3.0 (clarity-upscaler, Waifu2x-Extension-GUI): 仅可参考设计模式，不可直接引用代码",
