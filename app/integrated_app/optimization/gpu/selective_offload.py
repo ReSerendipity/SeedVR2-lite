@@ -91,7 +91,7 @@ class SelectiveBlockOffloader:
         blocks = self._find_transformer_blocks(model)
         self.total_blocks = len(blocks)
 
-        for idx, (name, block) in enumerate(blocks):
+        for idx, (_name, _block) in enumerate(blocks):
             self.block_importances[idx] = BlockImportance(
                 block_id=idx,
                 importance_score=1.0 / self.total_blocks,  # 初始均匀分布
@@ -110,11 +110,13 @@ class SelectiveBlockOffloader:
         blocks = []
         for name, module in model.named_modules():
             # 常见的 transformer block 命名模式
-            if any(key in name.lower() for key in ["block", "layer", "transformer"]):
-                if isinstance(module, nn.Module) and len(list(module.children())) > 0:
-                    # 排除容器模块
-                    if not isinstance(module, (nn.Sequential, nn.ModuleList)):
-                        blocks.append((name, module))
+            if (
+                any(key in name.lower() for key in ["block", "layer", "transformer"])
+                and isinstance(module, nn.Module)
+                and len(list(module.children())) > 0
+                and not isinstance(module, (nn.Sequential, nn.ModuleList))
+            ):
+                blocks.append((name, module))
         return blocks
 
     def update_importance(self, block_id: int, score: float) -> None:

@@ -851,9 +851,7 @@ class HistoryDB:
         )
         count = row[0] if row else 0
         if count:
-            await self._execute_write(
-                "DELETE FROM history WHERE deleted_at IS NOT NULL AND deleted_at < ?", (cutoff,)
-            )
+            await self._execute_write("DELETE FROM history WHERE deleted_at IS NOT NULL AND deleted_at < ?", (cutoff,))
         return count
 
     async def count_records(self) -> int:
