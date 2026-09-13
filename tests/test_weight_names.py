@@ -8,7 +8,10 @@
 所属项目：SeedVR2 (SeedVR2 视频/图像修复工具)
 """
 
+import importlib.util
 from pathlib import Path
+
+import yaml
 
 from app.integrated_app.utils.weight_names import (
     find_weight_file,
@@ -16,6 +19,8 @@ from app.integrated_app.utils.weight_names import (
     weight_filename_aliases,
     weight_hash_candidates,
 )
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class TestWeightFilenameAliases:
@@ -135,3 +140,68 @@ class TestWeightHashCandidates:
     def test_duplicate_deduped(self):
         cfg = {"sha256_fp8": "AA", "sha256_fp8_alt": "aa"}
         assert weight_hash_candidates(cfg, "fp8") == ["aa"]
+
+
+class TestDownloadRoutingConsistency:
+    """``download_model`` 的来源路由必须与加载器的命名判定保持一致。
+
+    ``scripts/download_model.py`` 是**独立脚本**（要能在尚未安装 app 依赖的环境里
+    运行，用于首次下载），因此自带一份 ``_is_comfy_org`` 前缀判断而不 import 本模块
+    —— 这是有意的解耦，不是遗漏。但两者功能上是**耦合**的：脚本按前缀决定去
+    HuggingFace 还是 ModelScope 取文件，加载器按同一约定解析磁盘文件名。
+    一旦漂移，就会出现「脚本下回来的文件名加载器解析不到」（或反之），
+    故用本用例把两份实现钉死在同一约定上。
+    """
+
+    @staticmethod
+    def _load_download_script():
+        spec = importlib.util.spec_from_file_location("download_model", _REPO_ROOT / "scripts" / "download_model.py")
+        assert spec and spec.loader, "无法加载 scripts/download_model.py"
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # noqa: S301 - 受控本地脚本，非不可信输入
+        return module
+
+    def test_routing_predicate_agrees_with_loader(self):
+        mod = self._load_download_script()
+        samples = [
+            "seedvr2_ema_3b_fp16.safetensors",
+            "seedvr2_ema_3b_fp8_e4m3fn.safetensors",
+            "seedvr2_ema_7b_sharp_fp16.safetensors",
+            "seedvr2_3b_fp16.safetensors",
+            "seedvr2_3b_fp8_e4m3fn.safetensors",
+            "seedvr2_3b_int8_convrot.safetensors",
+            "seedvr2_3b_mxfp8.safetensors",
+            "seedvr2_3b_nvfp4.safetensors",
+            "seedvr2_7b_mxfp8.safetensors",
+            "ema_vae_fp16.safetensors",
+            "pos_emb.pt",
+            "neg_emb.pt",
+        ]
+        for name in samples:
+            assert mod._is_comfy_org(name) == is_comfy_org_name(name), (
+                f"{name}: download_model._is_comfy_org={mod._is_comfy_org(name)} "
+                f"但 weight_names.is_comfy_org_name={is_comfy_org_name(name)}"
+            )
+
+    def test_routing_matches_config_registered_names(self):
+        """config.yaml 登记的 5 个精度文件名，路由判定须与命名约定自洽。
+
+        同时锁住「量化三精度（int8_convrot/mxfp8/nvfp4）用 Comfy-Org 名、
+        fp16/fp8 用 numz 名」这一事实 —— 前者仅 Comfy-Org 提供，故无需 ``_alt`` 哈希。
+        """
+        mod = self._load_download_script()
+        cfg = yaml.safe_load((_REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
+        seen = 0
+        for size, model_cfg in cfg["model"]["models"].items():
+            for prec in ("fp16", "fp8", "int8_convrot", "mxfp8", "nvfp4"):
+                name = model_cfg.get(f"checkpoint_{prec}")
+                if not name:
+                    continue
+                seen += 1
+                assert mod._is_comfy_org(name) == is_comfy_org_name(name), f"{size}/{prec}: {name}"
+                # 别名集合必须包含自身，且两套命名互认
+                assert name in weight_filename_aliases(name)
+                assert (
+                    len(weight_filename_aliases(name)) == 2
+                ), f"{size}/{prec}: {name} 未推导出等价命名，双命名兼容会失效"
+        assert seen >= 10, f"登记文件名过少（{seen}），疑似配置被删减"
