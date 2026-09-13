@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.5.8] - 2026-09-13
 
 ### Fixed
 * **权重文件名双命名兼容（numz `seedvr2_ema_*` ↔ Comfy-Org `seedvr2_*`）**（GOTCHAS #122 / KNOWN_ISSUES #91）：此前把 Comfy-Org 转包版权重（如 `seedvr2_3b_fp8_e4m3fn.safetensors`）放入 `model/` 后，`POST /api/restore/` 会因「按精确文件名找不到文件」恒 503 并报「已尝试 fp16, fp8 均无对应文件」——即便文件就在磁盘上。现 `check_model_exists`、引擎加载（DiT+VAE）、`verify_weight_hashes`、`verify_model_files` 统一走别名解析（`app/integrated_app/utils/weight_names.py`），同一精度的两套命名文件均可直接使用、**无需改名或重新下载**；`config.yaml` 补 `sha256_{fp16,fp8}_alt` 登记 Comfy-Org 版哈希，命中主哈希或 `_alt` 任一即通过白名单（完整性门禁不放松）。**已真机验收**：用户实测 `POST /api/restore/` 正常出图（此前恒 503）。
