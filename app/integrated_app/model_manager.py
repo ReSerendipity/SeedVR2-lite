@@ -42,6 +42,11 @@ from app.integrated_app.gpu_utils import (
 )
 from app.integrated_app.model_registry import model_registry
 from app.integrated_app.utils.hashing import compute_file_sha256
+from app.integrated_app.utils.weight_names import (
+    find_weight_file,
+    weight_filename_aliases,
+    weight_hash_candidates,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -133,12 +138,16 @@ class ModelManager:
 
         验证指定大小和精度的模型 checkpoint 文件是否存在于文件系统中。
 
+        同一权重存在两套社区命名（numz 的 ``seedvr2_ema_*`` 与 Comfy-Org 的
+        ``seedvr2_*``，字节不同、模型结构一致）。本方法按**别名**依次探测：
+        config.yaml 登记的名字优先，其等价命名次之；命中任一即视为存在。
+
         Args:
             size: 模型大小标识 (如 "3b", "7b")
             precision: 模型精度 (如 "fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4")，None 时使用配置中的默认精度
 
         Returns:
-            bool: 模型文件存在返回 True，否则返回 False
+            bool: 任一命名变体的模型文件存在返回 True，否则返回 False
         """
         model_info = self.get_model_info(size)
         if not model_info:
@@ -149,8 +158,39 @@ class ModelManager:
             precision = self.model_config.get("default_precision", "fp16")
         checkpoint_key = f"checkpoint_{precision}"
         checkpoint = model_info.get(checkpoint_key) or model_info.get("checkpoint_fp16", "")
-        checkpoint_path = os.path.join(pretrained_dir, checkpoint)
-        return os.path.exists(checkpoint_path)
+        return find_weight_file(pretrained_dir, checkpoint) is not None
+
+    _ALL_PRECISIONS: tuple[str, ...] = ("fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4")
+
+    def unregistered_weight_files(self, model_size: str) -> list[str]:
+        """列出 model/ 根目录下存在、但不被任何已配置精度（含命名别名）引用的 .safetensors。
+
+        把「权重下了但文件名不对」这类静默失配变成显式诊断：此前只报
+        「已尝试 fp16, fp8 均无对应文件」，用户会误以为根本没下载，实际是名字
+        与 config.yaml 及其等价命名都不匹配。返回 basename 列表（排序）；
+        目录不可读时返回空列表。
+
+        Args:
+            model_size: 模型大小标识（如 "3b"）。
+
+        Returns:
+            list[str]: 未被登记的 .safetensors 文件名（basename）。
+        """
+        model_cfg = self.get_model_info(model_size) or {}
+        registered: set[str] = set()
+        for prec in self._ALL_PRECISIONS:
+            name = model_cfg.get(f"checkpoint_{prec}")
+            if isinstance(name, str) and name:
+                registered.update(weight_filename_aliases(name))
+        for key in ("vae_checkpoint", "pos_emb", "neg_emb"):
+            name = model_cfg.get(key)
+            if isinstance(name, str) and name:
+                registered.update(weight_filename_aliases(name))
+        try:
+            entries = os.listdir(self.get_pretrained_dir())
+        except OSError:
+            return []
+        return sorted(e for e in entries if e.endswith(".safetensors") and e not in registered)
 
     def _min_footprint_gb(self, model_info: dict, precision: str, model_size: str) -> float:
         """估算「最大降级（全量 BlockSwap）下的理论最小驻留」(GB)。
@@ -238,7 +278,7 @@ class ModelManager:
             total_vram_gb = 0
 
         # 筛选用户实际拥有的精度（文件存在）
-        all_precisions = ["fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4"]
+        all_precisions = list(self._ALL_PRECISIONS)
         available = [p for p in all_precisions if self.check_model_exists(model_size, p)]
 
         # 无任何模型文件时（如测试环境、用户未下载权重），回退到纯显存推荐逻辑
@@ -337,6 +377,10 @@ class ModelManager:
         - 未配置期望哈希 → 告警放行（无法校验未知配置，兼容自定义权重场景）
         - 文件不存在 → 跳过（存在性由 check_model_exists/引擎负责）
 
+        双命名兼容：文件名按别名解析到磁盘上真实存在的那个变体，期望哈希取
+        ``sha256_<prec>`` 与 ``sha256_<prec>_alt`` 的并集，命中任一即通过
+        （numz 与 Comfy-Org 两套权重字节不同 → 哈希不同）。
+
         Args:
             model_size: 模型大小标识（如 "3b"）。
             precision: 已解析的最终精度（回退决策之后）。
@@ -349,30 +393,34 @@ class ModelManager:
             return
         pretrained_dir = self.get_pretrained_dir()
         candidates = [
-            (model_cfg.get(f"checkpoint_{precision}") or "", model_cfg.get(f"sha256_{precision}") or "", "checkpoint"),
-            (model_cfg.get("vae_checkpoint") or "", model_cfg.get("sha256_vae") or "", "vae"),
-            (model_cfg.get("pos_emb") or "", model_cfg.get("sha256_pos_emb") or "", "pos_emb"),
-            (model_cfg.get("neg_emb") or "", model_cfg.get("sha256_neg_emb") or "", "neg_emb"),
+            (
+                model_cfg.get(f"checkpoint_{precision}") or "",
+                weight_hash_candidates(model_cfg, precision),
+                "checkpoint",
+            ),
+            (model_cfg.get("vae_checkpoint") or "", weight_hash_candidates(model_cfg, "vae"), "vae"),
+            (model_cfg.get("pos_emb") or "", weight_hash_candidates(model_cfg, "pos_emb"), "pos_emb"),
+            (model_cfg.get("neg_emb") or "", weight_hash_candidates(model_cfg, "neg_emb"), "neg_emb"),
         ]
         cache_path = os.path.join(os.getcwd(), self._HASH_CACHE_REL_PATH)
         cache = self._load_hash_cache(cache_path)
-        for filename, expected, label in candidates:
+        for filename, expected_hashes, label in candidates:
             if not filename:
                 continue
-            path = os.path.join(pretrained_dir, filename)
-            if not os.path.exists(path):
+            path = find_weight_file(pretrained_dir, filename)
+            if path is None:
                 continue
-            if not expected:
+            if not expected_hashes:
                 logger.warning(f"权重文件未配置期望哈希，跳过白名单校验: {filename}")
                 continue
             digest = await asyncio.to_thread(self._sha256_with_cache, path, cache_path, cache)
-            if not digest or digest.lower() != expected.lower():
+            if not digest or digest.lower() not in expected_hashes:
                 raise ValueError(
-                    f"权重文件 SHA256 校验失败: {filename}（{label}）。"
+                    f"权重文件 SHA256 校验失败: {os.path.basename(path)}（{label}）。"
                     f"文件可能损坏或被替换，请重新下载（python scripts/download_model.py）"
                     f"或删除 {path} 后重试。"
                 )
-            logger.info(f"权重校验通过: {filename}（{label}）")
+            logger.info(f"权重校验通过: {os.path.basename(path)}（{label}）")
 
     async def load_model(
         self, model_size: str | None = None, device: str | None = None, precision: str | None = None
@@ -468,7 +516,7 @@ class ModelManager:
             else:
                 # 第二回退：遍历所有已配置精度（含 Comfy-Org 量化格式 mxfp8/int8_convrot/nvfp4），
                 # 找到第一个文件存在的精度。v1.5.1 起五精度并存，用户可能只下载了其中一种。
-                all_precisions = ["fp16", "fp8", "mxfp8", "int8_convrot", "nvfp4"]
+                all_precisions = list(self._ALL_PRECISIONS)
                 tried = [precision, fallback_precision]
                 found = None
                 # P1-4（2026-09-10 修订，遵循 §5 fail-open 铁律 / GOTCHAS #99/#100）：
@@ -510,6 +558,20 @@ class ModelManager:
                         )
                     if not missing_precisions and not vram_rejected:
                         parts.append(f"已配置精度 {', '.join(configured) if configured else '无'} 均无对应文件")
+                    # 显式列出可接受的等价命名，避免「下了文件却报缺失」的误判
+                    expected_names: list[str] = []
+                    for p in tried:
+                        name = model_cfg.get(f"checkpoint_{p}")
+                        if isinstance(name, str) and name:
+                            expected_names.extend(weight_filename_aliases(name))
+                    if expected_names:
+                        parts.append(f"期望文件名（任一命名皆可）: {', '.join(expected_names)}")
+                    stray = self.unregistered_weight_files(model_size)
+                    if stray:
+                        parts.append(
+                            f"发现未登记权重文件: {', '.join(stray)}"
+                            f"（命名不在 config.yaml 的 checkpoint_* 及其等价命名内，加载器不会使用）"
+                        )
                     raise FileNotFoundError(
                         "模型加载失败: " + "；".join(parts) + "。" f"请下载模型权重到 {self.get_pretrained_dir()}/"
                     )

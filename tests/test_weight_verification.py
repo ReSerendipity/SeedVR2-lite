@@ -98,6 +98,49 @@ class TestVerifyWeightHashes:
 
 
 @pytest.mark.asyncio
+class TestDualNamingCompat:
+    """numz / Comfy-Org 双命名兼容（同一权重两套文件名 + 两套哈希）。"""
+
+    async def test_comfy_org_file_accepted_via_alt_hash(self, tmp_path, monkeypatch):
+        """config 登记 numz 名，磁盘是 Comfy-Org 名 → 按别名命中并用 _alt 哈希放行。"""
+        numz_digest = _digest(b"numz-bytes")
+        comfy_digest = _make(tmp_path / "seedvr2_3b_fp8_e4m3fn.safetensors", b"comfy-bytes")
+        entry = {
+            "checkpoint_fp8": "seedvr2_ema_3b_fp8_e4m3fn.safetensors",
+            "sha256_fp8": numz_digest,
+            "sha256_fp8_alt": comfy_digest,
+        }
+        mgr = _manager(tmp_path, monkeypatch, entry)
+
+        await mgr.verify_weight_hashes("3b", "fp8")
+
+    async def test_alias_file_with_unknown_hash_rejected(self, tmp_path, monkeypatch):
+        """别名文件存在但哈希不在候选集内 → 仍拒绝（别名不放松完整性门禁）。"""
+        _make(tmp_path / "seedvr2_3b_fp8_e4m3fn.safetensors", b"tampered")
+        entry = {
+            "checkpoint_fp8": "seedvr2_ema_3b_fp8_e4m3fn.safetensors",
+            "sha256_fp8": _digest(b"numz-bytes"),
+            "sha256_fp8_alt": _digest(b"expected-comfy-bytes"),
+        }
+        mgr = _manager(tmp_path, monkeypatch, entry)
+
+        with pytest.raises(ValueError) as exc_info:
+            await mgr.verify_weight_hashes("3b", "fp8")
+        assert "SHA256 校验失败" in str(exc_info.value)
+
+    async def test_numz_file_still_verified_by_primary_hash(self, tmp_path, monkeypatch):
+        """原命名路径不受影响：命中主哈希放行。"""
+        digest = _make(tmp_path / "seedvr2_ema_3b_fp8_e4m3fn.safetensors", b"numz-bytes")
+        entry = {
+            "checkpoint_fp8": "seedvr2_ema_3b_fp8_e4m3fn.safetensors",
+            "sha256_fp8": digest,
+        }
+        mgr = _manager(tmp_path, monkeypatch, entry)
+
+        await mgr.verify_weight_hashes("3b", "fp8")
+
+
+@pytest.mark.asyncio
 class TestHashCache:
     async def test_cache_hit_avoids_recompute(self, tmp_path, monkeypatch):
         data = b"checkpoint-bytes"

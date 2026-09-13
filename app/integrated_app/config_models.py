@@ -119,10 +119,17 @@ class ModelEntryConfig(BaseModel):
         baseline_vram_fp8_gb: FP8 权重显存基线（GB，0 表示未配置）。
         num_blocks: Transformer 块数量，用于 BlockSwap 策略。
         sha256_fp16: FP16 检查点期望 SHA256（空表示跳过完整性校验）。
+        sha256_fp16_alt: FP16 检查点**等价命名**（Comfy-Org 转包版）的期望 SHA256。
+            同一权重 numz 版（``seedvr2_ema_*``）与 Comfy-Org 版（``seedvr2_*``）
+            字节不同 → 哈希不同，加载时命中任一即通过。
         sha256_fp8: FP8 检查点期望 SHA256。
+        sha256_fp8_alt: FP8 检查点等价命名（Comfy-Org 版）的期望 SHA256。
         sha256_int8_convrot: INT8 ConvRot 检查点期望 SHA256。
+        sha256_int8_convrot_alt: INT8 ConvRot 检查点等价命名的期望 SHA256。
         sha256_mxfp8: MXFP8 检查点期望 SHA256。
+        sha256_mxfp8_alt: MXFP8 检查点等价命名的期望 SHA256。
         sha256_nvfp4: NVFP4 检查点期望 SHA256。
+        sha256_nvfp4_alt: NVFP4 检查点等价命名的期望 SHA256。
         sha256_vae: VAE 检查点期望 SHA256。
         sha256_pos_emb: 正面嵌入期望 SHA256。
         sha256_neg_emb: 负面嵌入期望 SHA256。
@@ -149,10 +156,15 @@ class ModelEntryConfig(BaseModel):
     baseline_vram_fp8_gb: float = 0
     num_blocks: int = 36
     sha256_fp16: str = ""
+    sha256_fp16_alt: str = ""
     sha256_fp8: str = ""
+    sha256_fp8_alt: str = ""
     sha256_int8_convrot: str = ""
+    sha256_int8_convrot_alt: str = ""
     sha256_mxfp8: str = ""
+    sha256_mxfp8_alt: str = ""
     sha256_nvfp4: str = ""
+    sha256_nvfp4_alt: str = ""
     sha256_vae: str = ""
     sha256_pos_emb: str = ""
     sha256_neg_emb: str = ""

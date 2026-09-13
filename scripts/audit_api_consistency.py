@@ -95,6 +95,19 @@ KNOWN_ORPHANS: dict[str, tuple[str, str]] = {
         "tests/test_pinned_retention.py 专测 + test_api.py 消费的 retention 豁免端点"
         "（pinned 标记/取消，历史 schema v3）；UI 历史页暂未接按钮，走 API/外部客户端",
     ),
+    "/api/system/history/recycle": (
+        "api-surface",
+        "tests/test_api.py::TestHistoryRecycleAPI 消费的回收站列表（历史 schema v4 软删除）；"
+        "UI 历史页暂未接回收站入口，走 API/外部客户端",
+    ),
+    "/api/system/history/recycle/restore": (
+        "api-surface",
+        "tests/test_api.py::TestHistoryRecycleAPI 消费的回收站恢复端点（同 v4 软删除特性）",
+    ),
+    "/api/system/history/recycle/purge": (
+        "api-surface",
+        "tests/test_api.py::TestHistoryRecycleAPI 消费的回收站超期彻底清理端点（同 v4 软删除特性）",
+    ),
     "/api/system/gpu/system": (
         "api-surface",
         "tests/test_api.py 与 E2E api-mocks 消费的系统级 GPU 汇总，UI 走 /api/system/gpu",

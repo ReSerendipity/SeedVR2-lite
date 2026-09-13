@@ -186,6 +186,66 @@ class TestCheckModelExists:
         manager = ModelManager(cfg)
         assert manager.check_model_exists("3b", "fp8") is True
 
+    def test_alias_filename_accepted(self, tmp_path, monkeypatch, mock_registry):
+        """config 登记 numz 名，磁盘只有 Comfy-Org 名 → 视为存在（双命名兼容）。"""
+        (tmp_path / "seedvr2_3b_fp8_e4m3fn.safetensors").write_bytes(b"w")
+        cfg = {
+            "model": {
+                "models": {"3b": {"checkpoint_fp8": "seedvr2_ema_3b_fp8_e4m3fn.safetensors"}},
+                "default_precision": "fp8",
+            }
+        }
+        manager = ModelManager(cfg)
+        monkeypatch.setattr(manager, "get_pretrained_dir", lambda: str(tmp_path))
+
+        assert manager.check_model_exists("3b", "fp8") is True
+
+    def test_alias_not_present_is_false(self, tmp_path, monkeypatch, mock_registry):
+        """两套命名都不在场 → False。"""
+        cfg = {
+            "model": {
+                "models": {"3b": {"checkpoint_fp8": "seedvr2_ema_3b_fp8_e4m3fn.safetensors"}},
+                "default_precision": "fp8",
+            }
+        }
+        manager = ModelManager(cfg)
+        monkeypatch.setattr(manager, "get_pretrained_dir", lambda: str(tmp_path))
+
+        assert manager.check_model_exists("3b", "fp8") is False
+
+
+class TestUnregisteredWeightFiles:
+    """未登记权重文件诊断（把「下了但名字不对」变成显式提示）。"""
+
+    def _manager(self, tmp_path, monkeypatch, entry):
+        cfg = {"model": {"models": {"3b": dict(entry)}}}
+        manager = ModelManager(cfg)
+        monkeypatch.setattr(manager, "get_pretrained_dir", lambda: str(tmp_path))
+        return manager
+
+    def test_alias_file_is_not_reported_as_stray(self, tmp_path, monkeypatch, mock_registry):
+        """Comfy-Org 名是登记名的等价命名 → 不算未登记。"""
+        (tmp_path / "seedvr2_3b_fp8_e4m3fn.safetensors").write_bytes(b"w")
+        entry = {"checkpoint_fp8": "seedvr2_ema_3b_fp8_e4m3fn.safetensors"}
+        manager = self._manager(tmp_path, monkeypatch, entry)
+
+        assert manager.unregistered_weight_files("3b") == []
+
+    def test_reports_unrelated_safetensors_only(self, tmp_path, monkeypatch, mock_registry):
+        (tmp_path / "seedvr2_ema_3b_fp8_e4m3fn.safetensors").write_bytes(b"w")
+        (tmp_path / "some_other_model.safetensors").write_bytes(b"w")
+        (tmp_path / "readme.txt").write_bytes(b"w")
+        entry = {"checkpoint_fp8": "seedvr2_ema_3b_fp8_e4m3fn.safetensors"}
+        manager = self._manager(tmp_path, monkeypatch, entry)
+
+        assert manager.unregistered_weight_files("3b") == ["some_other_model.safetensors"]
+
+    def test_missing_dir_returns_empty(self, tmp_path, monkeypatch, mock_registry):
+        entry = {"checkpoint_fp8": "seedvr2_ema_3b_fp8_e4m3fn.safetensors"}
+        manager = self._manager(tmp_path / "does-not-exist", monkeypatch, entry)
+
+        assert manager.unregistered_weight_files("3b") == []
+
 
 # ---------------------------------------------------------------------------
 # get_recommended_precision

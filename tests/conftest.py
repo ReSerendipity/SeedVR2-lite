@@ -91,6 +91,20 @@ def test_app(tmp_path, monkeypatch):
         lambda cfg, config_path=None: save_config(cfg, config_path=test_config_path),
     )
 
+    # SettingsPersistence（webui_enhancement）另有一条**直写项目根 config.yaml** 的路径
+    # （`open(self._config_path, "w")` + yaml.dump），不经 settings_module.save_config，
+    # 因此上面的重定向拦不住它：跑 /api/system/settings、/api/ui/preferences 的用例会把
+    # 真实 user_preferences 段整体覆写——实测 `default_seed: 42` 被写回默认值 -1
+    # （与 KNOWN_ISSUES #84/#89 观测一致）。把它的默认路径也钉到 tmp，补齐隔离。
+    from app.integrated_app.optimization import webui_enhancement as webui_module
+
+    _persistence_init = webui_module.SettingsPersistence.__init__
+
+    def _isolated_persistence_init(self, config_path=None):  # noqa: ANN001
+        _persistence_init(self, config_path=config_path or test_config_path)
+
+    monkeypatch.setattr(webui_module.SettingsPersistence, "__init__", _isolated_persistence_init)
+
     app = create_app(config)
 
     # Mock 重依赖，避免测试触发真实模型加载/卸载

@@ -76,6 +76,7 @@ from app.integrated_app.optimization.gpu.memory_manager import (  # noqa: E402
     clear_rope_lru_caches,
     release_model_memory,
 )
+from app.integrated_app.utils.weight_names import find_weight_file, weight_filename_aliases  # noqa: E402
 from app.integrated_app.video_processor import FFmpegWrapper, VideoProcessor  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -323,21 +324,27 @@ class SeedVR2Engine(
                 )
 
             # 记录 DiT 路径 (延迟加载)
+            # 双命名兼容：config.yaml 登记 numz 的 seedvr2_ema_*，用户可能放 Comfy-Org 的
+            # seedvr2_*（同模型不同字节），按别名解析到真实存在的那个文件。
             checkpoint_key = f"checkpoint_{precision}"
             checkpoint_name = model_cfg.get(checkpoint_key) or model_cfg.get("checkpoint_fp16")
-            checkpoint_path = pretrained_root_path / checkpoint_name
-            if not checkpoint_path.exists():
-                raise FileNotFoundError(f"DiT 模型文件未找到: {checkpoint_path}")
-            self._dit_checkpoint_path = str(checkpoint_path)
+            resolved_checkpoint = find_weight_file(pretrained_root_path, checkpoint_name)
+            if resolved_checkpoint is None:
+                raise FileNotFoundError(
+                    f"DiT 模型文件未找到: {pretrained_root_path / checkpoint_name}"
+                    f"（可接受的等价命名: {', '.join(weight_filename_aliases(checkpoint_name))}）"
+                )
+            self._dit_checkpoint_path = resolved_checkpoint
             self._dit_model_size = model_size
             self._dit_precision = precision
             self.dit = None
 
             # 记录 VAE 路径 (延迟加载)
             vae_checkpoint_name = model_cfg["vae_checkpoint"]
-            self._vae_checkpoint_path = str(pretrained_root_path / vae_checkpoint_name)
-            if not os.path.exists(self._vae_checkpoint_path):
-                raise FileNotFoundError(f"VAE 模型文件未找到: {self._vae_checkpoint_path}")
+            resolved_vae = find_weight_file(pretrained_root_path, vae_checkpoint_name)
+            if resolved_vae is None:
+                raise FileNotFoundError(f"VAE 模型文件未找到: {pretrained_root_path / vae_checkpoint_name}")
+            self._vae_checkpoint_path = resolved_vae
             self.vae = None
 
             # 加载文本嵌入 (~1MB，常驻内存)

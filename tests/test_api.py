@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tests.conftest import csrf_post
+from tests.conftest import csrf_post, get_csrf_token
 
 pytestmark = pytest.mark.integration
 
@@ -66,6 +66,58 @@ class TestHistoryAPI:
         """分页边界：page_size=1000 超过最大值 100，应返回 422"""
         response = test_app.get("/api/system/history?page=1&page_size=1000")
         assert response.status_code == 422
+
+
+class TestHistoryRecycleAPI:
+    """回收站 API（v4 软删除）：列表 / 恢复 / 彻底清理 的契约与 CSRF 保护。
+
+    这三个端点（``/api/system/history/recycle`` 系列）此前全仓无任何消费者
+    （UI / 测试 / 文档 / 示例都没有），``scripts/audit_api_consistency.py``
+    的孤儿路由表只能把它们标为 ``unclassified`` 并判失败。本类为其补上真实
+    消费者，使归档状态可如实标为 ``api-surface``（而非用标签掩盖缺口）。
+    """
+
+    def test_recycle_list_returns_pagination_shape(self, test_app):
+        response = test_app.get("/api/system/history/recycle")
+        assert response.status_code == 200
+        data = response.json()
+        for key in ("records", "total", "page", "page_size", "total_pages"):
+            assert key in data, f"缺少分页字段 {key}"
+        assert isinstance(data["records"], list)
+
+    def test_recycle_list_page_zero_returns_422(self, test_app):
+        """分页边界：page 最小值为 1。"""
+        assert test_app.get("/api/system/history/recycle?page=0").status_code == 422
+
+    def test_recycle_restore_requires_record_ids(self, test_app):
+        """缺 record_ids 必须显式 400，不得静默返回成功。"""
+        response = csrf_post(test_app, "/api/system/history/recycle/restore")
+        assert response.status_code == 400
+
+    def test_recycle_restore_unknown_id_restores_nothing(self, test_app):
+        """不存在的 id 恢复 0 条（幂等语义，而非报错）。"""
+        response = csrf_post(test_app, "/api/system/history/recycle/restore?record_ids=999999")
+        assert response.status_code == 200
+        assert response.json() == {"restored": 0}
+
+    def test_recycle_restore_requires_csrf(self, test_app):
+        """缺 X-CSRF-Token 的 POST 应被 CSRF 中间件拒绝。"""
+        response = test_app.post("/api/system/history/recycle/restore?record_ids=1")
+        assert response.status_code in (403, 400)
+
+    def test_recycle_purge_returns_count(self, test_app):
+        token = get_csrf_token(test_app)
+        response = test_app.delete(
+            "/api/system/history/recycle/purge?keep_days=30",
+            headers={"X-CSRF-Token": token or ""},
+        )
+        assert response.status_code == 200
+        assert "purged" in response.json()
+
+    def test_recycle_purge_requires_csrf(self, test_app):
+        """DELETE 同属非安全方法，必须受 CSRF 保护。"""
+        response = test_app.delete("/api/system/history/recycle/purge")
+        assert response.status_code in (403, 400)
 
 
 class TestUnifiedRestoreAPI:

@@ -70,6 +70,10 @@ logs/*
 data/*.db
 data/*.db-shm
 data/*.db-wal
+# 迁移前自动快照：history_db._backup_before_migration 生成 ``{db}.bak-v{N}``。
+# 注意既有的 ``*.bak`` 与 ``*.bak.*`` 都不匹配这个命名（是 ``.bak-`` 不是 ``.bak.``），
+# 必须显式声明，否则每次 schema 迁移都会在 git status 里留一个未跟踪文件。
+data/*.db.bak-v*
 
 # IDE
 .vscode/

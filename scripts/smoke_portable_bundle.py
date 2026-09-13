@@ -390,7 +390,10 @@ except Exception as exc:
     print(json.dumps({"error": repr(exc)}))
     sys.exit(3)
 """
-    tmp = tempfile.NamedTemporaryFile(suffix=".py", delete=False, dir=str(app_dir))  # noqa: SIM115 - 用完即删
+    # 写系统临时目录而非 app_dir：脚本自身位置无关（app_dir/输入/输出均经 argv 传入）。
+    # 若落盘在 app_dir（= 仓库根目录），一旦测试/CI 中途被中断（Ctrl-C、超时、进程被 kill），
+    # 下面的 finally 不会执行，残留的 tmp*.py 会污染工作区并使 ruff/black 门禁失败（GOTCHAS #124）。
+    tmp = tempfile.NamedTemporaryFile(suffix=".py", delete=False)  # noqa: SIM115 - 用完即删
     tmp.write(snippet.encode("utf-8"))
     tmp.close()
     try:

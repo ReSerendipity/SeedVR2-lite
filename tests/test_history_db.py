@@ -6,6 +6,7 @@
 - SECURITY: FTS5 查询转义（通过 escape_fts_query）
 - D2: SQL 注入防护（列名白名单、参数化）
 - E2: 异常粒度（aiosqlite.Error, sqlite3.Error, OSError）
+- v4 软删除 / 回收站（防误删）：默认软删、正常列表隔离、恢复、批量清空、过期彻底清理
 - 基础 CRUD、批量插入、任务状态持久化
 """
 
@@ -143,10 +144,90 @@ class TestAddAndGetMapping:
             await db.update_record(rid, evil_column="hack")
 
     @pytest.mark.asyncio
-    async def test_delete_record(self, db):
+    async def test_delete_record_defaults_to_soft(self, db):
+        """默认软删除（回收站）：单条仍可读回，但正常列表已隔离。"""
         rid = await _add_sample(db)
         assert await db.delete_record(rid) is True
+        # 单条仍可取回（供回收站恢复），这是软删除与物理删除的关键差别
+        assert await db.get_record(rid) is not None
+        # 正常列表必须隔离已软删记录
+        records, total = await db.get_records()
+        assert total == 0
+        assert all(r.id != rid for r in records)
+        # 且应出现在回收站列表
+        deleted, deleted_total = await db.list_deleted_records()
+        assert deleted_total == 1
+        assert deleted[0].id == rid
+
+    @pytest.mark.asyncio
+    async def test_delete_record_hard(self, db):
+        """soft=False 时物理删除，回收站不留痕。"""
+        rid = await _add_sample(db)
+        assert await db.delete_record(rid, soft=False) is True
         assert await db.get_record(rid) is None
+        assert (await db.list_deleted_records())[1] == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_record_twice_is_idempotent(self, db):
+        """重复软删除第二次返回 False（已软删的不重复打时间戳）。"""
+        rid = await _add_sample(db)
+        assert await db.delete_record(rid) is True
+        assert await db.delete_record(rid) is False
+
+
+class TestRecycleBin:
+    """v4 软删除 / 回收站（防误删）：恢复、批量清空、过期彻底清理。
+
+    ``delete_record`` / ``clear_records`` 默认 soft=True，仅标记 ``deleted_at``；
+    正常列表（``get_records``）永远排除已软删记录，回收站经
+    ``list_deleted_records`` 单独查看，``restore_records`` 恢复，
+    ``purge_deleted_records`` 到期物理清理。
+    """
+
+    @pytest.mark.asyncio
+    async def test_restore_records(self, db):
+        rid = await _add_sample(db)
+        await db.delete_record(rid)
+        assert (await db.get_records())[1] == 0
+
+        assert await db.restore_records([rid]) == 1
+        records, total = await db.get_records()
+        assert total == 1
+        assert records[0].id == rid
+        assert (await db.list_deleted_records())[1] == 0
+
+    @pytest.mark.asyncio
+    async def test_restore_empty_list_is_noop(self, db):
+        """空列表不应触发 ``IN ()`` 语法错误，直接返回 0。"""
+        assert await db.restore_records([]) == 0
+
+    @pytest.mark.asyncio
+    async def test_clear_records_soft_then_hard(self, db):
+        for i in range(3):
+            await _add_sample(db, input_file=f"/in/{i}.mp4")
+
+        assert await db.clear_records(soft=True) == 3
+        assert (await db.get_records())[1] == 0
+        assert (await db.list_deleted_records())[1] == 3
+        # 二次软清空不再命中（已软删的不重复标记）
+        assert await db.clear_records(soft=True) == 0
+        # 物理清空
+        assert await db.clear_records(soft=False) == 3
+        assert (await db.list_deleted_records())[1] == 0
+
+    @pytest.mark.asyncio
+    async def test_purge_deleted_records_respects_keep_days(self, db):
+        rid = await _add_sample(db)
+        await db.delete_record(rid)
+
+        # 保留期内不得清理
+        assert await db.purge_deleted_records(keep_days=30) == 0
+        assert (await db.list_deleted_records())[1] == 1
+
+        # keep_days=0 → cutoff=now，刚删除的记录已早于 cutoff，应被物理清理
+        assert await db.purge_deleted_records(keep_days=0) == 1
+        assert await db.get_record(rid) is None
+        assert (await db.list_deleted_records())[1] == 0
 
 
 class TestBatchAddAndQuery:

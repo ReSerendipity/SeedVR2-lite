@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+* **权重文件名双命名兼容（numz `seedvr2_ema_*` ↔ Comfy-Org `seedvr2_*`）**（GOTCHAS #122 / KNOWN_ISSUES #91）：此前把 Comfy-Org 转包版权重（如 `seedvr2_3b_fp8_e4m3fn.safetensors`）放入 `model/` 后，`POST /api/restore/` 会因「按精确文件名找不到文件」恒 503 并报「已尝试 fp16, fp8 均无对应文件」——即便文件就在磁盘上。现 `check_model_exists`、引擎加载（DiT+VAE）、`verify_weight_hashes`、`verify_model_files` 统一走别名解析（`app/integrated_app/utils/weight_names.py`），同一精度的两套命名文件均可直接使用、**无需改名或重新下载**；`config.yaml` 补 `sha256_{fp16,fp8}_alt` 登记 Comfy-Org 版哈希，命中主哈希或 `_alt` 任一即通过白名单（完整性门禁不放松）。**已真机验收**：用户实测 `POST /api/restore/` 正常出图（此前恒 503）。
+* **模型加载失败诊断增强**：错误信息新增「期望文件名（任一命名皆可）」与「发现未登记权重文件」，避免把「文件名不匹配」误读为「未下载」。
+* **测试隔离补洞：跑测试不再覆写真实 `config.yaml`**（GOTCHAS #123 / KNOWN_ISSUES #92）：配置写盘有两条独立路径，`test_app` fixture 此前只重定向了 `settings_module.save_config`，漏掉 `webui_enhancement.SettingsPersistence.save`（直写项目根 `config.yaml`），导致跑测试会把真实 `user_preferences.default_seed` 写回 -1。现 fixture 一并把 `SettingsPersistence.__init__` 的默认 `config_path` 钉到 `tmp_path`。
+* **测试产物不再污染工作区**（GOTCHAS #124）：`smoke_portable_bundle.compute_quality` 的临时辅助脚本此前写入仓库根目录，进程被中断（Ctrl-C / 超时 / kill）时 `finally` 不执行即残留 `tmp*.py`，令 `ruff`/`black` 门禁变红；现改落系统临时目录（脚本位置与执行无关）。
+* **修复两处过时的历史库测试（`SCHEMA_VERSION` 升版 + 软删除语义漂移）**（GOTCHAS #125 / KNOWN_ISSUES #93）：`test_migration_v2_adds_pinned_column` 写死 `get_schema_version() == 3`，而迁移链已推进到 v4；`test_delete_record` 仍假设物理删除，而 v4 起 `delete_record` 默认软删除（回收站，`get_record` 仍可读回）。版本断言改用 `SCHEMA_VERSION` 常量，删除测试拆为「默认软删 / `soft=False` 物理删」，并补齐此前**零覆盖**的 v4 回收站（新增 `TestRecycleBin`：恢复 / 批量软清空 / 过期物理清理 / 空列表 no-op）。至此全量测试 **0 失败**。
+* **回收站端点补齐消费者并归档，`precheck -Full` 的 API 一致性审计转绿**（GOTCHAS #126 / KNOWN_ISSUES #94）：v4 软删除的 `/api/system/history/recycle` 系列三个端点（列表 / 恢复 / 超期清理）此前全仓**无任何消费者**（UI、测试、文档、示例都没有），`scripts/audit_api_consistency.py` 的孤儿路由表只能标为 `unclassified` 并判失败。现新增 `tests/test_api.py::TestHistoryRecycleAPI` 7 例（分页契约、`page=0`→422、缺 `record_ids`→400、未知 id 恢复 0 条、POST 与 DELETE 的 CSRF 保护），并在 `KNOWN_ORPHANS` 如实标为 `api-surface`——补真实消费者而非用标签掩盖缺口。
+* **`.gitignore` 补 `data/*.db.bak-v*`**：`history_db._backup_before_migration` 生成的迁移前快照命名为 `{db}.bak-v{N}`，而既有的 `*.bak`（要求结尾 `.bak`）与 `*.bak.*`（要求 `.bak.`）**都不匹配**该命名，导致每次 schema 迁移都会在 `git status` 留下一个未跟踪文件。
+
 ## [1.5.7] - 2026-09-10
 
 增量更新通道交付版：代码态等同 `[1.5.6]`，本次以 `app-v1.5.7.zip` 增量包形式发布，供已安装用户经程序内「检查更新」直接升级。

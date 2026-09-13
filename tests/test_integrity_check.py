@@ -224,3 +224,80 @@ class TestVerifyModelFiles:
         # 没有哈希配置，不应有结果或均为 True
         for _key, value in results.items():
             assert value is True  # 跳过即视为通过
+
+
+class TestVerifyCheckpointMultiHash:
+    """verify_checkpoint 多候选哈希（numz / Comfy-Org 双命名）。"""
+
+    def test_matches_second_candidate(self, tmp_path):
+        """命中候选列表中的任一哈希即通过（同一权重两套字节 → 两套哈希）。"""
+        content = b"comfy-org-weight-bytes"
+        test_file = tmp_path / "w.safetensors"
+        test_file.write_bytes(content)
+        actual = hashlib.sha256(content).hexdigest()
+
+        assert verify_checkpoint(str(test_file), ["0" * 64, actual], purpose="TestModel") is True
+
+    def test_rejects_when_no_candidate_matches(self, tmp_path, caplog):
+        test_file = tmp_path / "w.safetensors"
+        test_file.write_bytes(b"tampered")
+
+        assert verify_checkpoint(str(test_file), ["1" * 64, "2" * 64], purpose="TestModel") is False
+
+    def test_empty_sequence_skips(self, tmp_path):
+        test_file = tmp_path / "w.safetensors"
+        test_file.write_bytes(b"x")
+
+        assert verify_checkpoint(str(test_file), [], purpose="TestModel", skip_if_empty=True) is True
+
+    def test_empty_sequence_fails_when_required(self, tmp_path, caplog):
+        test_file = tmp_path / "w.safetensors"
+        test_file.write_bytes(b"x")
+
+        assert verify_checkpoint(str(test_file), [], purpose="TestModel", skip_if_empty=False) is False
+
+    def test_single_string_still_supported(self, tmp_path):
+        """向后兼容：单个字符串哈希路径不变。"""
+        content = b"legacy"
+        test_file = tmp_path / "w.safetensors"
+        test_file.write_bytes(content)
+
+        assert verify_checkpoint(str(test_file), hashlib.sha256(content).hexdigest()) is True
+
+
+class TestVerifyModelFilesDualNaming:
+    """verify_model_files 双命名兼容。"""
+
+    def test_alias_file_resolved_and_validated(self, tmp_path):
+        """config 登记 numz 名，磁盘为 Comfy-Org 名 → 解析到别名文件并按其哈希通过。"""
+        pretrained_dir = tmp_path / "pretrained"
+        pretrained_dir.mkdir()
+
+        content = b"comfy-org fp8 bytes"
+        (pretrained_dir / "seedvr2_3b_fp8_e4m3fn.safetensors").write_bytes(content)
+        comfy_hash = hashlib.sha256(content).hexdigest()
+
+        model_cfg = {
+            "checkpoint_fp8": "seedvr2_ema_3b_fp8_e4m3fn.safetensors",  # 磁盘上不存在
+            "sha256_fp8": "a" * 64,  # numz 版哈希
+            "sha256_fp8_alt": comfy_hash,  # Comfy-Org 版哈希
+        }
+
+        results = verify_model_files(str(pretrained_dir), model_cfg, precision="fp8")
+
+        assert results.get("DiT-fp8") is True
+
+    def test_alias_file_with_wrong_hash_fails(self, tmp_path, caplog):
+        pretrained_dir = tmp_path / "pretrained"
+        pretrained_dir.mkdir()
+        (pretrained_dir / "seedvr2_3b_fp8_e4m3fn.safetensors").write_bytes(b"tampered")
+
+        model_cfg = {
+            "checkpoint_fp8": "seedvr2_ema_3b_fp8_e4m3fn.safetensors",
+            "sha256_fp8": "a" * 64,
+            "sha256_fp8_alt": "b" * 64,
+        }
+
+        results = verify_model_files(str(pretrained_dir), model_cfg, precision="fp8")
+
+        assert results.get("DiT-fp8") is False

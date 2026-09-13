@@ -2,7 +2,7 @@
 """pinned「标记保留」与清理豁免测试（数据治理 P1-5）。
 
 验收标准（评估报告 P1-5）：
-1. schema 迁移 v3 为旧库补 pinned 列
+1. schema 迁移 v3 为旧库补 pinned 列（迁移链会一并推进到最新版 v4 / deleted_at）
 2. set_record_pinned / get_pinned_output_paths 语义
 3. cleanup_outputs_once 年龄/数量规则均跳过 pinned 输出
 4. plan_cleanup_outputs 只规划不删除，且豁免 pinned
@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from app.integrated_app.history_db import HistoryDB, HistoryRecord
+from app.integrated_app.history_db import SCHEMA_VERSION, HistoryDB, HistoryRecord
 from app.integrated_app.services.output_retention import cleanup_outputs_once, plan_cleanup_outputs
 
 
@@ -31,7 +31,7 @@ def _make_file(path, mtime: float | None = None) -> None:
 
 @pytest.mark.asyncio
 class TestPinnedMigration:
-    """迁移 v2 → v3：旧库自动补 pinned 列。"""
+    """迁移链 v2 → 最新版：旧库自动补 pinned 列（v3）与 deleted_at（v4）。"""
 
     async def test_migration_v2_adds_pinned_column(self, tmp_path):
         db_path = str(tmp_path / "v2.db")
@@ -56,12 +56,22 @@ class TestPinnedMigration:
         conn.close()
 
         async with HistoryDB(db_path=db_path) as db:
-            assert await db.get_schema_version() == 3
+            # 断言用 SCHEMA_VERSION 常量而非字面量：迁移链会一路推进到最新版，
+            # 写死 3 会在版本升到 4 后过时（这正是本用例此前的失败原因）。
+            assert await db.get_schema_version() == SCHEMA_VERSION
             rid = await db.add_record(HistoryRecord(task_type="image", input_file="a.png", status="completed"))
             record = await db.get_record(rid)
             assert record.pinned is False
             assert await db.set_record_pinned(rid, True) is True
             assert (await db.get_record(rid)).pinned is True
+
+        # 迁移链应走完全程：v2 → v3（pinned）→ v4（deleted_at）
+        conn = sqlite3.connect(db_path)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(history)").fetchall()}
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        conn.close()
+        assert {"pinned", "deleted_at"} <= cols, f"迁移未补齐列，实际列：{sorted(cols)}"
+        assert version == SCHEMA_VERSION
 
 
 @pytest.mark.asyncio
