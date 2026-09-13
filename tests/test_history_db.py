@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
 import aiosqlite
@@ -224,8 +225,14 @@ class TestRecycleBin:
         assert await db.purge_deleted_records(keep_days=30) == 0
         assert (await db.list_deleted_records())[1] == 1
 
-        # keep_days=0 → cutoff=now，刚删除的记录已早于 cutoff，应被物理清理
-        assert await db.purge_deleted_records(keep_days=0) == 1
+        # 把 deleted_at 显式回拨 40 天模拟「已超期」，再清理。
+        # 不要用 keep_days=0：那会让 cutoff 与 deleted_at 同为 now，
+        # 而清理条件是严格的 `deleted_at < cutoff` —— 同一微秒内不成立，
+        # 用例即变成非确定性（CI windows-latest 实测过 assert 0 == 1）。
+        backdated = (datetime.now() - timedelta(days=40)).isoformat()
+        await db._execute_write("UPDATE history SET deleted_at = ? WHERE id = ?", (backdated, rid))
+
+        assert await db.purge_deleted_records(keep_days=30) == 1
         assert await db.get_record(rid) is None
         assert (await db.list_deleted_records())[1] == 0
 
