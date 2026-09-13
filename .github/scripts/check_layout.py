@@ -10,6 +10,9 @@ v2 改进（2026-09-07 / 2026-09-09）：
   - artifact_root_patterns（会再生的产物，如 coverage.xml）只 WARN 不阻断。
   - 2026-09-09：改用 f-string、去掉 coding 声明，满足 ruff UP009/UP031，
     避免污染各仓的 lint 门禁。
+  - 2026-09-13：询问 git 忽略状态时给**目录**补尾斜杠 —— 否则目录自身的
+    .gitignore（如 .uv-cache/.gitignore 的 ``*``）不会被应用，自忽略的缓存目录
+    会被误报为「Unrecognized root entry」假 WARN（每次提交都刷一条）。
 """
 
 import os
@@ -73,6 +76,24 @@ def ignored_set(repo, entries):
         return set()
 
 
+def build_ignore_query(repo, entries):
+    """把根条目名转成 ``git check-ignore`` 的查询名：**目录补尾斜杠**。
+
+    必要性：git 只有当路径被判定为**目录**时，才会应用该目录**自身**的 .gitignore
+    （典型如 ``.uv-cache/.gitignore`` 的 ``*``、``CACHEDIR.TAG`` 约定）。不带斜杠时
+    这类「自忽略」的缓存目录会被误判为未忽略，进而报出
+    「Unrecognized root entry (review / add to allowlist)」假 WARN（2026-09-13 修）。
+
+    Args:
+        repo: 仓库根目录。
+        entries: 根条目名列表（不含路径分隔符）。
+
+    Returns:
+        与 ``entries`` 等长且顺序一致的查询名列表（目录项带尾斜杠）。
+    """
+    return [(e + "/") if os.path.isdir(os.path.join(repo, e)) else e for e in entries]
+
+
 def main():
     if not os.path.exists(RULES_PATH):
         print("FAIL: .github/layout-rules.yaml missing")
@@ -88,7 +109,7 @@ def main():
     warns = []
 
     entries = [e for e in os.listdir(REPO_ROOT) if e != ".git"]
-    ignored = ignored_set(REPO_ROOT, entries)
+    ignored = {x.rstrip("/") for x in ignored_set(REPO_ROOT, build_ignore_query(REPO_ROOT, entries))}
     checked = [e for e in entries if e not in ignored]
 
     # 先对全部条目判 forbid：即使被 gitignore 忽略，散落转储也该拦下来
