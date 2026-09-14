@@ -175,7 +175,27 @@ jobs:
           $ref = $env:REF_NAME
           Invoke-WebRequest "https://codeload.github.com/$env:REPO/tar.gz/refs/heads/$ref" -OutFile src.tgz -UseBasicParsing
           New-Item -ItemType Directory -Path src -Force | Out-Null
-          tar -xzf src.tgz -C src --strip-components=1
+          # Windows 自带 tar（bsdtar）对归档中的中文文件名会报
+          # "Invalid empty pathname"（编码缺陷），改用 Python tarfile（UTF-8 安全）解压。
+          @'
+          import tarfile
+          prefix = "SeedVR2-lite-main/"
+          t = tarfile.open("src.tgz", "r:gz")
+          n = 0
+          for m in t.getmembers():
+              if m.name.endswith("/") or not m.name.startswith(prefix):
+                  continue
+              rel = m.name[len(prefix):]
+              if not rel:
+                  continue
+              m.name = rel
+              try:
+                  t.extract(m, "src", filter="data")
+              except TypeError:
+                  t.extract(m, "src")
+              n += 1
+          print("extracted:", n)
+          '@ | python -
           New-Item -ItemType Directory -Path scripts -Force | Out-Null
           Copy-Item src\scripts\unpack_portable_bundle.ps1, src\scripts\portable_bundle_lib.ps1, src\scripts\smoke_portable_bundle.py scripts\
           Remove-Item src.tgz -Force
