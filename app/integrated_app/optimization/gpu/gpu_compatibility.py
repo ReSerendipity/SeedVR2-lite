@@ -219,13 +219,10 @@ class GPUCompatibilityDetector:
         self._device_cache: list[GPUDeviceInfo] | None = None
 
     def enumerate_gpus(self, force_refresh: bool = False) -> list[GPUDeviceInfo]:
-        """枚举系统中所有可用的 CUDA GPU 设备
+        """枚举系统中所有可用的 GPU 设备（CUDA/ROCm 与 Apple MPS）
 
         带缓存机制，首次调用会实际查询设备，后续调用返回缓存结果。
         force_refresh=True 可强制刷新缓存重新查询。
-
-        Args:
-            force_refresh: 是否强制刷新设备缓存，默认 False
 
         Returns:
             list[GPUDeviceInfo]: GPU 设备信息列表
@@ -241,11 +238,51 @@ class GPUCompatibilityDetector:
                 device_info = self._query_cuda_device(i)
                 devices.append(device_info)
 
+        # Apple Silicon MPS：统一内存，无计算能力概念，作为单设备记录
+        if not devices and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            devices.append(self._query_mps_device())
+
         if not devices:
-            logger.warning("未检测到任何 CUDA GPU 设备")
+            logger.warning("未检测到任何 CUDA/ROCm/MPS GPU 设备")
 
         self._device_cache = devices
         return devices
+
+    def _query_mps_device(self) -> GPUDeviceInfo:
+        """查询 Apple Silicon MPS 设备信息（内部方法）
+
+        统一内存架构：以系统物理内存近似显存，无计算能力（视为满足要求）。
+
+        Returns:
+            GPUDeviceInfo: MPS 设备信息对象
+        """
+        import psutil
+
+        cfg = self.config
+        try:
+            vm = psutil.virtual_memory()
+            total_vram_mb = vm.total // (1024 * 1024)
+            available_vram_mb = vm.available // (1024 * 1024)
+        except Exception:
+            total_vram_mb = 0
+            available_vram_mb = 0
+
+        is_compatible = total_vram_mb >= cfg.min_vram_mb
+        reason = "" if is_compatible else f"统一内存 {total_vram_mb}MB 低于最低要求 {cfg.min_vram_mb}MB"
+
+        return GPUDeviceInfo(
+            device_index=0,
+            device_name="Apple Silicon (MPS)",
+            vendor=GPUVendor.APPLE,
+            backend=ComputeBackend.MPS,
+            total_vram_mb=total_vram_mb,
+            available_vram_mb=available_vram_mb,
+            cuda_compute_capability=None,
+            cuda_version="",
+            driver_version="",
+            is_compatible=is_compatible,
+            incompatibility_reason=reason,
+        )
 
     def _query_cuda_device(self, device_index: int) -> GPUDeviceInfo:
         """查询单个 CUDA GPU 设备的详细信息（内部方法）
@@ -435,7 +472,8 @@ class GPUCompatibilityDetector:
 
         if not compatible_devices:
             logger.error(
-                "GPU 兼容性检查失败: 没有找到满足要求的 GPU 设备。" "SeedVR2 需要 NVIDIA CUDA GPU (SM 7.5+, 8GB+ VRAM)"
+                "GPU 兼容性检查失败: 没有找到满足要求的 GPU 设备。"
+                "SeedVR2 支持 NVIDIA CUDA / AMD ROCm / Apple Silicon MPS (SM 7.5+ 或等效, 8GB+ 显存/统一内存)"
             )
         else:
             best = compatible_devices[0]

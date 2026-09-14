@@ -278,7 +278,8 @@ class GpuConfig(BaseModel):
     """GPU 后端配置模型。
 
     Attributes:
-        backend: GPU 后端类型，"auto" 自动检测，或指定 "cuda"。
+        backend: GPU 后端类型，"auto" 自动检测（NVIDIA CUDA → AMD ROCm →
+            Apple MPS），或指定 "cuda" / "rocm" / "mps"。
         vram_tile_tiers: VAE 分块推荐档位表（按 min_available_gb 降序），
             供 gpu_utils.recommend_params 消费；P0-3 起为单一事实来源。
     """

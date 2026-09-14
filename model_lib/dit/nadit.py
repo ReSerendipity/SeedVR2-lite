@@ -173,18 +173,24 @@ class NaRoPE(nn.Module):
         self.theta_h = theta_h
         self.theta_w = theta_w
 
-    def precompute_freqs_cis(self, dim, max_seqlen, theta):
-        """预计算频率张量。"""
-        freqs = 1.0 / (theta ** (torch.arange(0, dim, 2, dtype=torch.float64, device="cuda") / dim))
-        t = torch.arange(max_seqlen, dtype=torch.float64, device="cuda")
+    def precompute_freqs_cis(self, dim, max_seqlen, theta, device=None):
+        """预计算频率张量。
+
+        Args:
+            device: 目标设备（默认 None → cpu；调用方应传入输入张量所在设备，
+                以支持 CUDA/ROCm/MPS 多后端）。
+        """
+        dev = device or "cpu"
+        freqs = 1.0 / (theta ** (torch.arange(0, dim, 2, dtype=torch.float64, device=dev) / dim))
+        t = torch.arange(max_seqlen, dtype=torch.float64, device=dev)
         freqs = torch.outer(t, freqs).float()
         return torch.polar(torch.ones_like(freqs), freqs)
 
-    def get_freqs_cis(self, nt, nh, nw):
+    def get_freqs_cis(self, nt, nh, nw, device=None):
         """获取指定网格大小的频率张量。"""
-        ft = self.precompute_freqs_cis(self.dim_t, nt, self.theta_t).reshape(nt, 1, 1, self.dim_t // 2)
-        fh = self.precompute_freqs_cis(self.dim_h, nh, self.theta_h).reshape(1, nh, 1, self.dim_h // 2)
-        fw = self.precompute_freqs_cis(self.dim_w, nw, self.theta_w).reshape(1, 1, nw, self.dim_w // 2)
+        ft = self.precompute_freqs_cis(self.dim_t, nt, self.theta_t, device=device).reshape(nt, 1, 1, self.dim_t // 2)
+        fh = self.precompute_freqs_cis(self.dim_h, nh, self.theta_h, device=device).reshape(1, nh, 1, self.dim_h // 2)
+        fw = self.precompute_freqs_cis(self.dim_w, nw, self.theta_w, device=device).reshape(1, 1, nw, self.dim_w // 2)
         ft = ft.repeat(1, nh, nw, 1)
         fh = fh.repeat(nt, 1, nw, 1)
         fw = fw.repeat(nt, nh, 1, 1)
@@ -211,14 +217,17 @@ class NaRoPE(nn.Module):
             nt, nh, nw = window_sizes[i].tolist()
             if cache is not None:
                 freq_list.append(
-                    cache(f"freqs_{nt}_{nh}_{nw}", lambda nt=nt, nh=nh, nw=nw: self.get_freqs_cis(nt, nh, nw))
+                    cache(
+                        f"freqs_{nt}_{nh}_{nw}",
+                        lambda nt=nt, nh=nh, nw=nw: self.get_freqs_cis(nt, nh, nw, device=x.device),
+                    )
                 )
             else:
-                freq_list.append(self.get_freqs_cis(nt, nh, nw))
+                freq_list.append(self.get_freqs_cis(nt, nh, nw, device=x.device))
         if branch == "txt" and b > 0:
             txt_start = nw_cu[-1].item()
             txt_len = x.shape[0] - txt_start
-            freq_list.append(self.get_freqs_cis(txt_len, 1, 1))
+            freq_list.append(self.get_freqs_cis(txt_len, 1, 1, device=x.device))
         freqs = torch.cat(freq_list, dim=0)
         return apply_rope(x.unsqueeze(0), freqs=freqs).squeeze(0)
 

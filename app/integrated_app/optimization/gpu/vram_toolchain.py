@@ -150,18 +150,27 @@ class FP8Quantizer:
         self._original_dtypes: dict[str, torch.dtype] = {}
 
     def is_available(self) -> bool:
-        """检测 torchao 库是否可用
+        """检测 torchao 库是否可用且后端支持 FP8
+
+        torchao 的 float8 内核仅支持 NVIDIA CUDA（GPU compute capability >= 8.9
+        或经 torchao 的 float8 支持路径）；Apple MPS / 纯 CPU 上量化会静默失败
+        或产生错误结果，统一判定不可用。
 
         Returns:
-            bool: torchao 已安装返回 True，否则返回 False
+            bool: torchao 已安装且 CUDA 可用返回 True，否则返回 False
         """
         try:
             import torchao  # noqa: F401
-
-            return True
         except ImportError:
             logger.debug("torchao 未安装，FP8 量化不可用")
             return False
+
+        # torchao float8 内核依赖 CUDA（NVIDIA CUDA / AMD ROCm 的 torchao 支持有限，
+        # 此处仅放行 torch.cuda 可用环境；MPS/CPU 明确不可用）
+        if not torch.cuda.is_available():
+            logger.debug("非 CUDA 后端（MPS/CPU），FP8 量化不可用")
+            return False
+        return True
 
     def get_torchao_version(self) -> str | None:
         """获取 torchao 版本号

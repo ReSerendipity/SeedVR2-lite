@@ -45,7 +45,7 @@ def _device_str(device: torch.device | str) -> str:
 
 
 def is_cuda_available() -> bool:
-    """检查 CUDA 后端是否可用
+    """检查 CUDA 类后端（NVIDIA CUDA / AMD ROCm）是否可用
 
     Returns:
         bool: CUDA 可用返回 True，否则返回 False
@@ -53,15 +53,29 @@ def is_cuda_available() -> bool:
     return torch.cuda.is_available()
 
 
-def _get_default_device() -> torch.device:
-    """获取当前默认 CUDA 设备，支持多 GPU 环境
-
-    使用 torch.cuda.current_device() 获取当前活跃设备，而非硬编码 cuda:0
+def is_mps_available() -> bool:
+    """检查 Apple Silicon MPS 后端是否可用
 
     Returns:
-        torch.device: 当前默认 CUDA 设备
+        bool: MPS 可用返回 True，否则返回 False
     """
-    return torch.device(f"cuda:{torch.cuda.current_device()}")
+    return bool(hasattr(torch.backends, "mps") and torch.backends.mps.is_available() and torch.backends.mps.is_built())
+
+
+def _get_default_device() -> torch.device:
+    """获取当前默认 GPU 设备
+
+    CUDA 类后端（NVIDIA/ROCm）使用 torch.cuda.current_device() 获取当前活跃
+    设备（而非硬编码 cuda:0）；Apple MPS 返回 mps 设备；否则返回 CPU。
+
+    Returns:
+        torch.device: 当前默认设备
+    """
+    if is_cuda_available():
+        return torch.device(f"cuda:{torch.cuda.current_device()}")
+    if is_mps_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
 
 def _normalize_device(device: torch.device | str | None) -> torch.device:
@@ -99,9 +113,13 @@ def get_basic_vram_info(device: torch.device | None = None) -> dict[str, Any]:
         if is_cuda_available():
             device = _normalize_device(device)
             free_memory, total_memory = torch.cuda.mem_get_info(device)
+        elif is_mps_available():
+            # MPS 统一内存：以系统物理内存近似总/可用内存
+            vm = psutil.virtual_memory()
+            free_memory = vm.available
+            total_memory = vm.total
         else:
-            # CONSTRAINT: SeedVR2 仅支持 NVIDIA CUDA GPU，不支持 CPU/MPS 推理
-            return {"error": "No CUDA GPU backend available"}
+            return {"error": "No GPU backend available"}
 
         return {"free_gb": free_memory / (1024**3), "total_gb": total_memory / (1024**3)}
     except Exception as e:
@@ -132,6 +150,12 @@ def get_vram_usage(device: torch.device | None = None) -> tuple[float, float, fl
             peak_allocated = torch.cuda.max_memory_allocated(device) / (1024**3)
             peak_reserved = torch.cuda.max_memory_reserved(device) / (1024**3)
             return allocated, reserved, peak_allocated, peak_reserved
+        if is_mps_available():
+            # MPS：无 reserved/峰值统计，以 current_allocated_memory 近似
+            allocated_mb = 0.0
+            if hasattr(torch.mps, "current_allocated_memory"):
+                allocated_mb = torch.mps.current_allocated_memory() / (1024**3)
+            return allocated_mb, allocated_mb, allocated_mb, allocated_mb
     except Exception as e:
         logger.warning(f"Failed to get VRAM usage: {e}")
     return 0.0, 0.0, 0.0, 0.0
@@ -222,6 +246,8 @@ def clear_memory(deep: bool = False, force: bool = True) -> None:
     if is_cuda_available():
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
+    elif is_mps_available() and hasattr(torch.mps, "empty_cache"):
+        torch.mps.empty_cache()
 
     # ===== 深度清理操作（仅 deep=True 时执行）=====
     if deep:

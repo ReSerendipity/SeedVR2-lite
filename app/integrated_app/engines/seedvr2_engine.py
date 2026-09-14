@@ -82,6 +82,25 @@ from app.integrated_app.video_processor import FFmpegWrapper, VideoProcessor  # 
 logger = logging.getLogger(__name__)
 
 
+def _resolve_model_dtype(dtype_name: str, device: str) -> torch.dtype:
+    """按设备解析模型权重 dtype。
+
+    Apple Silicon MPS 上 bfloat16 的算子支持远不如 float16 完善（部分内核
+    缺失或静默回退 CPU），统一自动降级为 float16；CUDA/ROCm 保持配置值。
+
+    Args:
+        dtype_name: 配置中的 dtype 名（如 "bfloat16" / "float16" / "float32"）。
+        device: 推理设备字符串（"cuda" / "mps"）。
+
+    Returns:
+        torch.dtype: 实际使用的 dtype。
+    """
+    if device == "mps" and dtype_name == "bfloat16":
+        logger.info("MPS 设备: bfloat16 自动降级为 float16（MPS 对 bf16 算子支持不完善）")
+        return torch.float16
+    return getattr(torch, dtype_name)
+
+
 class SeedVR2Engine(
     _VAEPipelineMixin,
     _DitPipelineMixin,
@@ -635,22 +654,32 @@ class SeedVR2Engine(
     def _resolve_device(self, device: str) -> str:
         """解析推理设备字符串
 
-        将 "auto" 自动解析为可用的 CUDA 设备，或直接返回指定设备。
-        SeedVR2 仅支持 NVIDIA CUDA GPU 推理，不支持 CPU。
+        将 "auto" 自动解析为可用的 GPU 设备（NVIDIA CUDA → AMD ROCm →
+        Apple MPS），或直接返回指定设备。SeedVR2 支持 CUDA/ROCm/MPS 推理，
+        不支持纯 CPU 推理。
 
         Args:
-            device: 设备字符串，"auto" 表示自动选择，"cuda" 表示使用 GPU
+            device: 设备字符串，"auto" 表示自动选择，"cuda" 表示使用 GPU，
+                "mps" 表示 Apple Silicon MPS
 
         Returns:
-            str: 解析后的设备字符串，当前仅返回 "cuda"
+            str: 解析后的设备字符串，如 "cuda" / "mps"
 
         Raises:
-            RuntimeError: device="auto" 但 CUDA 不可用时抛出，提示需要 NVIDIA GPU
+            RuntimeError: device="auto" 但无可用 GPU 时抛出，提示需要
+                NVIDIA/AMD/Apple Silicon GPU
         """
         if device == "auto":
-            if torch.cuda.is_available():
-                return "cuda"
-            raise RuntimeError("CUDA 不可用。SeedVR2 模型仅支持 NVIDIA GPU 推理，不支持 CPU。")
+            from app.integrated_app.gpu_backend import gpu_manager
+
+            if gpu_manager.is_gpu_available:
+                resolved = gpu_manager.device_str
+                logger.info(f"自动选择推理设备: {resolved} ({gpu_manager.device_name})")
+                return resolved
+            raise RuntimeError(
+                "未检测到可用 GPU。SeedVR2 模型支持 NVIDIA CUDA / AMD ROCm / "
+                "Apple Silicon MPS 推理，请安装对应 GPU 驱动与 PyTorch 后端。"
+            )
         return device
 
     def _load_dit_model(
@@ -695,9 +724,9 @@ class SeedVR2Engine(
         # 预导入: 防止模块导入时卡住
         import common.distributed.advanced  # noqa: F401
 
-        # 预先确定目标 dtype
+        # 预先确定目标 dtype（MPS 上 bf16 自动降级 fp16）
         dit_config = model_config["dit"]
-        dit_dtype = getattr(torch, dit_config.get("dtype", "bfloat16"))
+        dit_dtype = _resolve_model_dtype(dit_config.get("dtype", "bfloat16"), device)
 
         # ==================== 步骤1: 加载权重到 CPU ====================
         _check_memory_before_load(checkpoint_path, "DiT")
@@ -1100,7 +1129,8 @@ class SeedVR2Engine(
 
         # 逐个转换为目标 dtype (避免内存翻倍)
         # ComfyUI: VAE YAML 默认 dtype=float16, 但会被 compute_dtype 覆盖为 bfloat16
-        vae_dtype = getattr(torch, vae_config.get("dtype", "bfloat16"))
+        # MPS 上 bf16 自动降级 fp16（算子支持更完善）
+        vae_dtype = _resolve_model_dtype(vae_config.get("dtype", "bfloat16"), device)
         converted_count = 0
         for k in list(state_dict.keys()):
             v = state_dict[k]

@@ -17,8 +17,17 @@ class RAFT(nn.Module):
 
     def __init__(self, model_path: str | None = None):
         super().__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = self._pick_device()
         logger.info(f"RAFT initialized on {self.device}")
+
+    @staticmethod
+    def _pick_device() -> torch.device:
+        """选择可用设备：NVIDIA CUDA → Apple MPS → CPU"""
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
 
     @torch.no_grad()
     def estimate_flow(self, frame1: torch.Tensor, frame2: torch.Tensor, num_iters: int = 20) -> torch.Tensor:

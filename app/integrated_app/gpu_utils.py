@@ -4,14 +4,14 @@
 是显存管理的底层工具集，为上层模块（模型管理器、内存管理器等）提供基础能力。
 
 所属项目: SeedVR2 (基于 ComfyUI-SeedVR2_VideoUpscaler 独立重构)
-核心技术栈: PyTorch CUDA API, psutil, functools, garbage collection
+核心技术栈: PyTorch CUDA/ROCm/MPS API, psutil, functools, garbage collection
 
 主要功能:
-    - GPU 显存实时监控（总显存、已分配、已保留、可用、利用率）
+    - GPU 显存实时监控（总显存、已分配、已保留、可用、利用率；MPS 按统一内存近似）
     - 系统内存信息查询
     - 模型加载显存需求估算（考虑模型大小、精度、分辨率）
     - VRAM 预检 + 精度/分块参数推荐（借鉴 Image_MultiModel）
-    - GPU 缓存清理与强制垃圾回收
+    - GPU 缓存清理与强制垃圾回收（设备无关封装）
     - OOM 保护装饰器（捕获显存不足异常并自动清理）
     - 完整系统信息聚合（GPU + 内存 + OS）
 
@@ -24,6 +24,7 @@
     本模块内置字典仅为配置不可读时的回退默认值。
 """
 
+import contextlib
 import functools
 import gc
 import logging
@@ -38,10 +39,16 @@ logger = logging.getLogger(__name__)
 try:
     import torch
 
+    # CUDA 类后端（NVIDIA CUDA / AMD ROCm-HIP）：二者均通过 torch.cuda API 暴露
     _HAS_TORCH_CUDA = torch.cuda.is_available()
+    # Apple Silicon MPS 后端
+    _HAS_MPS = bool(
+        hasattr(torch.backends, "mps") and torch.backends.mps.is_available() and torch.backends.mps.is_built()
+    )
 except ImportError:
     torch = None  # type: ignore[assignment]
     _HAS_TORCH_CUDA = False
+    _HAS_MPS = False
 
 # ===========================================================================
 # 显存估算常量 — P0-3 单一事实来源改造
@@ -242,8 +249,8 @@ def precision_saves_vram(current: str | None, candidate: str | None) -> bool:
 def get_gpu_memory_info() -> dict:
     """获取 GPU 显存详细信息（使用 mem_get_info 获取实际可用显存）
 
-    使用 PyTorch CUDA API 查询设备 0 的显存状态，区分已分配（allocated）、
-    已保留（reserved）和实际可用（free）三种状态。
+    支持 CUDA 类后端（NVIDIA/ROCm，经 mem_get_info）与 Apple MPS
+    （统一内存，以 torch.mps.current_allocated_memory + 系统内存近似）。
 
     Returns:
         dict: 包含以下键的显存信息字典：
@@ -256,6 +263,19 @@ def get_gpu_memory_info() -> dict:
         查询失败时返回全 0 的默认字典。
     """
     try:
+        if _HAS_MPS:
+            # MPS 统一内存：total 用系统物理内存近似，allocated 用 torch.mps API
+            mem_total_mb = _mps_total_memory_mb()
+            mem_free_mb = _mps_available_memory_mb()
+            allocated = _mps_allocated_memory_mb()
+            used = max(mem_total_mb - mem_free_mb, allocated)
+            return {
+                "total_mb": mem_total_mb,
+                "allocated_mb": allocated,
+                "reserved_mb": allocated,  # MPS 无 reserved 概念，以 allocated 近似
+                "available_mb": mem_free_mb,
+                "utilization_pct": float((used / mem_total_mb) * 100) if mem_total_mb > 0 else 0.0,
+            }
         if _HAS_TORCH_CUDA:
             # mem_get_info 返回 (free, total)，反映驱动层面实际可用显存
             free_memory, total_memory = torch.cuda.mem_get_info(0)
@@ -280,6 +300,38 @@ def get_gpu_memory_info() -> dict:
         "available_mb": 0,
         "utilization_pct": 0.0,
     }
+
+
+def _mps_total_memory_mb() -> int:
+    """获取 MPS 后端总内存（MB，以系统物理内存近似）"""
+    try:
+        import psutil
+
+        return int(psutil.virtual_memory().total // (1024 * 1024))
+    except Exception:
+        return 0
+
+
+def _mps_available_memory_mb() -> int:
+    """获取 MPS 后端可用内存（MB，以系统可用物理内存近似）"""
+    try:
+        import psutil
+
+        return int(psutil.virtual_memory().available // (1024 * 1024))
+    except Exception:
+        return 0
+
+
+def _mps_allocated_memory_mb() -> int:
+    """获取 PyTorch 在 MPS 上已分配内存（MB）"""
+    if torch is None or not hasattr(torch, "mps"):
+        return 0
+    try:
+        if hasattr(torch.mps, "current_allocated_memory"):
+            return int(torch.mps.current_allocated_memory() // (1024 * 1024))
+    except Exception:
+        pass
+    return 0
 
 
 def check_vram_available(required_mb: int) -> tuple[bool, int]:
@@ -353,18 +405,135 @@ def estimate_model_vram(model_size: str, resolution: tuple | None = None, precis
 def clear_gpu_cache():
     """清理 GPU 显存缓存
 
-    调用 torch.cuda.empty_cache() 释放 PyTorch 缓存分配器持有的未使用显存，
-    归还给 CUDA 驱动。不会释放正在使用的张量显存。
+    CUDA 类后端（NVIDIA/ROCm）调用 torch.cuda.empty_cache() 释放缓存分配器
+    持有的未使用显存；Apple MPS 调用 torch.mps.empty_cache()（可用时）。
 
     注意：这不会减少 torch.cuda.memory_allocated() 的显示值，
     但会增加 torch.cuda.mem_get_info() 报告的可用显存。
     """
     try:
+        if _HAS_MPS:
+            if hasattr(torch.mps, "empty_cache"):
+                torch.mps.empty_cache()
+                logger.info("MPS 缓存已清理")
+            return
         if _HAS_TORCH_CUDA:
             torch.cuda.empty_cache()
             logger.info("GPU 缓存已清理")
     except Exception as e:
         logger.error(f"GPU 缓存清理失败: {e}")
+
+
+def get_active_device_str() -> str:
+    """获取当前激活的推理设备字符串（"cuda" / "mps" / "cpu"）
+
+    优先返回 gpu_manager 选定的后端设备；gpu_manager 不可用（如测试隔离）
+    时回退到 torch 原生检测。
+
+    Returns:
+        str: 当前激活设备字符串
+    """
+    try:
+        from app.integrated_app.gpu_backend import gpu_manager
+
+        if gpu_manager.is_gpu_available:
+            return gpu_manager.device_str
+    except Exception:
+        pass
+    if _HAS_MPS:
+        return "mps"
+    if _HAS_TORCH_CUDA:
+        return "cuda"
+    return "cpu"
+
+
+def is_gpu_device(device: "torch.device | str | None") -> bool:
+    """判断设备是否为 GPU（cuda/mps 类）设备
+
+    Args:
+        device: 设备对象或字符串；None 表示当前激活设备
+
+    Returns:
+        bool: GPU 设备返回 True
+    """
+    if device is None:
+        return get_active_device_str() in ("cuda", "mps")
+    dev = torch.device(device) if isinstance(device, str) else device
+    return dev.type in ("cuda", "mps")
+
+
+def empty_gpu_cache():
+    """设备无关的 GPU 缓存清理（供各模块统一调用）"""
+    clear_gpu_cache()
+
+
+def gpu_synchronize():
+    """设备无关的 GPU 同步：CUDA 类后端 torch.cuda.synchronize()，
+    MPS 后端 torch.mps.synchronize()（可用时）"""
+    if _HAS_MPS:
+        if torch is not None and hasattr(torch.mps, "synchronize"):
+            with contextlib.suppress(Exception):
+                torch.mps.synchronize()
+        return
+    if _HAS_TORCH_CUDA:
+        torch.cuda.synchronize()
+
+
+def gpu_memory_allocated_bytes(device: "torch.device | str | None" = None) -> int:
+    """设备无关的已分配 GPU 内存（字节）"""
+    if device is None:
+        if _HAS_MPS:
+            return _mps_allocated_memory_mb() * (1024 * 1024)
+        if _HAS_TORCH_CUDA:
+            return torch.cuda.memory_allocated(0)
+        return 0
+    dev = torch.device(device) if isinstance(device, str) else device
+    try:
+        if dev.type == "cuda":
+            return torch.cuda.memory_allocated(dev.index if dev.index is not None else 0)
+        if dev.type == "mps":
+            return _mps_allocated_memory_mb() * (1024 * 1024)
+    except Exception:
+        pass
+    return 0
+
+
+def gpu_memory_reserved_bytes(device: "torch.device | str | None" = None) -> int:
+    """设备无关的已保留 GPU 内存（字节；MPS 无 reserved 概念，以 allocated 近似）"""
+    if device is None:
+        if _HAS_MPS:
+            return _mps_allocated_memory_mb() * (1024 * 1024)
+        if _HAS_TORCH_CUDA:
+            return torch.cuda.memory_reserved(0)
+        return 0
+    dev = torch.device(device) if isinstance(device, str) else device
+    try:
+        if dev.type == "cuda":
+            return torch.cuda.memory_reserved(dev.index if dev.index is not None else 0)
+        if dev.type == "mps":
+            return _mps_allocated_memory_mb() * (1024 * 1024)
+    except Exception:
+        pass
+    return 0
+
+
+def gpu_max_memory_allocated(device: "torch.device | str | None" = None) -> int:
+    """设备无关的峰值已分配 GPU 内存（字节；MPS 无峰值统计，返回当前分配）"""
+    return gpu_memory_allocated_bytes(device)
+
+
+def gpu_reset_peak_memory_stats(device: "torch.device | str | None" = None):
+    """设备无关的峰值内存统计重置（MPS 无此 API，仅 CUDA 类后端执行）"""
+    if device is None:
+        if _HAS_TORCH_CUDA:
+            torch.cuda.reset_peak_memory_stats()
+        return
+    dev = torch.device(device) if isinstance(device, str) else device
+    try:
+        if dev.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(dev.index if dev.index is not None else 0)
+    except Exception:
+        pass
 
 
 def force_garbage_collect():

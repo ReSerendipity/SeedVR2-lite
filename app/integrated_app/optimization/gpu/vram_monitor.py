@@ -30,6 +30,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
+import psutil
 import torch
 
 logger = logging.getLogger(__name__)
@@ -151,7 +152,13 @@ class VRAMPeakMonitor:
         """
         self.enabled = enabled
         if device is None:
-            self.device = torch.device("cuda:0") if torch.cuda.is_available() else None
+            # 自动选择：NVIDIA CUDA → Apple MPS
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda:0")
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+            else:
+                self.device = None
         elif isinstance(device, str):
             self.device = torch.device(device)
         else:
@@ -173,10 +180,30 @@ class VRAMPeakMonitor:
             VRAMSnapshot | None: 显存快照对象；
                 监控禁用/CUDA不可用/查询失败时返回 None
         """
-        if not self.enabled or self.device is None or not torch.cuda.is_available():
+        if not self.enabled or self.device is None:
             return None
 
         try:
+            if self.device.type == "mps":
+                # MPS 统一内存：无 reserved/峰值统计，以 current_allocated_memory 近似
+                allocated_mb = 0.0
+                if hasattr(torch.mps, "current_allocated_memory"):
+                    allocated_mb = torch.mps.current_allocated_memory() / (1024**2)
+                vm = psutil.virtual_memory()
+                total_mem = vm.total
+                free_mem = vm.available
+                free_mb = free_mem / (1024**2)
+                total_mb = total_mem / (1024**2)
+                return VRAMSnapshot(
+                    stage=stage,
+                    allocated_mb=allocated_mb,
+                    reserved_mb=allocated_mb,
+                    peak_allocated_mb=allocated_mb,
+                    peak_reserved_mb=allocated_mb,
+                    free_mb=free_mb,
+                    total_mb=total_mb,
+                    utilization_pct=(total_mb - free_mb) / total_mb * 100 if total_mb > 0 else 0.0,
+                )
             allocated = torch.cuda.memory_allocated(self.device) / (1024**2)
             reserved = torch.cuda.memory_reserved(self.device) / (1024**2)
             peak_allocated = torch.cuda.max_memory_allocated(self.device) / (1024**2)
@@ -290,7 +317,7 @@ class VRAMPeakMonitor:
         self._global_peak_reserved_mb = 0.0
         self._inference_start_time = time.time()
 
-        if self.enabled and self.device is not None and torch.cuda.is_available():
+        if self.enabled and self.device is not None and self.device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(self.device)
 
     def end_inference(self):
@@ -368,5 +395,5 @@ class VRAMPeakMonitor:
         self._global_peak_allocated_mb = 0.0
         self._global_peak_reserved_mb = 0.0
 
-        if self.enabled and self.device is not None and torch.cuda.is_available():
+        if self.enabled and self.device is not None and self.device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(self.device)

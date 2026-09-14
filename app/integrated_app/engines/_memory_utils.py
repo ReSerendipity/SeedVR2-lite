@@ -77,6 +77,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import contextlib  # noqa: E402
 
 from app.integrated_app.engine_interface import RestoreEngine  # noqa: E402
+from app.integrated_app.gpu_utils import (  # noqa: E402 — 设备无关 GPU 封装
+    empty_gpu_cache,
+    get_active_device_str,
+    gpu_memory_allocated_bytes,
+    gpu_memory_reserved_bytes,
+    gpu_synchronize,
+    is_gpu_device,
+)
 from app.integrated_app.optimization.gpu.memory_manager import (  # noqa: E402
     clear_memory,
     manage_model_device,
@@ -242,9 +250,9 @@ def _log_memory_diagnostics() -> None:
         rss_gb = process.memory_info().rss / (1024**3)
         logger.warning(f"[内存诊断] 当前进程RSS: {rss_gb:.2f}GB")
 
-        if torch.cuda.is_available():
-            vram_alloc = torch.cuda.memory_allocated(0) / 1024**3
-            vram_resv = torch.cuda.memory_reserved(0) / 1024**3
+        if is_gpu_device(None):
+            vram_alloc = gpu_memory_allocated_bytes(None) / 1024**3
+            vram_resv = gpu_memory_reserved_bytes(None) / 1024**3
             logger.warning(f"[内存诊断] GPU显存: 已分配={vram_alloc:.2f}GB, 已保留={vram_resv:.2f}GB")
 
         top_procs = []
@@ -301,9 +309,9 @@ def _check_memory(threshold: float | None = None, force_cleanup: bool = True) ->
         )
         logger.warning(f"[内存] 超过阈值 ({reason})，执行清理后重试...")
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
+        if is_gpu_device(None):
+            empty_gpu_cache()
+            gpu_synchronize()
         gc.collect()
         _force_release_memory()
 
@@ -403,8 +411,8 @@ def _log_memory(tag: str = ""):
             ram_info = f"RAM: {mem.percent:.0f}% ({mem.available/1024**3:.1f}GB可用/{mem.total/1024**3:.1f}GB)"
         else:
             ram_info = "RAM: N/A"
-        vram_alloc = torch.cuda.memory_allocated(0) / 1024**3 if torch.cuda.is_available() else 0
-        vram_resv = torch.cuda.memory_reserved(0) / 1024**3 if torch.cuda.is_available() else 0
+        vram_alloc = gpu_memory_allocated_bytes(None) / 1024**3 if is_gpu_device(None) else 0
+        vram_resv = gpu_memory_reserved_bytes(None) / 1024**3 if is_gpu_device(None) else 0
         logger.info(f"[内存{tag}] {ram_info}, " f"VRAM: {vram_alloc:.2f}GB使用/{vram_resv:.2f}GB保留")
     except Exception:
         pass
@@ -422,9 +430,9 @@ def _force_release_memory():
     for _ in range(3):
         gc.collect()
 
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
+    if is_gpu_device(None):
+        empty_gpu_cache()
+        gpu_synchronize()
 
     try:
         import ctypes
@@ -444,15 +452,29 @@ def get_free_vram_gb(device: "torch.device | str | None" = None) -> float:
     注意：必须用空闲显存而不是总显存做容量决策。
     用总显存判断会导致「12GB 卡上已占用 6.3GB 仍按 12GB 选档」，
     进而触发 Windows WDDM 分页（表现为静默卡死而非 OOM）。
+    MPS 统一内存后端以系统可用内存近似。
     """
     try:
-        if not torch.cuda.is_available():
+        if device is None:
+            dev_type = get_active_device_str()
+            if dev_type == "mps":
+                from app.integrated_app.gpu_utils import _mps_available_memory_mb
+
+                return _mps_available_memory_mb() / 1024.0
+            if dev_type == "cuda":
+                free_bytes, _total_bytes = torch.cuda.mem_get_info(0)
+                return free_bytes / (1024**3)
             return 0.0
-        idx = 0
-        if device is not None:
-            idx = torch.device(device).index if torch.device(device).index is not None else 0
-        free_bytes, _total_bytes = torch.cuda.mem_get_info(idx)
-        return free_bytes / (1024**3)
+        dev = torch.device(device)
+        if dev.type == "mps":
+            from app.integrated_app.gpu_utils import _mps_available_memory_mb
+
+            return _mps_available_memory_mb() / 1024.0
+        if dev.type == "cuda":
+            idx = dev.index if dev.index is not None else 0
+            free_bytes, _total_bytes = torch.cuda.mem_get_info(idx)
+            return free_bytes / (1024**3)
+        return 0.0
     except Exception:
         return 0.0
 
@@ -480,8 +502,8 @@ def offload_model_to_cpu(model, model_name: str = "Model", reason: str = "") -> 
         logger.warning(f"{model_name} 卸载到 CPU 失败（已忽略）: {e}")
         return False
 
-    if moved and torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    if moved and is_gpu_device(None):
+        empty_gpu_cache()
     return bool(moved)
 
 
@@ -595,9 +617,19 @@ class _NaResize:
             return x
         new_h, new_w = int(h * scale), int(w * scale)
         x = x.float()
-        x = torch.nn.functional.interpolate(
-            x.reshape(1, t * c, h, w), size=(new_h, new_w), mode="bicubic", align_corners=False
-        )
+        # MPS 兼容：Apple Silicon 上 bicubic 插值支持不完善（部分 torch 版本
+        # 抛 "bicubic not implemented for MPS"），统一回退 CPU 计算后移回原设备
+        if x.is_mps:
+            x = torch.nn.functional.interpolate(
+                x.reshape(1, t * c, h, w).cpu(),
+                size=(new_h, new_w),
+                mode="bicubic",
+                align_corners=False,
+            ).to("mps")
+        else:
+            x = torch.nn.functional.interpolate(
+                x.reshape(1, t * c, h, w), size=(new_h, new_w), mode="bicubic", align_corners=False
+            )
         return x.reshape(t, c, new_h, new_w)
 
 

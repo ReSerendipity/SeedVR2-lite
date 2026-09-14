@@ -216,7 +216,7 @@ async def upload_and_restore(
     if not gpu_manager.is_gpu_available:
         raise HTTPException(
             status_code=503,
-            detail="SeedVR2 仅支持 NVIDIA GPU 推理，当前未检测到 NVIDIA GPU。请安装 NVIDIA GPU 并配置 CUDA 驱动。",
+            detail="SeedVR2 需要 GPU 推理（支持 NVIDIA CUDA / AMD ROCm / Apple Silicon MPS），当前未检测到可用 GPU。请安装对应 GPU 与 PyTorch 后端。",
         )
 
     # 自动加载模型：未加载（或尺寸不符）时先加载再修复，避免用户手动预加载

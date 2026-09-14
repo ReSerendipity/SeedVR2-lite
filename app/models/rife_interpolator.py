@@ -15,15 +15,24 @@ class RIFEInterpolator:
     """RIFE 帧插值器 - 用于视频补帧"""
 
     def __init__(self, model_path: str | None = None):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = self._pick_device()
         self.model = None
         self._load_model(model_path)
         logger.info(f"RIFE initialized on {self.device}")
 
+    @staticmethod
+    def _pick_device() -> torch.device:
+        """选择可用设备：NVIDIA CUDA → Apple MPS → CPU"""
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+
     def _load_model(self, model_path: str | None):
         """加载预训练 RIFE 模型"""
         try:
-            if model_path and torch.cuda.is_available():
+            if model_path and (torch.cuda.is_available() or self.device.type == "mps"):
                 # 生产环境: 加载真实 RIFE v4.6 模型
                 logger.info(f"Loading RIFE from {model_path}")
                 # self.model = torch.jit.load(model_path).to(self.device).eval()

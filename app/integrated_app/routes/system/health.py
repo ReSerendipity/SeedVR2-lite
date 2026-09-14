@@ -191,6 +191,7 @@ async def health_check(
         preflight = {
             "cuda_available": False,
             "cuda_device": "",
+            "mps_available": False,
             "ffmpeg_available": False,
         }
 

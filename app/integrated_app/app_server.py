@@ -386,7 +386,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug(f"核心模块完整性自检跳过: {e}")
 
-    # 启动预检（桌面端迁移 B-3）：CUDA / FFmpeg 可用性。终端时代由
+    # 启动预检（桌面端迁移 B-3）：GPU / FFmpeg 可用性。终端时代由
     # clean_launch.py 在启动时打印警告；桌面端终端不可见，结果挂到
     # app.state.startup_preflight，经 /api/system/health 暴露给壳/前端展示。
     try:
@@ -394,10 +394,16 @@ async def lifespan(app: FastAPI):
 
         _cuda_available = bool(_torch.cuda.is_available())
         _cuda_device = _torch.cuda.get_device_name(0) if _cuda_available else ""
+        _mps_available = bool(
+            hasattr(_torch.backends, "mps") and _torch.backends.mps.is_available() and _torch.backends.mps.is_built()
+        )
+        if not _cuda_available and _mps_available:
+            _cuda_device = "Apple Silicon (MPS)"
     except Exception as e:  # noqa: BLE001 — 预检失败不阻断启动
-        logger.debug(f"[PREFLIGHT] CUDA 探测失败: {e}")
+        logger.debug(f"[PREFLIGHT] GPU 探测失败: {e}")
         _cuda_available = False
         _cuda_device = ""
+        _mps_available = False
     try:
         from app.integrated_app.video_processor import FFmpegWrapper
 
@@ -409,10 +415,14 @@ async def lifespan(app: FastAPI):
     app.state.startup_preflight = {
         "cuda_available": _cuda_available,
         "cuda_device": _cuda_device,
+        "mps_available": _mps_available,
         "ffmpeg_available": _ffmpeg_available,
     }
-    if not _cuda_available:
-        logger.warning("[PREFLIGHT] CUDA 不可用：SeedVR2 模型仅支持 NVIDIA GPU 推理，任务将无法执行")
+    if not _cuda_available and not _mps_available:
+        logger.warning(
+            "[PREFLIGHT] GPU 不可用：SeedVR2 模型需要 NVIDIA CUDA / AMD ROCm / "
+            "Apple Silicon MPS 推理，任务将无法执行"
+        )
     if not _ffmpeg_available:
         logger.warning("[PREFLIGHT] FFmpeg 不可用：视频修复的解码/合成将失败（安装指引见 NOTICE 第 4 条）")
 

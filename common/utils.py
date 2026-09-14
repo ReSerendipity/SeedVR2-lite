@@ -109,8 +109,21 @@ def safe_interpolate_operation(
                 recompute_scale_factor=recompute_scale_factor,
             )
         except RuntimeError as e:
-            if "not implemented for 'Half'" in str(e) or "compute_indices_weights" in str(e):
+            err = str(e)
+            # Half 精度索引计算不支持（CUDA 常见），或 MPS 后端未实现该插值模式
+            # （Apple Silicon 上 bicubic/trilinear 部分版本不支持）
+            if "not implemented for 'Half'" in err or "compute_indices_weights" in err or "MPS" in err:
                 original_dtype = x.dtype
+                if x.is_mps:
+                    # MPS 兼容：回退 CPU 计算后移回 MPS（结果一致，性能略降）
+                    return F.interpolate(
+                        x.cpu(),
+                        size=size,
+                        scale_factor=scale_factor,
+                        mode=mode,
+                        align_corners=align_corners,
+                        recompute_scale_factor=recompute_scale_factor,
+                    ).to("mps", dtype=original_dtype)
                 return F.interpolate(
                     x.float(),
                     size=size,

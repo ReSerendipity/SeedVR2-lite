@@ -255,7 +255,11 @@ class _DitPipelineMixin:
             _dynamic_cfg = DynamicCFG(initial_scale=cfg_scale * 0.5, final_scale=cfg_scale)
 
         try:
-            with torch.no_grad(), torch.autocast("cuda", torch.bfloat16, enabled=(self.device == "cuda")):
+            # autocast 设备类型动态化：CUDA/ROCm 用 cuda 上下文，MPS 上
+            # autocast 支持有限（权重已按 _resolve_model_dtype 降级 fp16），直接禁用
+            device_type = self.device if self.device in ("cuda", "mps") else "cpu"
+            autocast_enabled = self.device == "cuda"  # MPS/CPU 不启用 autocast
+            with torch.no_grad(), torch.autocast(device_type, torch.bfloat16, enabled=autocast_enabled):
                 total_steps = len(self.sampler.timesteps.timesteps)
                 latents = self.sampler.sample(
                     x=latents,

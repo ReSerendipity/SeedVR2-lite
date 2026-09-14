@@ -6,7 +6,7 @@ SeedVR2 - 清理缓存启动脚本
 核心功能：
     - 环境隔离：优先使用项目自带 WinPython，排除系统/用户 Python 干扰
     - 缓存清理：仅清理项目源码的 __pycache__，跳过第三方依赖目录
-    - CUDA 检测：启动前检查 GPU 可用性，输出硬件信息
+    - GPU 检测：启动前检查 GPU 可用性（CUDA/ROCm/MPS），输出硬件信息
     - 应用启动：完成环境准备后启动 integrated_app 应用服务器
 
 核心技术栈：
@@ -136,7 +136,7 @@ def main() -> int | None:
     执行完整的启动流程：
     1. 设置项目根目录并切换工作目录
     2. 配置隔离环境
-    3. 检测 CUDA GPU 可用性并输出硬件信息
+    3. 检测 GPU 可用性（CUDA/ROCm/MPS）并输出硬件信息
     4. 检测 WinPython 环境
     5. 验证环境隔离效果，泄露路径时输出警告
     6. 智能清理项目源码 __pycache__（跳过第三方依赖）
@@ -148,7 +148,7 @@ def main() -> int | None:
     Note:
         - __pycache__ 清理采用白名单跳过策略，避免清理 WinPython/site-packages
           下数千个 .pyc 文件导致下次启动重新编译第三方库拖慢速度
-        - CUDA 不可用时应用仍可启动，但推理功能将降级不可用
+        - GPU 不可用时应用仍可启动，但推理功能将降级不可用
     """
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sys.path.insert(0, project_root)
@@ -160,19 +160,29 @@ def main() -> int | None:
         import torch
 
         has_cuda = torch.cuda.is_available()
+        has_mps = bool(
+            hasattr(torch.backends, "mps") and torch.backends.mps.is_available() and torch.backends.mps.is_built()
+        )
         if has_cuda:
             gpu_name = torch.cuda.get_device_name(0)
             vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            print(f"[CUDA] GPU: {gpu_name}, VRAM: {vram_gb:.1f}GB")
-            print(f"[CUDA] PyTorch {torch.__version__} (CUDA {torch.version.cuda})")
+            hip_version = getattr(torch.version, "hip", None)
+            if hip_version:
+                print(f"[GPU] AMD ROCm: {gpu_name}, VRAM: {vram_gb:.1f}GB (HIP {hip_version})")
+            else:
+                print(f"[GPU] NVIDIA CUDA: {gpu_name}, VRAM: {vram_gb:.1f}GB")
+                print(f"[GPU] PyTorch {torch.__version__} (CUDA {torch.version.cuda})")
+        elif has_mps:
+            print("[GPU] Apple Silicon MPS 已启用（统一内存推理）")
+            print(f"[GPU] PyTorch {torch.__version__} (MPS)")
         else:
-            print("[WARN] CUDA 不可用！应用将以降级模式启动（推理功能不可用）。")
-            print("[WARN] SeedVR2 模型仅支持 NVIDIA GPU 推理，不支持 CPU。")
-            print("[WARN] 请安装 NVIDIA GPU 并配置 CUDA 驱动以启用推理功能。")
+            print("[WARN] GPU 不可用！应用将以降级模式启动（推理功能不可用）。")
+            print("[WARN] SeedVR2 模型需要 NVIDIA CUDA / AMD ROCm / Apple Silicon MPS 推理。")
+            print("[WARN] 请安装对应 GPU 与 PyTorch 后端以启用推理功能。")
             print(f"[WARN] 当前 PyTorch 版本: {torch.__version__}")
     except ImportError:
         print("[WARN] 未安装 PyTorch。应用将以降级模式启动（推理功能不可用）。")
-        print("[WARN] 请运行 install.bat 安装 CUDA 版本的 PyTorch 以启用推理功能。")
+        print("[WARN] 请运行 install.bat 安装带 GPU 支持的 PyTorch 以启用推理功能。")
 
     # FFmpeg 预检（DX P1-1）：视频修复在合成阶段才依赖 ffmpeg，缺失时启动即给指引，
     # 而不是等首个任务跑到最后一步才报"ffmpeg 视频合成失败"。图像任务不受影响。

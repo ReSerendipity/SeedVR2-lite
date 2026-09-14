@@ -27,8 +27,19 @@ logger = logging.getLogger(__name__)
 # 全局配置
 _AUTO_WRAP_ENABLED: bool = False
 _AUTO_WRAP_OFFLOAD_DEVICE: torch.device = torch.device("cpu")
-_AUTO_WRAP_MAIN_DEVICE: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 _PREFETCH_STREAM: torch.cuda.Stream | None = None
+
+
+def _default_main_device() -> torch.device:
+    """默认主计算设备：NVIDIA CUDA → Apple MPS → CPU"""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+_AUTO_WRAP_MAIN_DEVICE: torch.device = _default_main_device()
 
 
 def configure_auto_wrap(
@@ -41,18 +52,17 @@ def configure_auto_wrap(
     Args:
         enabled: 是否启用 AutoWrap
         offload_device: offload 目标设备（默认 cpu）
-        main_device: 主计算设备（默认 cuda）
+        main_device: 主计算设备（默认 cuda；MPS 后端自动选 mps）
     """
     global _AUTO_WRAP_ENABLED, _AUTO_WRAP_OFFLOAD_DEVICE, _AUTO_WRAP_MAIN_DEVICE, _PREFETCH_STREAM
     _AUTO_WRAP_ENABLED = enabled
     _AUTO_WRAP_OFFLOAD_DEVICE = torch.device(offload_device)
     if main_device:
         _AUTO_WRAP_MAIN_DEVICE = torch.device(main_device)
-    elif torch.cuda.is_available():
-        _AUTO_WRAP_MAIN_DEVICE = torch.device("cuda")
     else:
-        _AUTO_WRAP_MAIN_DEVICE = torch.device("cpu")
+        _AUTO_WRAP_MAIN_DEVICE = _default_main_device()
 
+    # CUDA 专属 prefetch stream；MPS/CPU 上无 torch.cuda.Stream
     if enabled and torch.cuda.is_available():
         _PREFETCH_STREAM = torch.cuda.Stream()
         logger.info(
