@@ -19,6 +19,7 @@ from app.integrated_app.engines._memory_utils import (
     _force_release_memory,
     get_free_vram_gb,
 )
+from app.integrated_app.gpu_utils import empty_gpu_cache
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +225,7 @@ class _VAEPipelineMixin:
                 except RuntimeError as e:
                     if "out of memory" in str(e).lower() and not oom_fallback_used:
                         logger.warning("VAE 编码 OOM，尝试更小的 tile size")
-                        torch.cuda.empty_cache()
+                        empty_gpu_cache()
                         tile_size = max(tile_size // 2, 256)
                         tile_overlap = max(tile_overlap // 2, 32)
                         enc_result = self.vae.encode(
@@ -250,7 +251,7 @@ class _VAEPipelineMixin:
             # NaN 检测
             if encode_tiled and detect_nan(latent, "vae_encode_latent"):
                 logger.warning("VAE 编码检测到 NaN，回退到非 tiled 编码")
-                torch.cuda.empty_cache()
+                empty_gpu_cache()
                 enc_result = self.vae.encode(batch)
                 if use_sample:
                     latent = enc_result.latent
@@ -358,7 +359,7 @@ class _VAEPipelineMixin:
                     except RuntimeError as e:
                         if "out of memory" in str(e).lower() and not oom_fallback_used:
                             logger.warning("VAE 解码 OOM，尝试更小的 tile size")
-                            torch.cuda.empty_cache()
+                            empty_gpu_cache()
                             _force_release_memory()
                             # OOM 回退: 像素空间 tile size 减半，最小 256
                             current_tile_size = max(current_tile_size // 2, 256)
@@ -373,7 +374,7 @@ class _VAEPipelineMixin:
                         elif "out of memory" in str(e).lower():
                             # 第二次 OOM，完全禁用 tiled
                             logger.warning("VAE 解码再次 OOM，回退到非 tiled 解码")
-                            torch.cuda.empty_cache()
+                            empty_gpu_cache()
                             _force_release_memory()
                             dec_result = self.vae.decode(batch)
                         else:
@@ -384,7 +385,7 @@ class _VAEPipelineMixin:
                     # NaN 检测
                     if detect_nan(sample, "vae_decode_sample") and not nan_fallback_used:
                         logger.warning("VAE 解码检测到 NaN，回退到非 tiled 解码")
-                        torch.cuda.empty_cache()
+                        empty_gpu_cache()
                         _force_release_memory()
                         dec_result = self.vae.decode(batch)
                         sample = dec_result.sample

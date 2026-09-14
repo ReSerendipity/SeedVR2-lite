@@ -8,7 +8,7 @@ API 端点：
 - GET /api/system/gpu/system: 获取完整系统信息
 
 所属项目：SeedVR2 (SeedVR2 视频/图像修复工具)
-注意：仅支持 NVIDIA CUDA GPU。
+注意：支持 NVIDIA CUDA / AMD ROCm / Apple Silicon MPS 后端。
 """
 
 import logging
@@ -71,6 +71,9 @@ async def gpu_info(gpu_backend: GPUBackendManager = Depends(get_gpu_backend)):
 
         if torch.cuda.is_available():
             cuda_version = torch.version.cuda or ""
+            hip_version = getattr(torch.version, "hip", None)
+            if hip_version:
+                cuda_version = f"ROCm/HIP {hip_version}"
     except Exception:
         pass
 

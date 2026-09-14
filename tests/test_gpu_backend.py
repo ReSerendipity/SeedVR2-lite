@@ -3,15 +3,22 @@
 覆盖 GPUBackend 枚举、GPUInfo 数据类、
 GPUBackendManager 管理器的检测/查询/模型加载预检功能。
 使用 mock torch.cuda 模拟 GPU 环境。
+
+支持三后端：NVIDIA CUDA / AMD ROCm / Apple Silicon MPS。
 """
 
 from unittest.mock import patch
+
+import torch
 
 from app.integrated_app.gpu_backend import (
     GPUBackend,
     GPUBackendManager,
     GPUInfo,
     _CUDAStrategy,
+    _is_rocm_build,
+    _MPSStrategy,
+    _ROCMStrategy,
 )
 
 # ---------------------------------------------------------------------------
@@ -226,3 +233,140 @@ class TestGPUBackendManagerCUDA:
         assert info1 == info2
         # get_info should only be called once during detect + once for info
         # due to caching
+
+
+# ---------------------------------------------------------------------------
+# ROCm 识别（AMD GPU / torch.version.hip 非空）
+# ---------------------------------------------------------------------------
+
+
+class TestRocmBuildDetection:
+    """ROCm 构建识别测试（HIP 版 PyTorch 以 cuda API 暴露设备）"""
+
+    def test_is_rocm_build_with_hip_version(self):
+        with patch.object(torch.version, "hip", "6.2"):
+            assert _is_rocm_build() is True
+
+    def test_is_rocm_build_without_hip(self):
+        with patch.object(torch.version, "hip", None):
+            assert _is_rocm_build() is False
+
+    def test_cuda_strategy_excludes_rocm_build(self):
+        """CUDA 策略在 HIP 构建下必须返回 False（由 ROCM 策略接管）"""
+        strategy = _CUDAStrategy()
+        with patch("torch.cuda.is_available", return_value=True), patch.object(torch.version, "hip", "6.2"):
+            assert strategy.detect() is False
+
+    def test_rocm_strategy_detects_hip_build(self):
+        strategy = _ROCMStrategy()
+        with patch("torch.cuda.is_available", return_value=True), patch.object(torch.version, "hip", "6.2"):
+            assert strategy.detect() is True
+            assert strategy.device_str() == "cuda"
+            assert strategy.get_process_group_backend() == "nccl"
+
+    def test_rocm_strategy_negative_without_hip(self):
+        strategy = _ROCMStrategy()
+        with patch("torch.cuda.is_available", return_value=True), patch.object(torch.version, "hip", None):
+            assert strategy.detect() is False
+
+
+# ---------------------------------------------------------------------------
+# MPS 策略（Apple Silicon）
+# ---------------------------------------------------------------------------
+
+
+class TestMPSStrategy:
+    """Apple Silicon MPS 策略测试"""
+
+    def _mps_patch(self):
+        return (
+            patch("torch.backends.mps.is_available", return_value=True),
+            patch("torch.backends.mps.is_built", return_value=True),
+        )
+
+    def test_device_str(self):
+        strategy = _MPSStrategy()
+        assert strategy.device_str() == "mps"
+
+    def test_detect_available(self):
+        strategy = _MPSStrategy()
+        with self._mps_patch()[0], self._mps_patch()[1]:
+            assert strategy.detect() is True
+
+    def test_detect_unavailable(self):
+        strategy = _MPSStrategy()
+        with patch("torch.backends.mps.is_available", return_value=False):
+            assert strategy.detect() is False
+
+    def test_get_process_group_backend(self):
+        strategy = _MPSStrategy()
+        assert strategy.get_process_group_backend() == "gloo"
+
+
+# ---------------------------------------------------------------------------
+# GPUBackendManager（ROCm 可用场景）
+# ---------------------------------------------------------------------------
+
+
+class TestGPUBackendManagerROCM:
+    """GPUBackendManager 测试 — AMD ROCm 可用场景"""
+
+    @patch.object(_CUDAStrategy, "detect", return_value=False)  # CUDA 策略排除 HIP 构建
+    @patch.object(_MPSStrategy, "detect", return_value=False)
+    @patch.object(
+        _ROCMStrategy,
+        "get_info",
+        return_value={
+            "name": "AMD Radeon RX 7900 XTX",
+            "total_vram": 25769803776,
+            "available_vram_mb": 20000,
+            "utilization": 22.0,
+            "cuda_version": "ROCm/HIP 6.2",
+        },
+    )
+    def test_detects_rocm_when_available(self, _mock_info, _mock_mps, _mock_cuda):
+        with patch.object(_ROCMStrategy, "detect", return_value=True):
+            manager = GPUBackendManager()
+            assert manager.is_gpu_available is True
+            assert manager.backend == GPUBackend.ROCM
+            assert manager.device_str == "cuda"
+            info = manager.get_gpu_info()
+            assert info.backend == GPUBackend.ROCM
+            assert "ROCm" in info.cuda_version
+
+
+# ---------------------------------------------------------------------------
+# GPUBackendManager（MPS 可用场景）
+# ---------------------------------------------------------------------------
+
+
+class TestGPUBackendManagerMPS:
+    """GPUBackendManager 测试 — Apple Silicon MPS 可用场景"""
+
+    @patch.object(_CUDAStrategy, "detect", return_value=False)
+    @patch.object(_ROCMStrategy, "detect", return_value=False)
+    @patch.object(
+        _MPSStrategy,
+        "get_info",
+        return_value={
+            "name": "Apple M3 (MPS)",
+            "total_vram": 17179869184,  # 16GB 统一内存
+            "available_vram_mb": 12000,
+            "utilization": 30.0,
+            "cuda_version": "",
+        },
+    )
+    def test_detects_mps_when_available(self, _mock_info, _mock_rocm, _mock_cuda):
+        with patch.object(_MPSStrategy, "detect", return_value=True):
+            manager = GPUBackendManager()
+            assert manager.is_gpu_available is True
+            assert manager.backend == GPUBackend.MPS
+            assert manager.device_str == "mps"
+            info = manager.get_gpu_info()
+            assert info.backend == GPUBackend.MPS
+            assert info.total_vram_mb == 16384
+
+    def test_mps_check_health_false_when_unavailable(self):
+        strategy = _MPSStrategy()
+        with patch("torch.backends.mps.is_available", return_value=False):
+            assert strategy.check_health() is False

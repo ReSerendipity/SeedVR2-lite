@@ -39,6 +39,8 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
+from app.integrated_app.gpu_utils import empty_gpu_cache
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,9 +50,13 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_device(device: torch.device | str | None = None) -> torch.device:
-    """把 str/None 归一化成 torch.device，默认 cuda:0"""
+    """把 str/None 归一化成 torch.device，默认当前激活 GPU（cuda / mps）"""
     if device is None:
-        return torch.device("cuda:0")
+        if torch.cuda.is_available():
+            return torch.device("cuda:0")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
     if isinstance(device, str):
         return torch.device(device)
     return device
@@ -62,14 +68,19 @@ def get_free_vram_gb(device: torch.device | str | None = None) -> float:
     容量决策必须用空闲显存而非总显存：总显存不反映当前已驻留的模型，
     按总显存选档会在「12GB 卡 + 已驻留 6.3GB DiT」这类场景下选出必然超预算的
     tile size，最终触发 Windows WDDM 分页（表现为静默卡死而不是 OOM）。
+    MPS 统一内存后端以系统可用物理内存近似。
     """
-    if not torch.cuda.is_available():
-        return 0.0
     try:
         dev = _resolve_device(device)
-        idx = dev.index if dev.index is not None else 0
-        free_bytes, _total_bytes = torch.cuda.mem_get_info(idx)
-        return free_bytes / (1024**3)
+        if dev.type == "mps":
+            import psutil
+
+            return psutil.virtual_memory().available / (1024**3)
+        if dev.type == "cuda":
+            idx = dev.index if dev.index is not None else 0
+            free_bytes, _total_bytes = torch.cuda.mem_get_info(idx)
+            return free_bytes / (1024**3)
+        return 0.0
     except Exception:
         return 0.0
 
@@ -134,10 +145,9 @@ def get_recommend_encoder_tile_size(device: torch.device | str | None = None) ->
     Returns:
         推荐的编码器 tile size
     """
-    if not torch.cuda.is_available():
-        return 512
-
     free_gb = get_free_vram_gb(device)
+    if free_gb <= 0:
+        return 512
     # 编码器激活峰值通常低于解码器，这里沿用同一模型并按 0.8 折算
     return _recommend_tile_from_free_vram(free_gb / 0.8, ceiling=3072)
 
@@ -164,9 +174,6 @@ def get_recommend_decoder_tile_size(device: torch.device | str | None = None) ->
     Returns:
         推荐的解码器 tile size (输出像素空间)
     """
-    if not torch.cuda.is_available():
-        return 512
-
     free_gb = get_free_vram_gb(device)
     return _recommend_tile_from_free_vram(free_gb, ceiling=2048)
 
@@ -197,11 +204,11 @@ def get_optimal_tile_size(
         recommended = get_recommend_encoder_tile_size(device)
         overlap = min(128, recommended // 8)  # overlap ~= tile_size/8
 
-    if torch.cuda.is_available():
-        logger.info(
-            f"[tile 选型] {'解码' if is_decoder else '编码'} 空闲显存 {get_free_vram_gb(device):.2f}GB -> "
-            f"推荐 tile={recommended} (预测峰值 {_predict_decode_peak_gb(recommended):.2f}GB)"
-        )
+    free_gb = get_free_vram_gb(device)
+    logger.info(
+        f"[tile 选型] {'解码' if is_decoder else '编码'} 空闲显存 {free_gb:.2f}GB -> "
+        f"推荐 tile={recommended} (预测峰值 {_predict_decode_peak_gb(recommended):.2f}GB)"
+    )
 
     if max_tile_size is not None:
         recommended = min(recommended, max_tile_size)
@@ -838,7 +845,7 @@ def make_tiled_fn(
                     except RuntimeError as e:
                         if "out of memory" in str(e).lower():
                             logger.warning(f"Tile OOM at ({y_pos},{x_pos}), 尝试更小的 tile")
-                            torch.cuda.empty_cache()
+                            empty_gpu_cache()
                             # 回退: 直接对整个输入运行 fn
                             return fn(tensor, **kwargs)
                         raise
@@ -891,7 +898,7 @@ def make_tiled_fn(
                         except RuntimeError as e:
                             if "out of memory" in str(e).lower():
                                 logger.warning(f"3D Tile OOM at ({t_pos},{y_pos},{x_pos}), 回退")
-                                torch.cuda.empty_cache()
+                                empty_gpu_cache()
                                 return fn(tensor, **kwargs)
                             raise
 
@@ -937,7 +944,7 @@ def make_tiled_fn(
         # NaN 回退: 如果检测到 NaN，直接对整个输入运行 fn
         if nan_fallback:
             logger.warning("Tiled 推理检测到 NaN，回退到非 tiled 推理")
-            torch.cuda.empty_cache()
+            empty_gpu_cache()
             return fn(tensor, **kwargs)
 
         # 归一化
@@ -1140,7 +1147,7 @@ def disable_vae_slicing(vae_model: torch.nn.Module) -> torch.nn.Module:
 
 def enable_sequential_cpu_offload(
     model: torch.nn.Module,
-    device: torch.device | str = "cuda",
+    device: torch.device | str | None = None,
 ) -> torch.nn.Module:
     """启用顺序 CPU offload (CogVideo diffusers 方式)
 
@@ -1149,12 +1156,12 @@ def enable_sequential_cpu_offload(
 
     Args:
         model: 要 offload 的模型
-        device: 推理设备 (通常为 cuda)
+        device: 推理设备 (通常为 cuda/mps；None 时自动选择)
 
     Returns:
         配置后的模型
     """
-    device = torch.device(device)
+    device = _resolve_device(device)
 
     # 将整个模型先移到 CPU
     model.to("cpu")
@@ -1176,19 +1183,19 @@ def offload_module_to_cpu(module: torch.nn.Module) -> None:
         module: 要卸载的 PyTorch 模块
     """
     module.to("cpu")
-    torch.cuda.empty_cache()
+    empty_gpu_cache()
 
 
-def load_module_to_gpu(module: torch.nn.Module, device: torch.device | str = "cuda") -> None:
+def load_module_to_gpu(module: torch.nn.Module, device: torch.device | str | None = None) -> None:
     """将模型模块加载到 GPU
 
     在顺序 CPU offload 策略中，需要使用某个模块前将其加载到 GPU。
 
     Args:
         module: 要加载的 PyTorch 模块
-        device: 目标 GPU 设备，默认 "cuda"
+        device: 目标 GPU 设备，None 时自动选择 (cuda / mps)
     """
-    module.to(device)
+    module.to(_resolve_device(device))
 
 
 # ---------------------------------------------------------------------------

@@ -188,7 +188,7 @@ def validate_local_media_files(media_files: Sequence[tuple[str, str | None]], co
 def parse_unified_params(
     task_type: str = Form("auto"),
     dit_model: str = Form("3b_fp16"),
-    dit_device: str = Form("cuda:0"),
+    dit_device: str = Form("auto"),
     blocks_to_swap: int = Form(32),
     swap_io_components: bool = Form(True),
     dit_offload_device: str = Form("cpu"),
@@ -196,7 +196,7 @@ def parse_unified_params(
     force_reload_dit: bool = Form(False),
     attention_mode: str = Form("sdpa"),
     vae_model: str = Form("ema_vae_fp16"),
-    vae_device: str = Form("cuda:0"),
+    vae_device: str = Form("auto"),
     encode_tiled: bool = Form(True),
     encode_tile_size: int = Form(1024),
     encode_tile_overlap: int = Form(512),
@@ -229,7 +229,7 @@ def parse_unified_params(
     Args:
         task_type: 任务类型，"auto"/"image"/"video"，默认 "auto"。
         dit_model: DiT 模型名称，默认 "3b_fp16"。
-        dit_device: DiT 推理设备，默认 "cuda:0"。
+        dit_device: DiT 推理设备，默认 "auto"（自动选择 CUDA/ROCm/MPS）。
         blocks_to_swap: 交换到 CPU 的 transformer 块数量，默认 32。
         swap_io_components: 是否交换 I/O 组件，默认 True。
         dit_offload_device: DiT 卸载设备，默认 "cpu"。
@@ -237,7 +237,7 @@ def parse_unified_params(
         force_reload_dit: 是否强制重载 DiT，默认 False。
         attention_mode: 注意力实现模式，默认 "sdpa"。
         vae_model: VAE 模型名称，默认 "ema_vae_fp16"。
-        vae_device: VAE 推理设备，默认 "cuda:0"。
+        vae_device: VAE 推理设备，默认 "auto"（自动选择 CUDA/ROCm/MPS）。
         encode_tiled: 是否使用分块 VAE 编码，默认 True。
         encode_tile_size: VAE 编码分块大小，默认 1024。
         encode_tile_overlap: VAE 编码分块重叠，默认 512。

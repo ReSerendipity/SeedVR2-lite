@@ -30,8 +30,6 @@ import json
 import logging
 import os
 
-import torch
-
 from app.integrated_app.engine_interface import RestoreEngine
 from app.integrated_app.engines.seedvr2_engine import SeedVR2Engine
 from app.integrated_app.gpu_utils import (
@@ -270,10 +268,7 @@ class ModelManager:
         min_fp16_gb = model_info.get("min_vram_fp16_gb", 16)
 
         try:
-            if torch.cuda.is_available():
-                total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            else:
-                total_vram_gb = 0
+            total_vram_gb = get_gpu_memory_info().get("total_mb", 0) / 1024.0
         except Exception:
             total_vram_gb = 0
 
@@ -499,8 +494,8 @@ class ModelManager:
 
         if not gpu_manager.is_gpu_available:
             raise RuntimeError(
-                "SeedVR2 仅支持 NVIDIA GPU 推理，当前未检测到 NVIDIA GPU。"
-                "请安装 NVIDIA GPU 并配置 CUDA 驱动以启用推理功能。"
+                "SeedVR2 需要 GPU 推理（支持 NVIDIA CUDA / AMD ROCm / Apple Silicon MPS），"
+                "当前未检测到可用 GPU。请安装对应 GPU 与 PyTorch 后端以启用推理功能。"
             )
 
         model_cfg = self.get_model_info(model_size)

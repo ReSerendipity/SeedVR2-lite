@@ -255,41 +255,38 @@ class TestUnregisteredWeightFiles:
 class TestGetRecommendedPrecision:
     """get_recommended_precision 测试"""
 
-    @patch("app.integrated_app.model_manager.torch")
-    def test_fp16_when_enough_vram(self, mock_torch, mock_registry, config):
+    @patch("app.integrated_app.model_manager.get_gpu_memory_info")
+    def test_fp16_when_enough_vram(self, mock_mem, mock_registry, config):
         """显存充足时推荐 fp16"""
-        mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.get_device_properties.return_value.total_memory = 24 * (1024**3)
+        mock_mem.return_value = {"total_mb": 24 * 1024}
         manager = ModelManager(config)
         assert manager.get_recommended_precision("3b") == "fp16"
 
-    @patch("app.integrated_app.model_manager.torch")
-    def test_fp8_when_limited_vram(self, mock_torch, mock_registry, config):
+    @patch("app.integrated_app.model_manager.get_gpu_memory_info")
+    def test_fp8_when_limited_vram(self, mock_mem, mock_registry, config):
         """显存有限时推荐 fp8"""
-        mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.get_device_properties.return_value.total_memory = 10 * (1024**3)
+        mock_mem.return_value = {"total_mb": 10 * 1024}
         manager = ModelManager(config)
         assert manager.get_recommended_precision("3b") == "fp8"
 
-    @patch("app.integrated_app.model_manager.torch")
-    def test_fp8_when_insufficient_vram(self, mock_torch, mock_registry, config):
+    @patch("app.integrated_app.model_manager.get_gpu_memory_info")
+    def test_fp8_when_insufficient_vram(self, mock_mem, mock_registry, config):
         """显存严重不足时仍返回 fp8"""
-        mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.get_device_properties.return_value.total_memory = 4 * (1024**3)
+        mock_mem.return_value = {"total_mb": 4 * 1024}
         manager = ModelManager(config)
         assert manager.get_recommended_precision("3b") == "fp8"
 
-    @patch("app.integrated_app.model_manager.torch")
-    def test_fp8_when_no_cuda(self, mock_torch, mock_registry, config):
-        """无 CUDA 时 total_vram_gb=0，低于 min_fp8_gb，返回 fp8"""
-        mock_torch.cuda.is_available.return_value = False
+    @patch("app.integrated_app.model_manager.get_gpu_memory_info")
+    def test_fp8_when_no_gpu(self, mock_mem, mock_registry, config):
+        """无 GPU 时 total_vram_gb=0，低于 min_fp8_gb，返回 fp8"""
+        mock_mem.return_value = {"total_mb": 0}
         manager = ModelManager(config)
         assert manager.get_recommended_precision("3b") == "fp8"
 
-    @patch("app.integrated_app.model_manager.torch")
-    def test_fp8_when_torch_exception(self, mock_torch, mock_registry, config):
-        """torch 异常时 total_vram_gb=0，低于 min_fp8_gb，返回 fp8"""
-        mock_torch.cuda.is_available.side_effect = RuntimeError("driver error")
+    @patch("app.integrated_app.model_manager.get_gpu_memory_info")
+    def test_fp8_when_memory_query_exception(self, mock_mem, mock_registry, config):
+        """显存查询异常时 total_vram_gb=0，低于 min_fp8_gb，返回 fp8"""
+        mock_mem.side_effect = RuntimeError("driver error")
         manager = ModelManager(config)
         assert manager.get_recommended_precision("3b") == "fp8"
 
@@ -297,11 +294,10 @@ class TestGetRecommendedPrecision:
         manager = ModelManager(config)
         assert manager.get_recommended_precision("99b") == "fp16"
 
-    @patch("app.integrated_app.model_manager.torch")
-    def test_7b_requires_more_vram(self, mock_torch, mock_registry, config):
+    @patch("app.integrated_app.model_manager.get_gpu_memory_info")
+    def test_7b_requires_more_vram(self, mock_mem, mock_registry, config):
         """7B 模型需要更多显存"""
-        mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.get_device_properties.return_value.total_memory = 16 * (1024**3)
+        mock_mem.return_value = {"total_mb": 16 * 1024}
         manager = ModelManager(config)
         # 16GB >= min_fp16_gb(16) for 3b, but < min_fp16_gb(24) for 7b
         assert manager.get_recommended_precision("3b") == "fp16"
@@ -333,7 +329,7 @@ class TestLoadModel:
         manager = ModelManager(config)
         with patch("app.integrated_app.gpu_backend.gpu_manager") as mock_gpu:
             mock_gpu.is_gpu_available = False
-            with pytest.raises(RuntimeError, match="仅支持 NVIDIA GPU"):
+            with pytest.raises(RuntimeError, match="需要 GPU 推理"):
                 await manager.load_model(model_size="3b", precision="fp16")
 
     @pytest.mark.asyncio
