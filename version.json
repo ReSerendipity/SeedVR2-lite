@@ -1,6 +1,6 @@
 {
-  "version": "1.5.7",
-  "release_date": "2026-09-10",
+  "version": "1.5.8",
+  "release_date": "2026-09-13",
   "minimum_shell_version": "1.0.0",
-  "changelog": "以增量更新方式交付 1.5.5/1.5.6 全部修复：显存/内存门禁改按实际会加载的精度估算（12GB 卡 + 量化权重不再被误拒/503）；VAE 解码阶段卡死根治（阶段3 前自动卸载 DiT、tile 按空闲显存选型、含卡死看门狗）；blocks_to_swap 按显存缺口自适应；double_res 增加 8MP 像素上限"
+  "changelog": "以增量更新方式交付 1.5.8 全部修复：权重文件名双命名兼容（Comfy-Org seedvr2_* 与 numz seedvr2_ema_* 两套命名均可直接使用，无需改名重下）、模型加载失败诊断增强（报出期望文件名与发现未登记权重）、跑测试不再覆写真实 config.yaml、测试产物改落系统临时目录、历史库测试修复（SCHEMA_VERSION 常量化 + 软删除语义对齐，新增回收站覆盖）"
 }
