@@ -80,7 +80,11 @@ def _build_output_name(model_size: str | None, ext: str) -> str:
     from uuid import uuid4
 
     ts = time.strftime("%Y%m%d_%H%M%S")
-    return f"{ts}_{_normalize_model_tag(model_size)}_{uuid4().hex[:8]}{ext}"
+    # P1-2 显式 AI 生成标识（合规整改 2026-09-15）：默认在文件名追加 _AI 后缀
+    # （env SEEDVR2_EXPLICIT_AI_LABEL=0 可关闭），便于产物对外传播时履行显式
+    # 标识义务；与隐式取证水印（security/watermark.py）相互独立。
+    label = "_AI" if os.environ.get("SEEDVR2_EXPLICIT_AI_LABEL", "1") != "0" else ""
+    return f"{ts}_{_normalize_model_tag(model_size)}_{uuid4().hex[:8]}{label}{ext}"
 
 
 def _resolve_unique_path(output_dir: str, filename: str) -> str:
