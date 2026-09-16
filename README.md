@@ -1,6 +1,6 @@
 # SeedVR2-lite
 
-![Version](https://img.shields.io/badge/version-1.5.4-blue?style=for-the-badge) ![License](https://img.shields.io/badge/license-Apache%202.0-green?style=for-the-badge) ![Python](https://img.shields.io/badge/python-3.12+-yellow?style=for-the-badge&logo=python&logoColor=white) ![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white) ![Models](https://img.shields.io/badge/model-3B%20%7C%207B%20%7C%207B--Sharp-ff69b4?style=for-the-badge) [![CI](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/ReSerendipity/SeedVR2-lite/actions) [![gitleaks](https://img.shields.io/badge/secret%20scan-gitleaks%20passing-0080FF?style=for-the-badge)](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/gitleaks.yml)
+![Version](https://img.shields.io/badge/version-1.5.8-blue?style=for-the-badge) ![License](https://img.shields.io/badge/license-Apache%202.0-green?style=for-the-badge) ![Python](https://img.shields.io/badge/python-3.12+-yellow?style=for-the-badge&logo=python&logoColor=white) ![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white) ![Models](https://img.shields.io/badge/model-3B%20%7C%207B%20%7C%207B--Sharp-ff69b4?style=for-the-badge) [![CI](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/ReSerendipity/SeedVR2-lite/actions) [![gitleaks](https://img.shields.io/badge/secret%20scan-gitleaks%20passing-0080FF?style=for-the-badge)](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/gitleaks.yml)
 
 **基于 SeedVR2 扩散模型的视频与图像超分辨率修复工具箱 — 独立运行的 Web UI，一键修复，无需 ComfyUI**
 
@@ -32,7 +32,7 @@
 - **崩溃恢复**：Python 后端意外退出自动重启
 - **卸载干净**：安装/卸载自动终止运行中的程序，卸载清理注册表与快捷方式
 
-发布物见 **<https://github.com/ReSerendipity/SeedVR2-lite/releases/latest>**（当前稳定版 v1.5.4）。
+发布物见 **<https://github.com/ReSerendipity/SeedVR2-lite/releases/latest>**（当前稳定版 v1.5.8）。
 
 > 桌面版与网页版共享同一套 Python 后端与模型；文档：[用户手册](docs/用户手册.md)、[开发者指南](docs/开发者指南.md)。
 
@@ -455,6 +455,22 @@ SeedVR2 的 Web UI **默认仅绑定 `127.0.0.1`**（`config.yaml` 中 `server.h
 ## 合规说明
 
 使用本项目请遵守 [USER_AGREEMENT.md](USER_AGREEMENT.md)。模型权重（SeedVR/SeedVR2）为 Apache 2.0；FFmpeg 为本地开发依赖，不随仓库分发，由用户自行安装（详见 NOTICE）。
+
+### 📦 发行物归属清单（桌面版 / 便携包）
+
+对外分发的安装包/便携包随附以下组件，均保留各自许可与归属（详见 [NOTICE](NOTICE)；P2-2 整改 2026-09-15）：
+
+| 组件 | 许可 | 归属 |
+|---|---|---|
+| SeedVR2 模型权重（3B/7B/7B-Sharp 各精度） | Apache-2.0 | © ByteDance Ltd. and/or its affiliates；转包 © Comfy Org |
+| NaDiT / SD3 Video VAE（代码组件） | Apache-2.0 | © ByteDance / HuggingFace 团队 |
+| 便携 Python 运行时 | PSF License | Python Software Foundation |
+| CUDA 版 PyTorch | BSD-3-Clause | © PyTorch / Meta 贡献者 |
+| Tauri v2 桌面壳 | MIT / Apache-2.0 | Tauri contributors |
+| 安全模块（.pyd 预编译分发） | Apache-2.0（源码公开于本仓） | © ReSerendipity |
+| FFmpeg | **不随包分发**（GPLv3 构建本地依赖） | © FFmpeg developers |
+
+> 输出文件名默认携带 `_AI` 后缀（env `SEEDVR2_EXPLICIT_AI_LABEL=0` 可关闭），用于对外传播时的显式标识。
 
 
 ### ⚖️ 独立第三方声明

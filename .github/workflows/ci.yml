@@ -149,7 +149,7 @@ jobs:
   # 本仓不建 .ci/mypy_baseline.txt：模板对缺失基线走零容忍（当前口径 0 错误，
   # 出现任何新错误即红）。口径＝mypy 2.3.1 + pydantic（pyproject 声明了
   # pydantic.mypy 插件）；升级 mypy 版本或改 typecheck_extra_pip 前必须复测。
-  # （原步骤见 git 历史；迁移记录 docs/reports/家族模板迁移_mypy_ratchet_20260903.md）
+  # （原步骤见 git 历史；迁移记录 docs/reports/mypy-ratchet-组织级门禁迁移_20260903.md）
   typecheck:
     name: Typecheck (mypy ratchet)
     uses: ReSerendipity/.github/.github/workflows/python-quality-baseline.yml@main
