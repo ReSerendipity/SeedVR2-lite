@@ -127,7 +127,7 @@
 - **模型共享**：`config.yaml` 的 `model.model_source_mode` 支持 `portable`（项目内 `model/`，默认）与 `shared`（外部共享目录）两种模式
 - **环境变量**：根目录 `.env`（模板见 `.env.example`），常用 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
 - **Docker（本地构建）**：`docker build -t seedvr2 . && docker run --gpus all -p 7870:7870 seedvr2`
-- **Docker（GHCR 镜像）**：`docker pull ghcr.io/reserendipity/seedvr2-lite:<版本>`（镜像随 `v*` 标签发布，如 `v1.5.8` 对应 tag `1.5.8`），再 `docker run --gpus all -p 7870:7870 ghcr.io/reserendipity/seedvr2-lite:<版本>`
+- **Docker（GHCR 镜像）**：`docker pull ghcr.io/reserendipity/seedvr2-lite:<版本>`（镜像随 `v*` 标签发布，如 `v1.5.7` 对应 tag `1.5.7`），再 `docker run --gpus all -p 7870:7870 ghcr.io/reserendipity/seedvr2-lite:<版本>`
 
 ## 项目结构（概览）
 
