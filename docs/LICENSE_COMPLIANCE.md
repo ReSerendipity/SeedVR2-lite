@@ -24,7 +24,7 @@
 
 | 组件 | 许可证 | 商用合规 | 合规要求 |
 |---|---|---|---|
-| SeedVR2 权重（`model/`，`scripts/download_model.py` 下载） | 以 HuggingFace 仓库（Reserendipity/SeedVR2）与 NOTICE 为准 | 需人工确认 | 权重许可独立于代码许可 |
+| SeedVR2 权重（`model/`，`scripts/download_model.py` 下载） | 以 HuggingFace 仓库（numz/SeedVR2_comfyUI（Comfy-Org 转包版权重同源）与 ByteDance-Seed/SeedVR2-3B、ByteDance-Seed/SeedVR2-7B）与 NOTICE 为准 | 需人工确认 | 权重许可独立于代码许可 |
 
 ### 3.2 Comfy-Org/SeedVR2 转包与量化变体（2026-08-30 登记）
 

@@ -212,6 +212,31 @@ pub fn window_close(app: AppHandle) {
     hide_to_tray(&app);
 }
 
+/// 前端命令：拖拽移动窗口。自绘标题栏 `pointerdown` 后调用（比
+/// `data-tauri-drag-region` 可靠——该属性脚本不覆盖远程源页面）。
+#[tauri::command]
+pub fn window_start_dragging(app: AppHandle) {
+    if let Some(win) = app.get_webview_window(MAIN_LABEL) {
+        let _ = win.start_dragging();
+    }
+}
+
+/// 前端命令：当前是否最大化（自绘标题栏按钮字形 □/❐ 同步用）
+#[tauri::command]
+pub fn window_is_maximized(app: AppHandle) -> bool {
+    app.get_webview_window(MAIN_LABEL)
+        .and_then(|w| w.is_maximized().ok())
+        .unwrap_or(false)
+}
+
+/// 前端命令：关闭（语义等同系统 X：走 `CloseRequested` 事件，由 main.rs
+/// 按 `close_to_tray` 配置决定隐藏到托盘还是真退出）。
+#[tauri::command]
+pub fn window_request_close(app: AppHandle) {
+    if let Some(win) = app.get_webview_window(MAIN_LABEL) {
+        let _ = win.close();
+    }
+}
 /// 前端命令：全屏/退出全屏切换，返回切换后的全屏状态（供前端更新标题栏样式）
 #[tauri::command]
 pub fn window_toggle_fullscreen(app: AppHandle) -> bool {
