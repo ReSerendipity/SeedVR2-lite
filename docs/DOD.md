@@ -1,6 +1,6 @@
 # 完成定义（Definition of Done）
 
-> **来源**：家族通用 DOD 模板 `.spec_audit/family_DOD.md`（源自 SpiritPal definition-of-done.md 泛化），本仓本地化。
+> **来源**：家族通用 DOD 模板（源自 SpiritPal definition-of-done.md 泛化的家族模板，原 `.spec_audit/family_DOD.md` 已随家族归档，本文为本仓本地化副本）。
 > **适用范围**：SeedVR2-lite 全项目所有功能开发任务。
 
 ---

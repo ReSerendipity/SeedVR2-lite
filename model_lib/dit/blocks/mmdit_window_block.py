@@ -51,12 +51,12 @@ from common.distributed.ops import (
 )
 from common.utils import safe_pad_operation
 
+from ...dit_v2.rope import RotaryEmbedding3d
 from ..attention import TorchAttention
 from ..mlp import get_mlp
 from ..mm import MMArg, MMModule
 from ..modulation import ada_layer_type
 from ..normalization import norm_layer_type
-from ..rope import RotaryEmbedding3d
 
 
 class MMWindowAttention(nn.Module):

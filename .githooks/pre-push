@@ -1,7 +1,35 @@
 #!/bin/sh
 # 通用 pre-push（无机器特定路径，可随仓库分发）。
-#   1) 仓库提供 precheck.ps1 -> 执行它（家族既有门禁口径）
-#   2) 否则 -> 退回根目录守卫 structure-guard
+#   1) 先执行 gitleaks 待推送提交扫描（密钥防线，最高优先）
+#   2) 仓库提供 precheck.ps1 -> 执行它（家族既有门禁口径）
+#   3) 否则 -> 退回根目录守卫 structure-guard
+# gitleaks v8.30.1 无 `git pre-push` 子命令，改用 detect --log-opts 扫描 remote..local 范围。
+# 紧急绕过：git push --no-verify（仅限用户明确要求时）
+failed=0
+
+# 1) gitleaks 扫描待推送提交（密钥防线）
+if command -v gitleaks >/dev/null 2>&1; then
+    while read lref lsha rref rsha; do
+        [ -z "$lsha" ] && continue
+        if [ "$lsha" = "0000000000000000000000000000000000000000" ]; then
+            continue  # 删除远程分支，无需扫描
+        fi
+        if [ "$rsha" = "0000000000000000000000000000000000000000" ]; then
+            range="$lsha"  # 新分支：扫描该分支可达历史
+        else
+            range="$rsha..$lsha"
+        fi
+        echo "[pre-push] gitleaks 扫描: $lref ($range)"
+        if ! gitleaks detect --source "$(pwd)" --redact --log-opts="$range" --config "$(pwd)/gitleaks.toml"; then
+            echo "[pre-push] gitleaks 检测到泄露，推送已拒绝。绕过：git push --no-verify" >&2
+            failed=1
+        fi
+    done
+else
+    echo "[pre-push] gitleaks 未安装，跳过推送前密钥扫描" >&2
+fi
+
+# 2) precheck.ps1（家族既有门禁）
 if [ -f ./precheck.ps1 ]; then
     echo "[pre-push] 运行本地预检 precheck.ps1 ..."
     if command -v powershell.exe >/dev/null 2>&1; then
@@ -9,25 +37,26 @@ if [ -f ./precheck.ps1 ]; then
             echo "[pre-push] 预检未通过。绕过：git push --no-verify" >&2
             exit 1
         fi
-        exit 0
+    else
+        echo "[pre-push] 未找到 powershell.exe，无法执行 precheck.ps1" >&2
+        echo "          绕过：git push --no-verify" >&2
+        exit 1
     fi
-    echo "[pre-push] 未找到 powershell.exe，无法执行 precheck.ps1" >&2
-    echo "          绕过：git push --no-verify" >&2
-    exit 1
-fi
-
-PY=""
-for cand in ".venv/Scripts/python.exe" ".venv/bin/python"; do
-    [ -x "$cand" ] && PY="$cand" && break
-done
-if [ -z "$PY" ]; then
-    for c in python python3; do
-        command -v "$c" >/dev/null 2>&1 && PY="$c" && break
+else
+    # 3) structure-guard 根目录守卫
+    PY=""
+    for cand in ".venv/Scripts/python.exe" ".venv/bin/python"; do
+        [ -x "$cand" ] && PY="$cand" && break
     done
+    if [ -z "$PY" ]; then
+        for c in python python3; do
+            command -v "$c" >/dev/null 2>&1 && PY="$c" && break
+        done
+    fi
+    if [ -z "$PY" ]; then
+        echo "[pre-push] 无 precheck.ps1 且未找到 python，跳过推送前检查" >&2
+    else
+        $PY .github/scripts/check_layout.py || exit 1
+    fi
 fi
-if [ -z "$PY" ]; then
-    echo "[pre-push] 无 precheck.ps1 且未找到 python，跳过推送前检查" >&2
-    exit 0
-fi
-$PY .github/scripts/check_layout.py || exit 1
-exit 0
+exit $failed
