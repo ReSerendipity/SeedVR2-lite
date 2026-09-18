@@ -9,7 +9,7 @@
 """
 
 import re
-import subprocess
+import subprocess  # nosec B404（仅以参数列表调用 git，无 shell=True，风险可控）
 import sys
 from pathlib import Path
 
@@ -70,7 +70,7 @@ ALLOWLIST = [
 
 
 def _files_from(cmd):
-    out = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
+    out = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))  # nosec B603, B607（git 只读命令）
     return [p for p in out.stdout.split("\0") if p]
 
 
@@ -84,7 +84,7 @@ def is_exempt(path):
     parts = {str(x).lower() for x in p.parts}
     if parts & EXEMPT_DIRS:
         return True
-    low = str(p).lower()
+    low = p.as_posix().lower()
     if any(a in low for a in ALLOWLIST):
         return True
     return bool(".test" in name or ".spec" in name)
