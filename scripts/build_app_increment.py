@@ -49,9 +49,8 @@ ZIP_EXCLUDES = [
     "-xr!ffprobe.exe",
 ]
 
-DEFAULT_7ZA_CANDIDATES = [
-    Path(r"C:\Users\Doro\Tools\7z-extra\x64\7za.exe"),
-]
+# 7za 定位：--7za 显式参数 > PATH 中的 7za/7z（不再内置本机绝对路径，保证克隆后可在其他机器使用）
+DEFAULT_7ZA_CANDIDATES = []
 
 
 def find_7za(explicit: str | None) -> Path | None:
