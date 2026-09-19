@@ -72,3 +72,18 @@
 | Prometheus 指标 | `GET /metrics` |
 | 聚合诊断 | `python scripts/doctor.py`（八项诊断，`--json`） |
 | 完整性缺签 | `python scripts/sign_integrity_manifest.py` |
+
+## 日志与勘误（Log Locations）
+
+| 用途 | 位置 |
+|------|------|
+| 应用主日志 | `logs/app.log` |
+| 启动 / 根诊断 | `logs/_root_diag/`（启动自检与异常转储） |
+
+> 勘误优先看 `logs/app.log` 尾部；启动失败再看 `logs/_root_diag/`。日志目录不入库（.gitignore 覆盖）。
+
+## 治理与勘误速查
+
+- **钩子**：`.githooks/pre-commit` 分发器四级回退（仓库 `.venv` → PATH python → 控制台 `pre-commit` → `pre-commit-lite`），细节见 `.githooks/README.md`。
+- **分支**：`main` 受保护（`enforce_admins=true`，3 项必查：`quality-gate (ubuntu-latest)` / `quality-gate (windows-latest)` / `Typecheck (mypy ratchet)`）→ 本地不可直推，变更走功能分支 + PR；pre-push gitleaks 扫描待推送提交（0 泄露才放行）。
+- **Python 安全注释**：bandit 豁免用纯 `# nosec`（`# nosec B603,B607` 只压 B607 不压 B603）；subprocess 一律列表参数。CodeQL 豁免用 `# codeql[<query-id>] ignore`，紧贴告警行上一行并写明理由（例：`app/integrated_app/checkpoint.py`）。
