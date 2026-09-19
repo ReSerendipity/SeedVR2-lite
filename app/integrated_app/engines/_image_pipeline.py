@@ -47,45 +47,39 @@ DIT_KEEP_RESIDENT_FREE_GB = 10.0
 """
 
 
-def _normalize_model_tag(model_size: str | None) -> str:
-    """将模型尺寸标识规范化为文件名友好的标签。
+_ILLEGAL_IN_FILENAME = str.maketrans(dict.fromkeys('\\/:*?"<>|'))
+
+
+def _build_output_name(input_path: str | None, ext: str) -> str:
+    """输出文件名**沿用输入文件名**（只换扩展名），不加时间戳、模型标签或随机后缀。
+
+    用户靠文件名辨认内容，改名等于让产物无法检索；单文件、批量、图像、视频四条路径
+    口径统一。重名由 :func:`_resolve_unique_path` 追加 `_1/_2` 兜底（同图重复修复不会
+    覆盖上一版）。
+
+    关于「文件名可预测」的安全性：下载入口只接受 task_id / record_id
+    （``GET /api/restore/{task_id}/download``、
+    ``GET /api/system/history/{record_id}/download``，再经 PathGuard 白名单），
+    从不接受文件名参数，因此可读文件名不构成枚举面——T4-3 的防护职责在 id 与白名单
+    这一侧，不再由文件名随机后缀承担。
 
     Args:
-        model_size: 引擎内部模型尺寸标识，如 "3b"、"7b_sharp"。
+        input_path: 输入媒体路径（图像或视频）。
+        ext: 目标扩展名（含点号），如 ".png"、".mp4"。
 
     Returns:
-        规范化标签，如 "3B"、"7B-Sharp"；为空时返回 "Unknown"。
+        如输入 ``photo_4k.jpg`` + ``.png`` → ``photo_4k.png``；输入名不可用时退回
+        时间戳名，避免产出 ``.png`` 这类无名文件。
     """
-    if not model_size:
-        return "Unknown"
-    parts = model_size.split("_")
-    tag = parts[0].upper()
-    if len(parts) >= 2 and parts[1] == "sharp":
-        tag += "-Sharp"
-    return tag
-
-
-def _build_output_name(model_size: str | None, ext: str) -> str:
-    """构造「日期_时分秒_模型_随机后缀」格式的输出文件名。
-
-    追加 uuid4 随机后缀防止输出路径可预测（纵深防御，T4-3）。
-
-    Args:
-        model_size: 引擎模型尺寸标识。
-        ext: 文件扩展名（含点号），如 ".png"、".mp4"。
-
-    Returns:
-        如 "20260803_153030_3B_a1b2c3d4.png"。
-    """
-    from uuid import uuid4
-
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    # 文件名默认**不强加任何标识后缀**（产物名保持交付形态）。显式标识走文件元数据
-    # （utils/output_metadata.py 的 ai_generated / seedvr2_params）与隐式取证水印
-    # （security/watermark.py）两层，都不进画面也不改名字。
-    # 需要文件名级显式标识的部署（如对外服务）用 SEEDVR2_EXPLICIT_AI_LABEL=1 显式开启。
+    # 反斜杠先归一：Linux 容器里收到 Windows 风格路径时，basename 不会切分 '\'
+    base = os.path.basename((input_path or "").replace("\\", "/"))
+    stem = os.path.splitext(base)[0].translate(_ILLEGAL_IN_FILENAME)
+    stem = stem.strip().rstrip(".")
+    if not stem:
+        stem = time.strftime("%Y%m%d_%H%M%S")
+    # 文件名级显式标识默认关闭（会改变产物名）；对外部署需时 SEEDVR2_EXPLICIT_AI_LABEL=1
     label = "_AI" if os.environ.get("SEEDVR2_EXPLICIT_AI_LABEL", "0") == "1" else ""
-    return f"{ts}_{_normalize_model_tag(model_size)}_{uuid4().hex[:8]}{label}{ext}"
+    return f"{stem}{label}{ext}"
 
 
 def _resolve_unique_path(output_dir: str, filename: str) -> str:
@@ -371,7 +365,7 @@ class _ImagePipelineMixin:
         del input_video, ref_np, original_alpha
         gc.collect()
 
-        # 保存：默认按「日期_时分秒_模型」命名；批量场景传入 output_name 保留原文件名
+        # 保存：默认沿用输入文件名（只换扩展名）；批量场景传入 output_name 按模板命名
         # 获取输出格式（从 inf 或默认自动匹配）
         requested_format = inf.get("output_format", "").lower().strip()
 
@@ -414,7 +408,7 @@ class _ImagePipelineMixin:
         ext = format_map.get(requested_format, ".png")
 
         if output_name is None:
-            output_name = _build_output_name(self.model_size, ext)
+            output_name = _build_output_name(image_path, ext)
         else:
             # 指定了输出格式时，强制用目标格式的扩展名，覆盖输入文件的原始扩展名
             # （批量模板带的是 {ext}=输入扩展名，直接保存会按原格式写出）

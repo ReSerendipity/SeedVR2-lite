@@ -351,9 +351,9 @@ class _VideoPipelineMixin:
                 except Exception as e:
                     logger.debug(f"FeaturePropagation init skipped: {e}")
 
-            # 输出文件名：默认按「日期_时分秒_模型」命名；批量场景传入 output_name 保留原文件名
+            # 输出文件名：默认沿用输入视频文件名（只换扩展名）；批量场景传入 output_name 保留原文件名
             if output_name is None:
-                output_name = _build_output_name(self.model_size, ".mp4")
+                output_name = _build_output_name(video_path, ".mp4")
             output_path = _resolve_unique_path(output_dir, output_name)
 
             # ==================== 分段流式主循环 ====================

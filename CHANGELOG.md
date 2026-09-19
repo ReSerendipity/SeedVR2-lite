@@ -20,6 +20,7 @@
 
 ### Changed
 
+* **输出文件名一律沿用输入文件名（图/视频、单文件/批量四条路径统一）**：上一提交只去掉了 `_AI` 后缀，单任务仍会被改成 `20260919_101530_3B_a1b2c3d4.png`——而用户是按文件名辨认内容的，改名等于让产物无法检索。现 `_build_output_name(input_path, ext)` 取输入 basename 去扩展名 + 目标扩展名（中间点如 `scene.v2.final` 保留），Windows 风格路径在 Linux 容器下先归一分隔符，非法字符清洗，拿不到可用名字才退回时间戳（绝不产出 `.png` 这类无名文件）。随之删除只服务于命名的 `_normalize_model_tag`（死代码）。**安全口径变化要写清**：原 uuid8 随机后缀的理由是「防输出路径可预测被下载」（T4-3），但两个下载端点 `GET /api/restore/{task_id}/download` 与 `GET /api/system/history/{record_id}/download` **都只接受 id、从不接受文件名**，再过 PathGuard 白名单——可读文件名不构成枚举面，防护职责在 id 侧；安全审计执行清单（维护者本地账本）与数据治理评估已就地按实情补记，不在已分发文件中留下指向本地账本的引用。重名由既有 `_resolve_unique_path` 追加 `_1/_2` 兜底（同一输入修两次不会覆盖上一版）。新增 `tests/test_output_naming.py`（13 例）锁定：沿用输入名、中文与空格、中间点、Windows 路径、非法字符、空名回退、`_AI` 仅显式开启、重名不覆盖。
 * **产物不留标识痕迹：文件名默认不再强加 `_AI` 后缀，信息类水印日志降到 DEBUG**：用户侧要求交付形态干净——文件名保持原样（批量路径本就用 `{input_dir}/restored/{input_name}{ext}` 沿用输入名；单任务默认名里的 `_AI` 后缀改为默认不加，需要文件名级显式标识的对外部署用 `SEEDVR2_EXPLICIT_AI_LABEL=1` 显式开启）。同时把**信息类**水印日志统一降为 DEBUG：图像/视频嵌入与验签细节、`合成后水印抽样验证: N/M`、水印密钥首启自动生成与旧位置迁移，在默认 `logging.level: INFO` 下终端与 `logs/app.log` 均不出现「水印」字样。**安全降级不一起静音**（有意保留）：缺密钥 `ERROR` + `WATERMARK_KEY_MISSING` 审计、重复码降档与载荷截断 `WARNING`、落盘复验失败 `ERROR` + 溯源侧车——否则会把刚修好的「以为有、其实没有」重新藏回日志级别以下。新增 `tests/test_watermark.py::TestLogSilence` 两条用例分别把「正常流程 INFO 零水印字样」与「缺密钥必须仍是 error」钉成契约。代价知情：显式标识层就此只剩文件元数据（`ai_generated` / `seedvr2_params`）与协议文案，文件名与画面均无标识。
 * **`extract_watermark()` 提前退出**：位序从图像左上角起算，读够 `expected_length × repeat` 个块即停。语义不变（前缀位序一致，有等价用例把守），但 4K 图的全图扫描降到载荷长度规模——落盘逐产物复验的成本因此可接受。
 
