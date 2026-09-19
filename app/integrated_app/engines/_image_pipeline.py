@@ -80,10 +80,11 @@ def _build_output_name(model_size: str | None, ext: str) -> str:
     from uuid import uuid4
 
     ts = time.strftime("%Y%m%d_%H%M%S")
-    # P1-2 显式 AI 生成标识（合规整改 2026-09-15）：默认在文件名追加 _AI 后缀
-    # （env SEEDVR2_EXPLICIT_AI_LABEL=0 可关闭），便于产物对外传播时履行显式
-    # 标识义务；与隐式取证水印（security/watermark.py）相互独立。
-    label = "_AI" if os.environ.get("SEEDVR2_EXPLICIT_AI_LABEL", "1") != "0" else ""
+    # 文件名默认**不强加任何标识后缀**（产物名保持交付形态）。显式标识走文件元数据
+    # （utils/output_metadata.py 的 ai_generated / seedvr2_params）与隐式取证水印
+    # （security/watermark.py）两层，都不进画面也不改名字。
+    # 需要文件名级显式标识的部署（如对外服务）用 SEEDVR2_EXPLICIT_AI_LABEL=1 显式开启。
+    label = "_AI" if os.environ.get("SEEDVR2_EXPLICIT_AI_LABEL", "0") == "1" else ""
     return f"{ts}_{_normalize_model_tag(model_size)}_{uuid4().hex[:8]}{label}{ext}"
 
 

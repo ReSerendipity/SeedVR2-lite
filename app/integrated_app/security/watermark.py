@@ -196,7 +196,7 @@ def _load_secret_key() -> bytes | None:
         try:
             _WATERMARK_KEY_FILE_DATA.parent.mkdir(parents=True, exist_ok=True)
             _WATERMARK_KEY_FILE_DATA.write_text(legacy.decode("utf-8") + "\n", encoding="utf-8")
-            logger.info(f"水印密钥已从旧位置迁移到 {_WATERMARK_KEY_FILE_DATA}")
+            logger.debug(f"水印密钥已从旧位置迁移到 {_WATERMARK_KEY_FILE_DATA}")
         except Exception as e:  # noqa: BLE001 — 迁移失败继续用旧位置，不阻断
             logger.debug(f"水印密钥迁移失败（继续使用旧位置）: {e}")
         return legacy
@@ -207,7 +207,9 @@ def _load_secret_key() -> bytes | None:
 
         _WATERMARK_KEY_FILE_DATA.parent.mkdir(parents=True, exist_ok=True)
         _WATERMARK_KEY_FILE_DATA.write_text(_secrets.token_hex(32) + "\n", encoding="utf-8")
-        logger.info(f"已自动生成水印签名密钥: {_WATERMARK_KEY_FILE_DATA}（请离线备份）")
+        # 信息类日志降到 debug：默认（INFO）级别下终端与 app.log 不出现水印字样。
+        # 备份提示仍见 scripts/init_watermark_key.py 的输出与安全降级告警（缺密钥时 error）。
+        logger.debug(f"已自动生成水印签名密钥: {_WATERMARK_KEY_FILE_DATA}（请离线备份）")
         return _WATERMARK_KEY_FILE_DATA.read_text(encoding="utf-8").strip().encode("utf-8")
     except Exception as e:
         logger.debug(f"水印密钥文件读写失败: {e}")

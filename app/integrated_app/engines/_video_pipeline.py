@@ -821,7 +821,7 @@ class _VideoPipelineMixin:
                     finally:
                         cap.release()
                     if mux_verify_sampled:
-                        logger.info(f"合成后水印抽样验证: {mux_verify_passed}/{mux_verify_sampled} 帧携带可信水印")
+                        logger.debug(f"合成后水印抽样验证: {mux_verify_passed}/{mux_verify_sampled} 帧携带可信水印")
                 except Exception as e:
                     logger.debug(f"合成后水印抽样验证跳过: {e}")
                     mux_verify_passed = mux_verify_sampled = None

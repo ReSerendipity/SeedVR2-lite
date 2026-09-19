@@ -195,6 +195,43 @@ class TestVerifyWatermark:
         assert isinstance(extracted, str)
 
 
+class TestLogSilence:
+    """默认日志级别下，水印不得在终端/日志里露面（交付形态不留标识痕迹的要求）。
+
+    锁的是「信息类一律 DEBUG、只有真降级才响」：嵌入、验签、抽样复验、密钥生成与
+    迁移都不该出现在 INFO 及以上；缺密钥与载荷截断属安全降级，保留 error/warning。
+    """
+
+    def test_normal_flow_logs_nothing_at_info_level(self, caplog, monkeypatch):
+        import logging
+
+        # 用环境变量注入密钥：嵌入与验签两条链都优先读它（patch _load_secret_key
+        # 只会影响嵌入，verify_watermark 走 _load_verify_keys 会拿不到同一把密钥）
+        monkeypatch.setenv(_WATERMARK_KEY_ENV, "hermetic-issuer-key")
+        with caplog.at_level(logging.INFO, logger="app.integrated_app.security.watermark"):
+            img = _rng_image(seed=13)
+            product = embed_watermark(img, payload="task-quiet")
+            assert verify_watermark(product) is True
+            assert extract_watermark(product)
+
+        offenders = [
+            r.getMessage() for r in caplog.records if "水印" in r.getMessage() or "watermark" in r.getMessage().lower()
+        ]
+        assert not offenders, f"INFO 及以上级别泄漏水印字样: {offenders}"
+
+    def test_missing_key_still_reports_as_error(self, caplog, monkeypatch):
+        """反向锁：安全降级不能被一起静音掉——缺密钥必须仍是 error。"""
+        import logging
+
+        import app.integrated_app.security.watermark as wm
+
+        monkeypatch.setattr(wm, "_load_secret_key", lambda: None)
+        monkeypatch.setattr(wm, "_key_missing_warned", False)
+        with caplog.at_level(logging.WARNING, logger="app.integrated_app.security.watermark"):
+            embed_watermark(_rng_image(seed=14), payload="task-nokey")
+        assert any("水印签名密钥" in r.getMessage() and r.levelno >= logging.ERROR for r in caplog.records)
+
+
 class TestPayloadEnvelope:
     """载荷信封还原（签名摘要 / 品牌前缀剥除）测试——溯源反查靠它把水印对上 task_id。"""
 

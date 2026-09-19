@@ -20,6 +20,7 @@
 
 ### Changed
 
+* **产物不留标识痕迹：文件名默认不再强加 `_AI` 后缀，信息类水印日志降到 DEBUG**：用户侧要求交付形态干净——文件名保持原样（批量路径本就用 `{input_dir}/restored/{input_name}{ext}` 沿用输入名；单任务默认名里的 `_AI` 后缀改为默认不加，需要文件名级显式标识的对外部署用 `SEEDVR2_EXPLICIT_AI_LABEL=1` 显式开启）。同时把**信息类**水印日志统一降为 DEBUG：图像/视频嵌入与验签细节、`合成后水印抽样验证: N/M`、水印密钥首启自动生成与旧位置迁移，在默认 `logging.level: INFO` 下终端与 `logs/app.log` 均不出现「水印」字样。**安全降级不一起静音**（有意保留）：缺密钥 `ERROR` + `WATERMARK_KEY_MISSING` 审计、重复码降档与载荷截断 `WARNING`、落盘复验失败 `ERROR` + 溯源侧车——否则会把刚修好的「以为有、其实没有」重新藏回日志级别以下。新增 `tests/test_watermark.py::TestLogSilence` 两条用例分别把「正常流程 INFO 零水印字样」与「缺密钥必须仍是 error」钉成契约。代价知情：显式标识层就此只剩文件元数据（`ai_generated` / `seedvr2_params`）与协议文案，文件名与画面均无标识。
 * **`extract_watermark()` 提前退出**：位序从图像左上角起算，读够 `expected_length × repeat` 个块即停。语义不变（前缀位序一致，有等价用例把守），但 4K 图的全图扫描降到载荷长度规模——落盘逐产物复验的成本因此可接受。
 
 * **`_VERIFY_SCHEMES` 候选保持 4 组**（无损档 + 鲁棒档 repeat 1..3），新增档位若有需要按同一模式扩展；`security/integrity_manifest.json(.sig.ed25519)` 已随 `security/watermark.py` 改动重算并重新签名（11/11 自检通过）。
