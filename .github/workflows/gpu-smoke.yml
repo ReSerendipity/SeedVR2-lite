@@ -8,7 +8,7 @@
 # (--require-inference).
 #
 # 触发源（评估报告 P1-2：真机验证与发布脱钩的收口）：
-#   1. schedule：周一 + 周四 03:00 UTC 兜底冒烟最新 Release（周四档专为「无发布但
+#   1. schedule：周一 + 周四 15:00 UTC 兜底冒烟最新 Release（周四档专为「无发布但
 #      main 有合并」的窗口提供源码级真机回归，见下「双层烟测」）；
 #   2. workflow_dispatch：手动指定/默认最新 Release；
 #   3. workflow_run：Portable Release 成功结束后立即冒烟该 tag —— 通知级联动，
@@ -46,7 +46,7 @@ on:
         required: false
         default: false
   schedule:
-    - cron: "0 3 * * 1,4" # 周一 + 周四 03:00 UTC（周四专补「无发布窗口」的 main 源码回归）
+    - cron: "0 15 * * 1,4" # 周一 + 周四 15:00 UTC（北京时间 23 点，GPU 机器空闲时段；原 03:00 UTC=北京时间 11 点，真机推理曾因系统内存被其他负载挤占失败）
   workflow_run:
     workflows: ["Portable Release"] # name: 必须与 portable-release.yml 的 name 一致
     types: [completed]
