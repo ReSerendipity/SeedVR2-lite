@@ -72,6 +72,9 @@ class TaskCheckpoint:
             checkpoint_dir: checkpoint 文件存储目录路径，不存在时自动创建。
         """
         self.checkpoint_dir = Path(checkpoint_dir)
+        # checkpoint_dir 取自 config 的 runtime.task.checkpoint_dir（管理员本地配置），
+        # 不是请求输入；此处的 resolve() 正是为了拿到"必须落在其内"的白名单基线。
+        # codeql[py/path-injection] ignore
         self._base = self.checkpoint_dir.resolve()
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
@@ -91,6 +94,9 @@ class TaskCheckpoint:
         """
         if not task_id or "/" in task_id or "\\" in task_id or ".." in task_id:
             raise ValueError(f"非法任务 ID：不得含路径分隔符或 '..'（收到 {task_id!r}）")
+        # 上一行已按分隔符 / `..` / 空值拒绝，下方再断言解析结果仍在 checkpoint_dir 内；
+        # CodeQL 不把这些自定义检查识别为 sanitizer，故在此显式抑制并留下理由。
+        # codeql[py/path-injection] ignore
         path = (self.checkpoint_dir / f"{task_id}.json").resolve()
         if not path.is_relative_to(self._base):
             raise ValueError(f"任务 ID 解析后越出 checkpoint 目录: {task_id!r}")
