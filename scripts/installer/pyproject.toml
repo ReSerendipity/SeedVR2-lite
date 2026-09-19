@@ -202,7 +202,8 @@ markers = [
 [tool.coverage.run]
 # Coverage is measured only for the standalone web application layer. The
 # inference core (model_lib/, common/) requires a real CUDA GPU and model weights
-# to exercise, which the test suite deliberately avoids (see AGENTS.md 6.6);
+# to exercise, which the test suite deliberately avoids (rationale recorded in the
+# maintainer-local AGENTS.md 6.6, not distributed with this repo);
 # including those paths here would report near-zero coverage and mask the
 # app-layer signal. Regression safety for the core relies on the engine
 # self-check (verify_engine.py) plus end-to-end runs instead.
@@ -242,9 +243,9 @@ omit = [
 ]
 
 [tool.coverage.report]
-# 50 与 ci.yml（coverage.xml line-rate >= 50）及 precheck.ps1 的门禁一致。
-# 原 70 从未真实生效（HEAD 基线实测最高 ~68%，见 AGENTS.md 修订 v1.36 / KNOWN_ISSUES #34）；
-# 回升路线见 AGENTS.md §4.2（M1 目标 70）。
+# 50 与 ci.yml（coverage.xml line-rate >= 50）的门禁一致；维护者本地另有 precheck.ps1 同值门禁。
+# 原 70 从未真实生效（HEAD 基线实测最高 ~68%，账本见维护者本地文件 AGENTS.md 修订 v1.36 /
+# KNOWN_ISSUES #34，未随仓库分发）；回升路线同见该本地文件 §4.2（M1 目标 70）。
 fail_under = 50
 show_missing = true
 

@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.2
+    rev: v0.16.5
     hooks:
       - id: ruff
         args: [--fix]
@@ -16,7 +16,7 @@ repos:
         args: [--config, pyproject.toml]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v5.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -27,7 +27,7 @@ repos:
       - id: detect-private-key
 
   # mypy 走项目 .venv（pydantic 插件与第三方 stub 依赖项目环境，isolated env 会缺依赖报错）。
-  # 仅 app/integrated_app 下有 .py 改动时触发，口径与 run_checks.bat / ci.yml 一致。
+  # 仅 app/integrated_app 下有 .py 改动时触发，口径与 ci.yml 一致（run_checks.bat 为维护者本地脚本，未随仓库分发）。
   # Linux 贡献者请把 entry 改为 .venv/bin/python。
   - repo: local
     hooks:

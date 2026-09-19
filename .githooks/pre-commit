@@ -15,6 +15,19 @@ if [ -f scripts/check_no_hardcoded_paths.py ]; then
         fi
     fi
 fi
+# 0b) 引用可用性检查：追踪文件不得把读者指向未随仓库分发的本地文件而无可获取性说明
+if [ -f scripts/check_local_only_refs.py ]; then
+    PY_BIN=""
+    for c in python python3; do
+        command -v "$c" >/dev/null 2>&1 && PY_BIN="$c" && break
+    done
+    if [ -n "$PY_BIN" ]; then
+        if ! "$PY_BIN" scripts/check_local_only_refs.py; then
+            echo "[pre-commit] 检测到幻影引用（追踪文件指向未分发文件），提交已拒绝。绕过：git commit --no-verify" >&2
+            exit 1
+        fi
+    fi
+fi
 if [ -f .pre-commit-config.yaml ]; then
     PY=""
     for cand in ".venv/Scripts/python.exe" ".venv/bin/python"; do

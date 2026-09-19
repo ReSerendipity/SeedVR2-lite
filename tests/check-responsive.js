@@ -4,7 +4,7 @@
  *
  * 背景：sv2 工作台一度完全没有响应式规则（既有 @media 指向已废弃的旧类名），
  * 桌面端一切正常，只有窄视口才暴露工具条重叠、侧栏盖死画布等问题。
- * 见 docs/project/KNOWN_ISSUES.md #49、#51。
+ * 背景账本见维护者本地文件 docs/project/KNOWN_ISSUES.md #49、#51（未随仓库分发）。
  *
  * 用法: node check-responsive.js
  *   SEEDVR2_BASE_URL  默认 http://127.0.0.1:7870

@@ -351,9 +351,9 @@ class _VideoPipelineMixin:
                 except Exception as e:
                     logger.debug(f"FeaturePropagation init skipped: {e}")
 
-            # 输出文件名：默认按「日期_时分秒_模型」命名；批量场景传入 output_name 保留原文件名
+            # 输出文件名：默认沿用输入视频文件名（只换扩展名）；批量场景传入 output_name 保留原文件名
             if output_name is None:
-                output_name = _build_output_name(self.model_size, ".mp4")
+                output_name = _build_output_name(video_path, ".mp4")
             output_path = _resolve_unique_path(output_dir, output_name)
 
             # ==================== 分段流式主循环 ====================
@@ -659,15 +659,15 @@ class _VideoPipelineMixin:
                     del sample_np, input_np
 
                     # ---- 写盘 (含段间重叠混合) ----
-                    # 水印配置
-                    watermark_cfg = self.config.get("security", {}).get("watermark", {})
-                    enable_watermark = watermark_cfg.get("enable", True)
-                    if enable_watermark and watermark_policy is None:
+                    # 水印强制启用（无关闭开关），失败处置策略按任务解析一次
+                    if watermark_policy is None:
                         from app.integrated_app.services.watermark_policy import (
+                            report_missing_watermark_key,
                             resolve_watermark_failure_policy,
                         )
 
                         watermark_policy = resolve_watermark_failure_policy(self.config)
+                        report_missing_watermark_key()
                     overlap_n = min(segment_overlap, len(restored_frames))
                     for i, frame in enumerate(restored_frames):
                         if prev_tail_out is not None and i < overlap_n:
@@ -678,29 +678,28 @@ class _VideoPipelineMixin:
                                 frame.astype(np.float32) * weight + prev.astype(np.float32) * (1.0 - weight)
                             ).astype(np.uint8)
                         # 嵌入不可感知数字水印 (视频帧)
-                        if enable_watermark:
-                            from app.integrated_app.security.watermark import _VIDEO_ALPHA, _VIDEO_REPEAT
-                            from app.integrated_app.services.watermark_policy import embed_with_retry
+                        from app.integrated_app.security.watermark import _VIDEO_ALPHA, _VIDEO_REPEAT
+                        from app.integrated_app.services.watermark_policy import embed_with_retry
 
-                            # P3-1：逐帧水印绑定 task_id（视频按帧嵌入，payload 同源）
-                            # 视频帧走鲁棒档（三通道等幅 + 步长 20 + 重复码 3）：
-                            # 经 ffmpeg 有损编码后签名验证可存活（2026-09-06 实验）
-                            frame, embedded, wm_error = embed_with_retry(
-                                frame, payload=watermark_payload, alpha=_VIDEO_ALPHA, repeat=_VIDEO_REPEAT
-                            )
-                            if not embedded:
-                                watermark_failed_frames += 1
-                                watermark_last_error = wm_error
-                                if watermark_failed_frames == 1:
-                                    from app.integrated_app.services.watermark_policy import (
-                                        handle_watermark_failure,
-                                    )
+                        # P3-1：逐帧水印绑定 task_id（视频按帧嵌入，payload 同源）
+                        # 视频帧走鲁棒档（三通道等幅 + 步长 20 + 重复码 3）：
+                        # 经 ffmpeg 有损编码后签名验证可存活（2026-09-06 实验）
+                        frame, embedded, wm_error = embed_with_retry(
+                            frame, payload=watermark_payload, alpha=_VIDEO_ALPHA, repeat=_VIDEO_REPEAT
+                        )
+                        if not embedded:
+                            watermark_failed_frames += 1
+                            watermark_last_error = wm_error
+                            if watermark_failed_frames == 1:
+                                from app.integrated_app.services.watermark_policy import (
+                                    handle_watermark_failure,
+                                )
 
-                                    handle_watermark_failure(
-                                        policy=watermark_policy or "mark_metadata",
-                                        error=wm_error or "unknown",
-                                        payload=watermark_payload,
-                                    )
+                                handle_watermark_failure(
+                                    policy=watermark_policy or "mark_metadata",
+                                    error=wm_error or "unknown",
+                                    payload=watermark_payload,
+                                )
                         cv2.imwrite(
                             os.path.join(frames_dir, f"frame_{seg_start + i:06d}.png"),
                             cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
@@ -767,12 +766,11 @@ class _VideoPipelineMixin:
 
             # ==================== ffmpeg 合成视频 + 音轨 ====================
             self._check_cancelled("video:compose")
-            # 数据治理 P2-5：生成参数写入容器 comment 元数据（随输出文件走的血缘）
-            compose_comment = ""
+            # 数据治理 P2-5：生成参数 + AI 标识写入容器 comment（与图像元数据同源）
             try:
-                import json as _json
+                from app.integrated_app.utils.output_metadata import generation_params_payload
 
-                compose_comment = _json.dumps(dict(inf), ensure_ascii=False, default=str)[:4000]
+                compose_comment = generation_params_payload(dict(inf))[:4000]
             except Exception:
                 compose_comment = ""
             composed_ok = self._ffmpeg.compose_video(
@@ -802,7 +800,7 @@ class _VideoPipelineMixin:
             # 只会出现在编码参数异常/容量降档等真实缺失场景
             mux_verify_passed: int | None = None
             mux_verify_sampled: int | None = None
-            if enable_watermark and not watermark_failed_frames and os.path.exists(output_path):
+            if not watermark_failed_frames and os.path.exists(output_path):
                 mux_verify_passed = 0
                 mux_verify_sampled = 0
                 try:
@@ -823,29 +821,30 @@ class _VideoPipelineMixin:
                     finally:
                         cap.release()
                     if mux_verify_sampled:
-                        logger.info(f"合成后水印抽样验证: {mux_verify_passed}/{mux_verify_sampled} 帧携带可信水印")
+                        logger.debug(f"合成后水印抽样验证: {mux_verify_passed}/{mux_verify_sampled} 帧携带可信水印")
                 except Exception as e:
                     logger.debug(f"合成后水印抽样验证跳过: {e}")
                     mux_verify_passed = mux_verify_sampled = None
 
-            # 水印缺失兜底（评估报告 R2）：mark_metadata 策略下写侧车元数据标识。
-            # 触发条件：① 嵌入失败帧 > 0；② 合成后抽样验证通过率 < 50%
+            # 水印缺失统一处置（评估报告 R2）：① 嵌入失败帧 > 0；② 合成后抽样验证通过率 < 50%
+            # mark_metadata 写溯源侧车；block 删除产物并抛错；ignore 仅日志
             mux_lost = (
                 mux_verify_passed is not None and mux_verify_sampled and mux_verify_passed * 2 < mux_verify_sampled
             )
-            if (watermark_failed_frames or mux_lost) and (watermark_policy or "mark_metadata") == "mark_metadata":
-                try:
-                    from app.integrated_app.services.watermark_policy import write_provenance_sidecar
+            if watermark_failed_frames or mux_lost:
+                from app.integrated_app.services.watermark_policy import handle_watermark_loss
 
-                    sidecar_path = write_provenance_sidecar(output_path, payload=watermark_payload)
-                    reason = (
-                        f"{watermark_failed_frames} 帧水印嵌入失败（末次: {watermark_last_error}）"
-                        if watermark_failed_frames
-                        else f"合成后抽样验证仅 {mux_verify_passed}/{mux_verify_sampled} 帧携带水印"
-                    )
-                    logger.warning(f"输出视频水印缺失，已写溯源侧车: {sidecar_path}（{reason}）")
-                except OSError as e:
-                    logger.error(f"[SECURITY] 水印缺失且溯源侧车写入失败: {e}")
+                reason = (
+                    f"{watermark_failed_frames} 帧水印嵌入失败（末次: {watermark_last_error}）"
+                    if watermark_failed_frames
+                    else f"合成后抽样验证仅 {mux_verify_passed}/{mux_verify_sampled} 帧携带可信水印"
+                )
+                handle_watermark_loss(
+                    policy=watermark_policy or "mark_metadata",
+                    output_path=output_path,
+                    error=reason,
+                    payload=watermark_payload,
+                )
 
             # 清理临时帧目录, 释放磁盘空间 (长视频帧文件可达数十 GB)
             try:

@@ -114,7 +114,7 @@ To track changes in upstream model implementations:
 1. 获取上游源码（官方发布包或仓库可达时），与本表锚点目录做 `diff -r`；
 2. 逐文件合并，保留本节 "Modifications" 所列的本地适配（window size / latent dim / mmdit_sr 接口）；
 3. 静态门禁：`ruff check model_lib && mypy app/integrated_app`（model_lib 属禁区目录，
-   仅人工授权后修改——见 AGENTS.md §3）；
+   仅人工授权后修改——禁区清单见已分发的 `docs/CODING_STANDARDS.md` §5.1，完整协议在维护者本地的 AGENTS.md）；
 4. 回归：本地 CPU 测试 → 真机 `gpu-smoke.yml`（含 PSNR≥15/SSIM≥0.5 质量门）必须绿；
 5. 更新本文件「本地锚定」表（新导入/升级 commit + 日期）、`Last updated`，并在
    `CHANGELOG.md` 记一条；上游可达后应回填真实上游 commit 哈希替换本表。

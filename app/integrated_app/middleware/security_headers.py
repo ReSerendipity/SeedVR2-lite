@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 # 浏览器对 meta 与响应头两份策略取交集，任何一边更严都会拦截另一边明确放行的资源。
 # 曾因响应头缺 fonts.googleapis.com / fonts.gstatic.com / media-src blob:，
 # 把页面自己声明并实际使用的标题字体样式表与 blob: 视频对比全部拦下
-# （见 docs/project/KNOWN_ISSUES.md #54、陷阱 #7）。
+# （背景账本记于维护者本地文件 docs/project/KNOWN_ISSUES.md #54、陷阱 #7，未随仓库分发；
+# 可执行的回归护栏是下面的默认值本身与 tests/ 里的 CSP 用例）。
 # 标题字体切换器依赖的站酷小薇/马善政楷书等中文字体仅存在于 Google Fonts，
 # 本地字体包（/static/fonts/）只有 DM Sans 与 Instrument Serif 两族，无法替代。
 #

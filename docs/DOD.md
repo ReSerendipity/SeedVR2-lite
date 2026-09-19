@@ -1,7 +1,9 @@
 # 完成定义（Definition of Done）
 
-> **来源**：家族通用 DOD 模板 `.spec_audit/family_DOD.md`（源自 SpiritPal definition-of-done.md 泛化），本仓本地化。
+> **来源**：家族通用 DOD 模板（源自 SpiritPal definition-of-done.md 泛化的家族模板，原 `.spec_audit/family_DOD.md` 已随家族归档，本文为本仓本地化副本）。
 > **适用范围**：SeedVR2-lite 全项目所有功能开发任务。
+> **本地未分发引用**：`AGENTS.md`、`docs/project/`、`docs/agents/`、`precheck.ps1` 属维护者本地治理层，未随仓库分发；
+> 其对外可执行部分（禁区与门禁口径）已摘入 `docs/CODING_STANDARDS.md` 第 5 节，克隆后以该节为准。
 
 ---
 
@@ -20,9 +22,9 @@
 - [ ] 功能已实现，覆盖 PRD / Spec 定义的所有验收标准（AC）
 - [ ] lint 通过：`ruff` / `ruff-format`（Python）+ `eslint` / `tsc`（前端 TS）0 error
 - [ ] 无调试残留（`print()` / `console.log` / `breakpoint()`，诊断日志除外需标记）
-- [ ] 未引入跨层违规引用（遵守 AGENTS.md §3 模块边界 + 禁区表）
+- [ ] 未引入跨层违规引用（禁区与模块边界见 `docs/CODING_STANDARDS.md` §5.1）
 - [ ] 新增路由遵守路由自动发现 / engines / middleware 分层约定
-- [ ] 涉及引擎改动时遵守 AGENTS.md SOP（新增引擎 / 调试 / 发布 / 便携包 / 量化精度）
+- [ ] 涉及引擎改动时遵守对应 SOP（新增引擎 / 调试 / 发布 / 便携包 / 量化精度）；公开子集见 `docs/CODING_STANDARDS.md` §5，完整 SOP 在维护者本地的 `AGENTS.md`
 
 ## 2. 测试覆盖
 
@@ -34,11 +36,12 @@
 
 ## 3. 文档同步
 
-- [ ] `AGENTS.md` 已同步（目录结构 / MODULE_MAP / 配置 / 引擎契约）
-- [ ] 新增模块在 AGENTS.md / `docs/project/MODULE_MAP.md` 有对应条目
-- [ ] 踩坑已追加到 `docs/project/KNOWN_ISSUES.md`（触发/现象/做法/日期）
+- [ ] 治理文档已同步（目录结构 / 模块图 / 配置 / 引擎契约）：对外可见部分写入 `docs/CODING_STANDARDS.md` §5 与本文；`AGENTS.md` 侧同步由维护者本地完成
+- [ ] 新增模块在模块图 `docs/project/MODULE_MAP.md` 有对应条目（维护者本地账本）
+- [ ] 踩坑已追加到 `docs/project/KNOWN_ISSUES.md`（触发/现象/做法/日期；同为本地账本，外部贡献者请在 PR 中描述）
 - [ ] `CHANGELOG.md` 已记录变更（type 对应 Added/Fixed/…）
 - [ ] `python scripts/check_spec_refs.py` 退出码 0（无幻影/死链/假门禁）
+- [ ] `python scripts/check_local_only_refs.py --all` 退出码 0（追踪文件不指向未随仓库分发的本地文件）
 
 ## 4. 国际化
 
@@ -49,7 +52,7 @@
 
 - [ ] 完整构建/启动通过（`app/clean_launch.py`；`checkpoint.py` / `spec.py` 契约不破坏）
 - [ ] 手动验证功能按预期工作（不仅是测试通过）
-- [ ] 涉及便携包/发布时遵守 AGENTS.md SOP-3 / SOP-7（PORTABLE_BUNDLES.md）
+- [ ] 涉及便携包/发布时遵守 `docs/release-governance.md` 与 `docs/CODING_STANDARDS.md` §5.2 门禁口径（分卷便携包细则在维护者本地的 `docs/project/PORTABLE_BUNDLES.md`）
 
 ## 6. 安全 & 隐私
 

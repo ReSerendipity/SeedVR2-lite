@@ -11,6 +11,8 @@
 > 改动：`_image_pipeline.py` · `_memory_utils.py` · `vae_tiled_enhance.py` · `_vae_pipeline.py` ·
 > `gpu_utils.py` · `model_manager.py` · `bad_case_retry.py` · `routes/restore/common.py`。
 > 协议义务：`docs/agents/GOTCHAS.md` 追加 #105–#110；AGENTS.md 升 v1.76；`REVISION_LOG.md` 追加 v1.76 行。
+> （上述三个账本文件与维护者治理协议 `AGENTS.md` 同属本地治理层，未随仓库分发；对外可执行的
+> 禁区与门禁口径见 `docs/CODING_STANDARDS.md` 第 5 节。）
 > **待真机回归**：在 12 GB 卡上复跑「同分辨率出图 + double_res」确认不再卡死（当前环境无 GPU，仅静态/逻辑验证）。
 
 ---

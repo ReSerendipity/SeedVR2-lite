@@ -36,8 +36,15 @@ class TestGenerationParamsPayload:
         # sort_keys 使载荷跨运行稳定（同参数 → 同字节 → 内容寻址可比对）
         assert payload.index('"a"') < payload.index('"b"')
 
-    def test_empty_params_empty_payload(self):
-        assert generation_params_payload({}) == ""
+    def test_empty_params_still_carries_ai_marker(self):
+        """参数为空也必须写标识：标识义务不因参数缺失而缺席（隐式标识合规口径）。"""
+        data = json.loads(generation_params_payload({}))
+        assert data == {"ai_generated": True, "ai_generator": "SeedVR2"}
+
+    def test_marker_survives_param_collision(self):
+        """标识字段后置写入，参数里同名键不能把「非 AI 生成」伪装出来。"""
+        data = json.loads(generation_params_payload({"ai_generated": False}))
+        assert data["ai_generated"] is True
 
 
 class TestBuildSaveMetadataKwargs:
@@ -50,7 +57,10 @@ class TestBuildSaveMetadataKwargs:
         Image.open(out).save(out, **kwargs)
 
         with Image.open(out) as img:
-            assert json.loads(img.info[METADATA_TAG])["seed"] == 42
+            saved = json.loads(img.info[METADATA_TAG])
+            assert saved["seed"] == 42
+            # 机器可读的 AI 生成标识随文件走（PNG tEXt 一路）
+            assert saved["ai_generated"] is True
 
     def test_jpeg_user_comment_roundtrip(self, tmp_path):
         out = tmp_path / "out.jpg"

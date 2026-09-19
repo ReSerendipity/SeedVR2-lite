@@ -66,7 +66,7 @@ model/                                 # 15.35GB 级权重，元数据仅存 con
 - `RuntimeTaskConfig`（:444-490）：`checkpoint_dir/checkpoint_every/auto_recover/stale_threshold_minutes`
 - `ModelEntryConfig`（:95-139）：5 个 sha256 字段
 
-**⚠️ 发现一处配置漂移**：`routes/restore/upload.py:198-201` 注释声称从 `runtime.security.max_upload_*_mb` 读取大小限制，但 `RuntimeSecurityConfig` 模型与 config.yaml 均未定义这两个字段——实际永远走 `common.py:47-48` 的回退硬编码（图 50MB / 视频 500MB）。这是"文档/注释与机器事实不一致"的典型治理缺口（恰好违反本项目 AGENTS.md 铁律 #1 的精神）。
+**⚠️ 发现一处配置漂移**：`routes/restore/upload.py:198-201` 注释声称从 `runtime.security.max_upload_*_mb` 读取大小限制，但 `RuntimeSecurityConfig` 模型与 config.yaml 均未定义这两个字段——实际永远走 `common.py:47-48` 的回退硬编码（图 50MB / 视频 500MB）。这是"文档/注释与机器事实不一致"的典型治理缺口（恰好违反本项目治理协议铁律 #1 的精神；协议全文 `AGENTS.md` 为维护者本地文件，未随仓库分发，其对外可执行部分见 `docs/CODING_STANDARDS.md` 第 5 节）。
 
 ### 1.3 模型 Checkpoint Metadata —— **部分实现（55 分）**
 
@@ -128,13 +128,14 @@ model/                                 # 15.35GB 级权重，元数据仅存 con
 **已实现**：
 - `HistoryRecord` 保存 input_file 路径 + 完整参数 JSON（seed/tile/overlap/precision/color_correction，`upload.py:293`）+ model_size 档位 + output_file/output_size_bytes/vram_peak_mb
 - task ↔ record 双向关联、FTS5 全文反查（含输出文件名）、按类型/状态过滤
-- 输出文件名自带时间+模型档位+UUID8（`_image_pipeline.py:56-71`：`YYYYMMDD_HHMMSS_3B_<uuid8>.png`）
-- **DCT-QIM 频域水印 + HMAC-SHA256 签名**（`watermark.py:138-160, 213-319`）：图像输出与视频逐帧均嵌入，可举证所有权——这是同类项目少有的强项
+- 输出文件名**沿用输入文件名**（`_image_pipeline.py::_build_output_name`，只换扩展名；重名由 `_resolve_unique_path` 追加 `_1/_2`）——用户靠文件名辨认内容，改名会破坏检索；下载入口只认 task_id/record_id，故可读名不构成枚举面
+- **DCT-QIM 频域水印 + HMAC-SHA256 签名**（`security/watermark.py` 的 `embed_watermark` / `verify_watermark`，边界见该文件 docstring）：图像与视频帧均嵌入，按输出格式自适应档位并在落盘后复验；可举证范围限于「持该密钥的实例产出的未再加工产物」——这是同类项目少有的强项
 
 **缺口**：
 - ❌ **HistoryRecord 无源文件内容 hash 列**。任务级 checkpoint 的 `_file_fingerprint`（`checkpoint.py:40-54`）只有 path+size+mtime 且不入历史库。上传文件重名/被覆盖后，历史记录与实际产出无法严格对应
 - ❌ **model_size 非精确版本**（"3b" 不区分当天权重是否被替换过，尽管 sha256 校验存在，但校验哈希未写进历史记录）
-- ❌ **无输出→任务反查 API**：水印虽可提取验证，但不绑定 task_id/record_id；无法用"一张输出图"反查"哪次任务、什么参数、哪个输入"
+- ✅ ~~无输出→任务反查 API~~（已实现，P3-1）：`GET /api/system/history/resolve` 支持 `output_file` / `task_id` / `watermark_payload` 三口径，水印载荷即 task_id 且自动剥去签名摘要与品牌前缀（`security/watermark.py::strip_watermark_envelope`）；命令行侧 `scripts/verify_watermark.py --show-payload` 直接打印可反查 ID
+- ⚠️ 反查依赖历史库与原始产物在册：`outputs/` 受保留策略自动清理（年龄/数量/磁盘水位），原件被清后仅剩文字记录；产物经缩放/裁剪再加工后水印不可读
 
 ### 3.2 Training Data → Model Weights Provenance —— **未实现（0 分）**
 
@@ -150,7 +151,7 @@ model/                                 # 15.35GB 级权重，元数据仅存 con
 
 ### 4.1 Golden 数据集 —— **未实现（15 分）**
 
-- `tests/test-assets/` 仅 3 个"最小合法魔数"占位文件（585B JPEG / 70B PNG / 64B MP4），`generate_test_assets.py:29-72` 自述"1×1 红像素 + 仅 ftyp 骨架，**不可解码播放**"，仅供 Playwright 前端校验
+- `tests/test-assets/`（未随仓库分发，克隆后由已跟踪的 `tests/generate_test_assets.py` 重建）仅 3 个"最小合法魔数"占位文件（585B JPEG / 70B PNG / 64B MP4），`generate_test_assets.py:29-72` 自述"1×1 红像素 + 仅 ftyp 骨架，**不可解码播放**"，仅供 Playwright 前端校验
 - **无真实 golden 图片/视频、无"退化输入→期望输出"基准对**
 - 讽刺点：应用层有现成的 `HierarchicalDegradationProcessor.apply_degradation`（`video_processing_enhance.py:1536-1601`：降采样+噪声+模糊+色偏，注释明说"用于训练数据增强或退化模拟"）——**现成的合成退化生成器存在却未接入测试体系**
 - `test_color_fix.py` 用 numpy 合成图像自建输入，属"测试内联数据"而非受版本管理的 golden 集

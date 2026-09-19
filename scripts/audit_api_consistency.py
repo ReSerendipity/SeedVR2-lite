@@ -134,7 +134,7 @@ KNOWN_ORPHANS: dict[str, tuple[str, str]] = {
     ),
     "/api/restore/{}/result": (
         "api-surface",
-        "examples/api_example.js:324 与 examples/api_example.py:305 实际在调用；"
+        "examples/api_example.js:324 与 examples/api_example.py:305 实际在调用（examples/ 为维护者本地目录，未随仓库分发）；"
         "曾误标 dead-code（漏看了 examples 消费者），本批补进 website/docs/guide/api.md",
     ),
 }

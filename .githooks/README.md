@@ -11,7 +11,7 @@ git config core.hooksPath .githooks      # 或执行 ./.githooks/install.sh
 | 钩子 | 作用 |
 | --- | --- |
 | `pre-commit` | 有 `.pre-commit-config.yaml` 且框架可用 → 走 pre-commit；否则走 `pre-commit-lite` |
-| `pre-push` | 执行仓库内 `precheck.ps1`（无则退回根目录守卫） |
+| `pre-push` | gitleaks 待推送扫描 + 执行 `precheck.ps1`（维护者本地预检脚本，未随仓库分发；传入推送范围 `-FromSha/-ToSha`，仅文档类变更走快速跳检；无该脚本则退回根目录守卫，其余门禁由 CI 兜底） |
 | `prepare-commit-msg` | 自动追加 `Signed-off-by`（幂等，插在注释块之前） |
 | `commit-msg` | DCO 硬校验（缺签名阻断）+ conventional 规范软提示 |
 | `post-merge` / `post-checkout` | 依赖清单变更提醒（pip / pnpm / npm / cargo / gradle） |

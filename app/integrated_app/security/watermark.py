@@ -10,14 +10,47 @@
 嵌入策略: 在图像的 DCT 中频系数中嵌入二进制水印序列，
           利用人类视觉对中频不敏感的特性实现不可感知性。
 
-安全特性:
-    - 不可感知: 图像路径 (alpha=0.5) PSNR > 50dB；视频鲁棒档 (alpha=0.05)
-      PSNR ≈ 37.5dB，属视觉透明档
-    - 鲁棒性: 三通道等幅嵌入（纯亮度扰动）+ 连续重复码（视频路径 repeat=3），
-      实测 H.264 CRF14/18/23 转码后签名验证存活（此前单通道嵌入转码后
-      全灭，见 scripts/experiment_watermark_transcode.py 实验记录）
-    - 可溯源: 提取水印可验证 "SeedVR2" 归属标识
-    - 不可移除: 攻击者不知道水印嵌入位置和强度，难以完全去除
+安全特性（实测边界见 scripts/experiment_watermark_transcode.py --attacks，2026-09-19）:
+    - 不可感知: 图像档 (alpha=0.5) PSNR 57-69dB，最大像素改动 3/255、
+      仅约 0.9% 像素被触碰；鲁棒档 (alpha=0.05, repeat=3) PSNR ≈ 37dB，
+      最大改动 31-33/255（平面渐变区近看可察，只在产物要走有损编码时启用）
+    - 抗再编码: 鲁棒档用三通道等幅嵌入（纯亮度扰动）+ 连续重复码，实测
+      H.264 CRF14/18/23 转码后签名验证全部存活（16/16 帧，2026-09-06 实验）。
+      **JPEG/WebP 属临界区**（2026-09-19 攻击矩阵）：真实照片与平滑内容实测
+      q90/q95 存活，合成细密纹理与均匀噪声实测失效，q80 及以下未见过存活；
+      所以有损图像产物是「尽力而为 + 落盘复验定真伪」，不是保证存活。
+      图像档 (alpha=0.5) 则任何有损编码都活不下来（JPEG q95 即失效），
+      只适用于无损保存产物——有损输出必须由调用方选鲁棒档
+      （services/watermark_policy.select_image_embed_tier）。
+      鲁棒档的冗余吃块数：生产载荷 = 品牌前缀 + 任务 ID + 摘要 ≈ 103 字符
+      （824 bit），× repeat 3 需 ≥2472 个块（约 400x400 以上），小图会降档到
+      repeat=1 并记 warning，存活率随之下滑（产出仍会落盘，由落盘复验按策略处置）
+    - 不抗（实测多数情形失效）: 裁剪与旋转（载荷位序从 (0,0) 起算，位移即错位）、
+      缩放再放回、JPEG q80 以下的强压缩；轻噪声 (σ=2) 鲁棒档可扛、图像档不可。
+      本机制是「未再加工产物」的归属举证手段，不是对抗任意攻击的强鲁棒水印
+    - 吃内容: 同一攻击下存活率随图像内容摆动（均匀白噪声图每个块都塞满中频能量，
+      是 QIM 的最坏情形；照片/渐变/低频纹理更友好）。因此产物侧一律以落盘复验
+      为准（watermark_policy.output_carries_watermark），不按内容类型猜测档位
+    - 可证伪: 载荷带 HMAC-SHA256 签名，无密钥者无法伪造可通过验证的水印；
+      未配置密钥时降级为弱检测（载荷补品牌前缀 + 一次性告警与审计事件），
+      弱检测任何人可伪造，不具举证力
+
+载荷与归属边界（决定这份水印能证明什么）:
+    载荷格式:  "<SeedVR2_ReSerendipity>_<task_id>|<hmac-sha256>"   有密钥（生产默认）
+               "<SeedVR2_ReSerendipity>_<task_id>|unsigned"          无密钥降级
+               "SeedVR2_ReSerendipity_<时间戳>"                      调用方未给 payload
+    提取后可用 strip_watermark_envelope() 剥回 task_id，经
+    GET /api/system/history/resolve?watermark_payload= 反查任务与参数。
+
+    能证明:  这份未再加工的产物，出自一个持有**该密钥**的 SeedVR2 实例。
+    不能证明: 1) 内容是 AI 生成的（本工具是修复工具，输入本就是任意图）；
+             2) 出自项目方——便携包/桌面安装包刻意不打包密钥（见
+                scripts/portable_bundle_lib.ps1 的拒绝清单），终端用户首启会
+                自动生成自己的密钥，因此**别人机器上的产物用你的密钥验不过**
+                （已实测）。跨分发可归属需要在线签发，客户端持密钥做不到；
+             3) 传播链上的副本——缩放/裁剪一次即结构性失效（无同步定位码）。
+    品牌前缀让"出自 SeedVR2"在提取结果里可读，但它本身无密码学效力（任何人
+    都能嵌同样的字符串）；有举证力的只有验签通过那一步，且仅对**你持密钥**的产物成立。
 
 使用方式:
     from app.integrated_app.security.watermark import embed_watermark
@@ -65,6 +98,8 @@ _WATERMARK_KEY_FILE_LEGACY = Path(__file__).resolve().parents[3] / ".watermark_k
 # 验证链同时尝试新旧密钥，轮换后历史产物仍可验明归属。
 _WATERMARK_KEY_FILE_OLD = Path(__file__).resolve().parents[3] / "data" / ".watermark_key.old"
 _HMAC_SEPARATOR = "|"
+# 未签名降级载荷在分隔符后写的固定标记（不是 64 位摘要 → 永不可能通过验签）
+_UNSIGNED_MARK = "unsigned"
 
 # DCT 块大小
 _BLOCK_SIZE = 8
@@ -161,7 +196,7 @@ def _load_secret_key() -> bytes | None:
         try:
             _WATERMARK_KEY_FILE_DATA.parent.mkdir(parents=True, exist_ok=True)
             _WATERMARK_KEY_FILE_DATA.write_text(legacy.decode("utf-8") + "\n", encoding="utf-8")
-            logger.info(f"水印密钥已从旧位置迁移到 {_WATERMARK_KEY_FILE_DATA}")
+            logger.debug(f"水印密钥已从旧位置迁移到 {_WATERMARK_KEY_FILE_DATA}")
         except Exception as e:  # noqa: BLE001 — 迁移失败继续用旧位置，不阻断
             logger.debug(f"水印密钥迁移失败（继续使用旧位置）: {e}")
         return legacy
@@ -172,7 +207,9 @@ def _load_secret_key() -> bytes | None:
 
         _WATERMARK_KEY_FILE_DATA.parent.mkdir(parents=True, exist_ok=True)
         _WATERMARK_KEY_FILE_DATA.write_text(_secrets.token_hex(32) + "\n", encoding="utf-8")
-        logger.info(f"已自动生成水印签名密钥: {_WATERMARK_KEY_FILE_DATA}（请离线备份）")
+        # 信息类日志降到 debug：默认（INFO）级别下终端与 app.log 不出现水印字样。
+        # 备份提示仍见 scripts/init_watermark_key.py 的输出与安全降级告警（缺密钥时 error）。
+        logger.debug(f"已自动生成水印签名密钥: {_WATERMARK_KEY_FILE_DATA}（请离线备份）")
         return _WATERMARK_KEY_FILE_DATA.read_text(encoding="utf-8").strip().encode("utf-8")
     except Exception as e:
         logger.debug(f"水印密钥文件读写失败: {e}")
@@ -218,6 +255,32 @@ def _sign_payload(payload: str, key: bytes) -> str:
     return f"{payload}{_HMAC_SEPARATOR}{digest}"
 
 
+_key_missing_warned = False
+
+
+def watermark_key_available() -> bool:
+    """当前是否拿得到水印签名密钥（env / data/.watermark_key / 自动生成）。"""
+    return _load_secret_key() is not None
+
+
+def _report_missing_key() -> None:
+    """密钥缺失只告警一次（嵌入按帧/按任务高频调用，避免刷屏）。
+
+    缺失密钥意味着产物水印不可证伪（任何人都能伪造可通过弱检测的载荷）。
+    这里刻意只打日志、不写审计通道：取证日志不该被 CLI/单测等非生产路径写入，
+    生产侧由 :func:`watermark_policy.report_missing_watermark_key` 补记审计事件。
+    """
+    global _key_missing_warned
+    if _key_missing_warned:
+        return
+    _key_missing_warned = True
+    logger.error(
+        "[SECURITY] 未配置水印签名密钥（env %s / data/.watermark_key 均缺失），"
+        "产物水印降级为不可证伪的弱检测。请运行 scripts/init_watermark_key.py 生成密钥",
+        _WATERMARK_KEY_ENV,
+    )
+
+
 def _verify_signature(signed_payload: str, key: bytes) -> str | None:
     """验证签名载荷，返回原始载荷；签名缺失或无效返回 None。
 
@@ -237,6 +300,25 @@ def _verify_signature(signed_payload: str, key: bytes) -> str | None:
     if hmac.compare_digest(expected.encode("ascii"), digest.encode("utf-8", errors="replace")):
         return payload
     return None
+
+
+def strip_watermark_envelope(payload: str) -> str:
+    """把从产物里提取到的水印载荷还原成可反查任务的 ID。
+
+    提取结果带着信封信息，直接拿去查任务必然落空：签名格式要剥掉分隔符之后的
+    摘要（以及按字节对齐补进来的尾部噪声），未签名降级格式要剥掉品牌前缀。
+
+    Args:
+        payload: :func:`extract_watermark` 的返回值。
+
+    Returns:
+        str: 剥去签名段与品牌前缀后的载荷（即嵌入时传入的 task_id / batch_id）。
+    """
+    body = payload.split(_HMAC_SEPARATOR, 1)[0].strip()
+    prefix = f"{_WATERMARK_BRAND}_"
+    if body.startswith(prefix):
+        body = body[len(prefix) :]
+    return body
 
 
 def _dct_1d(arr: np.ndarray) -> np.ndarray:
@@ -314,20 +396,23 @@ def embed_watermark(
     Args:
         image_np: 输入图像 NumPy 数组 (H x W x C, uint8)。
         payload: 自定义水印载荷，None 时自动生成品牌标识+时间戳。
-        alpha: 水印嵌入强度（quant_step = 1/alpha）。图像路径用默认 0.5
-            （PNG 无损保存，高保真）；经有损编码的产物（视频帧）用 0.05
-            —— 实测 CRF14/18/23 转码后位误码率 ≈ 0（quant_step=20 承受
-            H.264 中频量化噪声）。
-        repeat: 重复码次数。视频路径建议 3；图像路径 1（PNG 无损无需冗余）。
+        alpha: 水印嵌入强度（quant_step = 1/alpha）。无损图像产物用默认 0.5
+            （高保真）；要走有损编码的产物（视频帧、JPEG/WebP 图像）用 0.05
+            —— 实测 H.264 CRF14/18/23 与 JPEG q85-q95、WebP q80/q100 后仍可验签。
+            按格式选档见 ``watermark_policy.select_image_embed_tier``。
+        repeat: 重复码次数。有损产物建议 3；无损图像 1（无需冗余）。
 
     Returns:
         np.ndarray: 嵌入水印后的图像 (与输入相同 shape 和 dtype)。
 
     Note:
-        - 图像路径 (alpha=0.5, repeat=1): PSNR > 50dB，视觉不可感知
-        - 视频路径 (alpha=0.05, repeat=3): PSNR ≈ 37.5dB，属视觉透明档
-          （DCT 中频 ±10 系数扰动分散到 8x8 块内 ±2-3 像素级变化）；
-          换取 H.264 转码后签名验证可存活
+        - 无损档 (alpha=0.5, repeat=1): PSNR 57-69dB，视觉不可感知，但**经
+          JPEG q95 即不可验证**——只适用于 PNG/BMP/TIFF 等无损落盘
+        - 鲁棒档 (alpha=0.05, repeat=3): PSNR ≈ 37dB（平面渐变区近看可察），
+          换取有损编码后签名验证可存活；冗余要靠块数支撑——签名载荷约 776 bit
+          × repeat 3 需 ≥2328 块（约 400x400 以上），小图会自动降档并记 warning，
+          降到 1 后连 JPEG q95 都活不下来；图像小到装不下载荷时载荷被截断
+          （同样记 warning），两种情形产物都无法验签
     """
     if image_np is None or image_np.size == 0:
         return image_np
@@ -335,12 +420,19 @@ def embed_watermark(
     if payload is None:
         payload = _generate_watermark_payload()
     key = _load_secret_key()
-    if key is not None and _HMAC_SEPARATOR not in payload:
-        payload = _sign_payload(payload, key)
+    # 载荷一律带品牌前缀：签名只能证明"持该密钥的实例嵌入了它"，品牌串才是
+    # "出自 SeedVR2"这件事在文件里的载体（分发安装各自生成密钥时尤其重要）。
+    if _WATERMARK_BRAND not in payload:
+        payload = f"{_WATERMARK_BRAND}_{payload}"
+    if key is not None:
+        if _HMAC_SEPARATOR not in payload:
+            payload = _sign_payload(payload, key)
     else:
-        logger.debug(
-            "未配置水印签名密钥，将嵌入未签名水印（不可证伪归属）。" "请运行 scripts/init_watermark_key.py 生成密钥"
-        )
+        _report_missing_key()
+        if _HMAC_SEPARATOR not in payload:
+            # 未签名也要留终止符：提取按字节补齐会带进尾部噪声，没有分隔符就
+            # 切不出载荷边界（strip_watermark_envelope 依赖它还原 task_id）
+            payload = f"{payload}{_HMAC_SEPARATOR}{_UNSIGNED_MARK}"
 
     bits = _text_to_bits(payload)
     if len(bits) == 0:
@@ -358,9 +450,32 @@ def embed_watermark(
     blocks_w = w // _BLOCK_SIZE
     total_blocks = blocks_h * blocks_w
     # 容量不足时降档重复次数（至少 1 次完整嵌入）
-    repeat = max(1, min(int(repeat), total_blocks // len(bits)))
+    effective_repeat = max(1, min(int(repeat), total_blocks // len(bits)))
+    if effective_repeat < repeat:
+        logger.warning(
+            "水印重复码从 repeat=%d 降到 %d（图像 %dx%d 只有 %d 块，装不下 %d bit 的 %d 倍冗余）"
+            "——有损编码后的存活率随之下滑，产物可能验签失败",
+            repeat,
+            effective_repeat,
+            w,
+            h,
+            total_blocks,
+            len(bits),
+            repeat,
+        )
+    repeat = effective_repeat
     n_marked = min(total_blocks, len(bits) * repeat)
     quant_step = 1.0 / alpha
+    if len(bits) > total_blocks:
+        logger.warning(
+            "水印容量不足: 载荷 %d bit 需 %d 个 8x8 块，图像仅 %d 块（%dx%d），载荷将被截断且产物无法验签"
+            "——小图请缩短 payload 或提高输出分辨率",
+            len(bits),
+            len(bits),
+            total_blocks,
+            w,
+            h,
+        )
 
     for bi in range(blocks_h):
         for bj in range(blocks_w):
@@ -405,7 +520,7 @@ def embed_watermark(
 def extract_watermark(
     image_np: np.ndarray,
     *,
-    expected_length: int = 256,
+    expected_length: int = 2048,
     alpha: float = _WATERMARK_ALPHA,
     repeat: int = 1,
 ) -> str:
@@ -415,7 +530,9 @@ def extract_watermark(
 
     Args:
         image_np: 待检测的图像 NumPy 数组 (H x W x C, uint8)。
-        expected_length: 期望提取的最大位数。
+        expected_length: 期望提取的最大位数，默认 2048 bit（256 字符）——
+            生产载荷是「品牌前缀 + 任务 ID + 64 位摘要」约 100 字符，
+            取小了会连签名摘要都截断，反查与验签双双失败。
         alpha: 水印强度 (需与嵌入时一致)。
         repeat: 嵌入时的重复码次数 (需与嵌入时一致)；
             提取对每个位位置在 repeat 个连续块上做多数投票。
@@ -443,9 +560,13 @@ def extract_watermark(
     bits: list[int] = []
     parity_flat: list[int] = []
 
-    # 先按块顺序读出每块的中频奇偶投票结果
+    # 位序从图像左上角起算，读够 n_bits 组即可停：4K 图上全图扫描要百万级块，
+    # 而验签只需载荷长度个块（落盘后逐产物复验依赖这一提前退出才够快）
+    needed_blocks = n_bits * repeat
     for bi in range(blocks_h):
         for bj in range(blocks_w):
+            if len(parity_flat) >= needed_blocks:
+                break
             block = channel_data[bi * _BLOCK_SIZE : (bi + 1) * _BLOCK_SIZE, bj * _BLOCK_SIZE : (bj + 1) * _BLOCK_SIZE]
             dct_block = _dct_2d_block(block)
 
@@ -464,15 +585,50 @@ def extract_watermark(
 
 
 # 验证候选方案 (alpha, repeat)：按嵌入路径枚举。
-# - (0.5, 1)：图像路径默认（PNG 无损）与历史产物
-# - (0.05, 1..3)：视频帧路径（有损编码鲁棒档，repeat 按容量可能降档）
-# 实测依据见 scripts/experiment_watermark_transcode.py（2026-09-06）。
+# - (0.5, 1)：无损图像产物（PNG/BMP/TIFF）与历史产物
+# - (0.05, 1..3)：视频帧与有损图像产物（鲁棒档，repeat 按容量可能降档）
+# 实测依据见 scripts/experiment_watermark_transcode.py（2026-09-06 转码 / 2026-09-19 攻击矩阵）。
 _VERIFY_SCHEMES: tuple[tuple[float, int], ...] = (
     (_WATERMARK_ALPHA, 1),
     (_VIDEO_ALPHA, 1),
     (_VIDEO_ALPHA, 2),
     (_VIDEO_ALPHA, 3),
 )
+
+
+def extract_watermark_best(image_np: np.ndarray, *, expected_length: int = 2048) -> str:
+    """按 :data:`_VERIFY_SCHEMES` 逐档尝试，优先返回能通过验签（或含品牌）的载荷。
+
+    取证场景必需：`verify_watermark()` 只回布尔，而拿到载荷才能去反查任务。
+    直接调 `extract_watermark()` 走的是默认无损档参数，对鲁棒档产物
+    （JPEG/WebP 图像、视频帧）只会读出乱码——即使水印明明验得过。
+
+    Args:
+        image_np: 待提取的图像。
+        expected_length: 每档尝试的位数上限。
+
+    Returns:
+        str: 命中验签/品牌的载荷；都没命中时返回首个非空提取结果（可能是噪声，
+            但至少让调用方看到"读到了什么"）。完全读不出返回空串。
+    """
+    keys = _load_verify_keys()
+    fallback = ""
+    for alpha, repeat in _VERIFY_SCHEMES:
+        try:
+            extracted = extract_watermark(image_np, expected_length=expected_length, alpha=alpha, repeat=repeat)
+        except Exception as e:  # noqa: BLE001 — 单档异常不影响其余候选
+            logger.debug(f"载荷提取失败 (alpha={alpha}, repeat={repeat}): {e}")
+            continue
+        if not extracted:
+            continue
+        if not fallback:
+            fallback = extracted
+        if keys:
+            if any(_verify_signature(extracted, key) is not None for key in keys):
+                return extracted
+        elif _WATERMARK_BRAND in extracted:
+            return extracted
+    return fallback
 
 
 def verify_watermark(image_np: np.ndarray, *, expected_length: int = 2048) -> bool:

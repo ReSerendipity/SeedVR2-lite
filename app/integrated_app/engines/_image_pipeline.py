@@ -47,44 +47,39 @@ DIT_KEEP_RESIDENT_FREE_GB = 10.0
 """
 
 
-def _normalize_model_tag(model_size: str | None) -> str:
-    """将模型尺寸标识规范化为文件名友好的标签。
+_ILLEGAL_IN_FILENAME = str.maketrans(dict.fromkeys('\\/:*?"<>|'))
+
+
+def _build_output_name(input_path: str | None, ext: str) -> str:
+    """输出文件名**沿用输入文件名**（只换扩展名），不加时间戳、模型标签或随机后缀。
+
+    用户靠文件名辨认内容，改名等于让产物无法检索；单文件、批量、图像、视频四条路径
+    口径统一。重名由 :func:`_resolve_unique_path` 追加 `_1/_2` 兜底（同图重复修复不会
+    覆盖上一版）。
+
+    关于「文件名可预测」的安全性：下载入口只接受 task_id / record_id
+    （``GET /api/restore/{task_id}/download``、
+    ``GET /api/system/history/{record_id}/download``，再经 PathGuard 白名单），
+    从不接受文件名参数，因此可读文件名不构成枚举面——T4-3 的防护职责在 id 与白名单
+    这一侧，不再由文件名随机后缀承担。
 
     Args:
-        model_size: 引擎内部模型尺寸标识，如 "3b"、"7b_sharp"。
+        input_path: 输入媒体路径（图像或视频）。
+        ext: 目标扩展名（含点号），如 ".png"、".mp4"。
 
     Returns:
-        规范化标签，如 "3B"、"7B-Sharp"；为空时返回 "Unknown"。
+        如输入 ``photo_4k.jpg`` + ``.png`` → ``photo_4k.png``；输入名不可用时退回
+        时间戳名，避免产出 ``.png`` 这类无名文件。
     """
-    if not model_size:
-        return "Unknown"
-    parts = model_size.split("_")
-    tag = parts[0].upper()
-    if len(parts) >= 2 and parts[1] == "sharp":
-        tag += "-Sharp"
-    return tag
-
-
-def _build_output_name(model_size: str | None, ext: str) -> str:
-    """构造「日期_时分秒_模型_随机后缀」格式的输出文件名。
-
-    追加 uuid4 随机后缀防止输出路径可预测（纵深防御，T4-3）。
-
-    Args:
-        model_size: 引擎模型尺寸标识。
-        ext: 文件扩展名（含点号），如 ".png"、".mp4"。
-
-    Returns:
-        如 "20260803_153030_3B_a1b2c3d4.png"。
-    """
-    from uuid import uuid4
-
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    # P1-2 显式 AI 生成标识（合规整改 2026-09-15）：默认在文件名追加 _AI 后缀
-    # （env SEEDVR2_EXPLICIT_AI_LABEL=0 可关闭），便于产物对外传播时履行显式
-    # 标识义务；与隐式取证水印（security/watermark.py）相互独立。
-    label = "_AI" if os.environ.get("SEEDVR2_EXPLICIT_AI_LABEL", "1") != "0" else ""
-    return f"{ts}_{_normalize_model_tag(model_size)}_{uuid4().hex[:8]}{label}{ext}"
+    # 反斜杠先归一：Linux 容器里收到 Windows 风格路径时，basename 不会切分 '\'
+    base = os.path.basename((input_path or "").replace("\\", "/"))
+    stem = os.path.splitext(base)[0].translate(_ILLEGAL_IN_FILENAME)
+    stem = stem.strip().rstrip(".")
+    if not stem:
+        stem = time.strftime("%Y%m%d_%H%M%S")
+    # 文件名级显式标识默认关闭（会改变产物名）；对外部署需时 SEEDVR2_EXPLICIT_AI_LABEL=1
+    label = "_AI" if os.environ.get("SEEDVR2_EXPLICIT_AI_LABEL", "0") == "1" else ""
+    return f"{stem}{label}{ext}"
 
 
 def _resolve_unique_path(output_dir: str, filename: str) -> str:
@@ -370,30 +365,7 @@ class _ImagePipelineMixin:
         del input_video, ref_np, original_alpha
         gc.collect()
 
-        # 嵌入不可感知数字水印 (归属溯源, DCT 频域)
-        # 失败处置策略化（评估报告 R2）：不再静默输出无水印文件
-        watermark_cfg = self.config.get("security", {}).get("watermark", {})
-        enable_watermark = watermark_cfg.get("enable", True)
-        watermark_embedded = True
-        watermark_policy = None
-        if enable_watermark:
-            from app.integrated_app.security.audit import audit_event
-            from app.integrated_app.services.watermark_policy import (
-                embed_with_retry,
-                handle_watermark_failure,
-                resolve_watermark_failure_policy,
-                write_provenance_sidecar,
-            )
-
-            # P3-1：payload 绑定 task_id，使输出图可反查到产生它的任务与参数
-            watermark_policy = resolve_watermark_failure_policy(self.config)
-            result_np, watermark_embedded, wm_error = embed_with_retry(result_np, payload=watermark_payload)
-            if watermark_embedded:
-                logger.debug("数字水印已嵌入输出图像 (payload=%s)", watermark_payload or "auto")
-            else:
-                handle_watermark_failure(policy=watermark_policy, error=wm_error, payload=watermark_payload)
-
-        # 保存：默认按「日期_时分秒_模型」命名；批量场景传入 output_name 保留原文件名
+        # 保存：默认沿用输入文件名（只换扩展名）；批量场景传入 output_name 按模板命名
         # 获取输出格式（从 inf 或默认自动匹配）
         requested_format = inf.get("output_format", "").lower().strip()
 
@@ -436,7 +408,7 @@ class _ImagePipelineMixin:
         ext = format_map.get(requested_format, ".png")
 
         if output_name is None:
-            output_name = _build_output_name(self.model_size, ext)
+            output_name = _build_output_name(image_path, ext)
         else:
             # 指定了输出格式时，强制用目标格式的扩展名，覆盖输入文件的原始扩展名
             # （批量模板带的是 {ext}=输入扩展名，直接保存会按原格式写出）
@@ -469,6 +441,27 @@ class _ImagePipelineMixin:
         except Exception as e:
             logger.debug(f"生成参数元数据构建失败（跳过嵌入）: {e}")
 
+        # 嵌入不可感知数字水印 (归属溯源, DCT 频域)——强制启用，无关闭开关。
+        # 失败处置策略化（评估报告 R2）：不再静默输出无水印文件
+        # P3-1：payload 绑定 task_id，使输出图可反查到产生它的任务与参数
+        from app.integrated_app.services.watermark_policy import (
+            embed_with_retry,
+            handle_watermark_loss,
+            output_carries_watermark,
+            report_missing_watermark_key,
+            resolve_watermark_failure_policy,
+            select_image_embed_tier,
+        )
+
+        watermark_policy = resolve_watermark_failure_policy(self.config)
+        report_missing_watermark_key()
+        # 自适应档位：有损编码格式连 JPEG q95 都会抹掉无损档水印（2026-09-19 实测），
+        # 那类产物直接用鲁棒档（PSNR ≈ 37dB）换可举证性；PNG/BMP/TIFF 保持无损档画质。
+        tier_alpha, tier_repeat = select_image_embed_tier(ext)
+        result_np, watermark_embedded, wm_error = embed_with_retry(
+            result_np, payload=watermark_payload, alpha=tier_alpha, repeat=tier_repeat
+        )
+
         pil_img = PILImage.fromarray(result_np)
         # JPEG/WebP 不支持透明通道，需要转换为 RGB
         if requested_format in ("jpg", "jpeg") and pil_img.mode in ("RGBA", "LA", "P"):
@@ -492,15 +485,27 @@ class _ImagePipelineMixin:
             except Exception as e:
                 logger.debug(f"EXIF 复制失败: {e}")
 
-        # 水印缺失兜底（评估报告 R2）：mark_metadata 策略下写侧车元数据标识，
-        # 保证「输出无隐式水印」这件事本身可被发现而非静默
-        if enable_watermark and not watermark_embedded and watermark_policy == "mark_metadata":
-            try:
-                sidecar_path = write_provenance_sidecar(output_path, payload=watermark_payload)
-                logger.warning(f"输出无水印，已写溯源侧车: {sidecar_path}")
-            except OSError as e:
-                logger.error(f"[SECURITY] 水印缺失且溯源侧车写入失败: {e}")
-                audit_event("WATERMARK_SIDECAR_FAILED", detail=str(e), payload=watermark_payload)
+        # 水印缺失统一处置（评估报告 R2）：嵌入报错 ≠ 唯一失败方式——编码器/后处理
+        # 同样能抹掉它，只有重读落盘产物验签才知道真伪；缺失绝不再静默。
+        if not watermark_embedded:
+            loss_reason = wm_error
+        elif output_carries_watermark(output_path):
+            logger.debug(
+                "数字水印已嵌入并落盘验签通过 (payload=%s, alpha=%s, repeat=%s)",
+                watermark_payload or "auto",
+                tier_alpha,
+                tier_repeat,
+            )
+            loss_reason = None
+        else:
+            loss_reason = f"{requested_format.upper()} 编码后水印验签未通过（alpha={tier_alpha}, repeat={tier_repeat}）"
+        if loss_reason:
+            handle_watermark_loss(
+                policy=watermark_policy,
+                output_path=output_path,
+                error=loss_reason,
+                payload=watermark_payload,
+            )
 
         # 计算输出统计
         if result_np.shape[-1] >= 3:

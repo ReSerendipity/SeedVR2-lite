@@ -70,8 +70,10 @@ ALLOWLIST = [
 
 
 def _files_from(cmd):
-    out = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))  # nosec B603, B607（git 只读命令）
-    return [p for p in out.stdout.split("\0") if p]
+    # text=True 在 cp936 宿主上读 git 输出会 UnicodeDecodeError（中文文件名），
+    # stdout 变 None 后 .split() 直接崩（--all 全库扫描必现）；取 bytes 自己按 UTF-8 解。
+    out = subprocess.run(cmd, capture_output=True, cwd=str(ROOT))  # nosec B603, B607（git 只读命令）
+    return [p for p in out.stdout.decode("utf-8", "replace").split("\0") if p]
 
 
 def is_exempt(path):
