@@ -1,14 +1,18 @@
 # 发布/回滚/SLA 总纲（Release Governance）
 
-> **来源**：家族通用 `.spec_audit/family_release_governance.md`（泛化自 DraftPeek VERSIONING.md + TTS SRE_RUNBOOK/rollback_sop），本仓本地化。
+> **来源**：家族通用发布治理模板（泛化自 DraftPeek VERSIONING.md + TTS SRE_RUNBOOK/rollback_sop）；原家族文件
+> `.spec_audit/family_release_governance.md` 已随家族归档、未随仓库分发，本文为本仓本地化副本。
 > **适用范围**：SeedVR2-lite 全项目发布、回滚与运行稳定性。
+> **本地未分发引用**：`AGENTS.md`、`docs/project/` 为维护者本地治理层，未随仓库分发；对外可执行的
+> 禁区与门禁口径见 `docs/CODING_STANDARDS.md` 第 5 节。
 
 ---
 
 ## 1. 版本号规范
 
 - 遵循 SemVer `MAJOR.MINOR.PATCH`。MAJOR=不兼容变更、MINOR=向后兼容新功能、PATCH=向后兼容修复。
-- 版本权威位：`app/integrated_app/version.py`（pyproject 直读）→ `pyproject.toml`，`AGENTS.md` 顶部「对应项目版本」与 `CHANGELOG.md` 一致。当前 **v1.5.8**。
+- 版本权威位：`app/integrated_app/version.py`（pyproject 直读）→ `pyproject.toml`，与 `CHANGELOG.md` 一致。当前 **v1.5.8**。
+  （维护者本地的 `AGENTS.md` 顶部「对应项目版本」需同步，但该文件未随仓库分发，外部贡献者可忽略此步。）
 - 可选预发布：`-alpha.N` / `-beta.N` / `-rc.N`。
 
 ## 2. CHANGELOG 管理
@@ -19,9 +23,9 @@
 ## 3. 发布流程（便携包为主产物）
 
 1. 确认 `[Unreleased]` 条目完整
-2. 同步版本位：`pyproject.toml` + `AGENTS.md` + `CHANGELOG.md`
+2. 同步版本位：`pyproject.toml` + `CHANGELOG.md`（维护者本地另有 `AGENTS.md` 一处）
 3. 打 tag `git tag v<X.Y.Z>` → `git push origin v<X.Y.Z>` 触发 `portable-release.yml`（分卷便携包）
-4. 便携包产物自动 GPG 签名 + 校验和 + provenance（见 `docs/project/PORTABLE_BUNDLES.md`）
+4. 便携包产物自动 GPG 签名 + 校验和 + provenance（细则见 `docs/project/PORTABLE_BUNDLES.md`，维护者本地账本）
 5. CI 盯到终态：push 后 `gh run list` / `gh run watch`，红了当场修或 revert 止损
 
 ## 4. 回滚判定（满足任一即触发）
@@ -53,11 +57,12 @@
 
 ## 8. 发布前检查清单
 
-- [ ] 版本位全部同步（`pyproject.toml` / `version.py` + `AGENTS.md` + `CHANGELOG.md`）
+- [ ] 版本位全部同步（`pyproject.toml` / `version.py` + `CHANGELOG.md`；维护者本地 `AGENTS.md` 同步到位）
 - [ ] CHANGELOG `[Unreleased]` 已改版本 + 日期
 - [ ] 全量 pytest 通过（门禁实测：质量 gate 双 OS + E2E 无 `--update-snapshots`）
 - [ ] `ruff` / `black` / `mypy` 全绿
 - [ ] `python scripts/check_spec_refs.py` 退出码 0
+- [ ] `python scripts/check_local_only_refs.py --all` 退出码 0（追踪文件不新增指向未分发文件的引用）
 - [ ] 便携包自测 `test_portable_bundle.ps1` 通过
 - [ ] GPG 签名 + SHA256 校验和已生成并验证
 - [ ] tag 已推送触发 `portable-release.yml`

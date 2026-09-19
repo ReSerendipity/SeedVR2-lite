@@ -16,7 +16,7 @@ SeedVR2 前端由 FastAPI + Jinja2 单端口直出（`app/integrated_app/templat
    - restore 工作台核心 id 契约（SOP-6：`#paramsSidebar`、`#canvasToolbar`、
      `#previewArea`、`#compareHud`、`#advParams` 等）
    - 全部参数字段 `[name]` 留在 `#paramsSidebar` 内（`collectParams` 依赖）
-   - CSP 含 `media-src blob:`（AGENTS.md 陷阱 #7）、字体异步加载（陷阱 #13）
+   - CSP 含 `media-src blob:`（历史坑点记于维护者本地 `AGENTS.md` 陷阱 #7，未随仓库分发；断言本身见 `smoke.js`）、字体异步加载（陷阱 #13）
    - i18n 注入 `window.__I18N__` / `window.__LOCALE__` 且翻译已展开
    - 跨页面导航互链、html[lang]/data-theme 一致
 

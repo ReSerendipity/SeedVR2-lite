@@ -1,7 +1,7 @@
 # 编码与 Git 规范（Coding & Git Standards）
 
 > 本文件是仓库内所有入库内容的**可移植性、依赖与 Git 卫生**约束。任何修改请在提交前通读并对照检查。
-> 最后更新：2026-09-18（路径可移植性专项修复）。
+> 最后更新：2026-09-18（路径可移植性专项修复 + 新增第 5 节「禁区与门禁口径」公开子集）。
 
 ## 1. 路径可移植性（强制）
 
@@ -70,11 +70,50 @@ grep -rn --include='*.py' -iE 'C:\\Users|/home/|/Users/' .
 - 不提交生成物（build/、dist/、target/、__pycache__/、*.log）。
 - 修改 `.gitattributes` / `.gitignore` / `.mailmap` 前先确认与上游 `origin/main` 一致，避免重复 / 冲突提交。
 
-## 5. 本仓修复记录（2026-09-18）
+## 5. 禁区与门禁口径（公开子集）
+
+> **为什么有这一节**：本仓库的完整 AI 协作协议 `AGENTS.md` 及其子文档 `docs/agents/`、贡献指南
+> `CONTRIBUTING.md`、事故账本 `docs/project/`、修复交接日志 `FIX_LOG.md`、本地预检脚本
+> `precheck.ps1` 按「干净交付」决策只保留在维护者本机，**未随仓库分发**（见 `.gitignore`）。
+> 本节把其中对外必须可执行的两块——**禁区声明**与**门禁口径**——摘成公开子集，使克隆后即可遵守，
+> 不依赖任何未分发文件；需要更细的规则请在 Issue / PR 中向维护者询问。
+> 冲突裁决顺序：代码与配置 > 本仓库追踪文件 > 本节摘录。
+
+### 5.1 禁区（默认禁止自动修改，人工显式授权除外）
+
+| 路径 | 原因 | 授权改动后仍需 |
+|---|---|---|
+| `model_lib/` | 上游 vendored 模型架构源码（DiT / DiT v2 / Video VAE）：mypy 整体排除（`pyproject.toml` 的 `exclude = "^model_lib/"`），ruff 仅对其放宽命名类规则（`[tool.ruff.lint.per-file-ignores]`），改错没有静态网兜住 | 说明改动理由与上游差异，登记到 `model_lib/SOURCE.md` |
+| `app/integrated_app/security/` | 认证 / CSRF / PathGuard / 完整性清单与签名等安全边界 | 在 PR 中单列安全变更说明并补测试 |
+| `config.yaml` | 运行时唯一配置源 | 同步 `app/integrated_app/config.py` 与 `app/integrated_app/config_models.py`，并跑 `python scripts/check_config_refs.py` |
+
+### 5.2 门禁口径（合入前必须为绿的检查）
+
+| 检查 | 命令 | 接线位置 |
+|---|---|---|
+| 静态 / 格式 / 类型 | `ruff check .`、`black --check .`、`mypy app/integrated_app` | `.pre-commit-config.yaml`、`ci.yml` |
+| 单测与覆盖率 | `pytest tests/ --cov=app/integrated_app -q`（阈值 55%：`pyproject.toml` 的 `fail_under` 与 `ci.yml` 的 Coverage Gate 同值） | `ci.yml` |
+| 前后端契约 | `python -m pytest tests/test_api_contract.py -q` | `ci.yml` |
+| API 一致性 | `python scripts/audit_api_consistency.py all` | `ci.yml` |
+| 根目录结构 | `python .github/scripts/check_layout.py` | `structure-guard.yml`、pre-commit |
+| 路径可移植性 | `python scripts/check_no_hardcoded_paths.py --all` | `.githooks/pre-commit` |
+| 引用可用性 | `python scripts/check_local_only_refs.py --all` | `structure-guard.yml`、`docs-consistency.yml`、`.githooks/pre-commit` |
+| 规范引用幻影 | `python scripts/check_spec_refs.py`（依赖仓外家族 auditor，缺失时自动 skip） | `docs-consistency.yml`、`structure-guard.yml` |
+| 密钥扫描 | `gitleaks detect --config gitleaks.toml` | `gitleaks.yml`、`.githooks/pre-push` |
+
+- **push 前本地预检**：钩子目录 `.githooks/` 随仓库分发，克隆后执行 `git config core.hooksPath .githooks`
+  启用；`pre-push` 在缺少维护者本地 `precheck.ps1` 时自动退回根目录守卫（提示而非失败），其余门禁由 CI 兜底。
+- **门禁失败请改代码，不要用 `--no-verify` 绕过**；确需紧急绕过必须由仓库所有者明确授权，并在同一 PR 内说明原因。
+- **CI 通过才算完成**：push ≠ 完成，需盯到终态；`main` 变红且 30-60 分钟内无根因时先 `git revert` 止损。
+- **证据绑定**：文档里出现的可执行路径必须真实存在且同样已分发；追踪文件确需提到未分发的本地文件时，
+  就地补一句可获取性说明，或在文件内用「本地未分发引用：…」统一声明（`check_local_only_refs.py` 的口径）。
+
+## 6. 本仓修复记录（2026-09-18）
 
 - `app/integrated_app/data/checkpoints/cc576213d2d54c11.json`：历史数据含本机绝对路径（ComfyUI / outputs 元数据），**保留不改**（数据级历史样本）；新增 checkpoint / 数据文件禁止写入本机路径。
 - 本次扫描未发现生产代码 / 构建脚本硬编码执行路径；后续按第 1 节规则执行即可。
 
-## 6. 关联文档
+## 7. 关联文档
 
-- `docs/DOD.md`、`docs/COMPLIANCE_CHECKLIST.md`
+- `docs/DOD.md`（完成定义）；`docs/COMPLIANCE_CHECKLIST.md` 为维护者本地文件，未随仓库分发
+- `docs/release-governance.md`（版本与发布）、`docs/ci/local_ref_baseline.json`（引用可用性基线）

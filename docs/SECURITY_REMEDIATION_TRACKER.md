@@ -2,7 +2,7 @@
 
 > 配套 Image_MultiModel 家族安全深度评估（`SECURITY_ASSESSMENT_v2.0.0.md`，17 项发现）。
 > 本文记录 SeedVR2-lite 已落地的安全整改项与剩余项，便于跨仓统一对账。
-> 【对账注 2026-09-15】09-06 增量审计（docs/reports/SECURITY_AUDIT_SeedVR2-lite_2026-09-06.md，R1–R4）此前未纳入本表；经核对：R1 browse-dir/open-explorer 纳入 PathGuard 白名单、R2 水印 fail-open → 侧车元数据策略均已随 1.5.6 修复（见 .github/SECURITY.md 与 CHANGELOG 1.5.6）；R3 留存清理缺口、R4 SAST 名实不符两项待所有者核对后补录。
+> 【对账注 2026-09-15】09-06 增量审计（docs/reports/SECURITY_AUDIT_SeedVR2-lite_2026-09-06.md，R1–R4；该报告属维护者本地文件，未随仓库分发）此前未纳入本表；经核对：R1 browse-dir/open-explorer 纳入 PathGuard 白名单、R2 水印 fail-open → 侧车元数据策略均已随 1.5.6 修复（见 .github/SECURITY.md 与 CHANGELOG 1.5.6）；R3 留存清理缺口、R4 SAST 名实不符两项待所有者核对后补录。
 
 ## 1. 根因门禁（最高优先级，已落地）
 

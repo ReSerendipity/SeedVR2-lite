@@ -12,7 +12,7 @@
     5. 模型权重文件存在性（按 config.yaml 的 model.models.<default_size> 检查）
     6. 磁盘剩余空间（低于 retention.disk_min_free_gb 阈值对应 FAIL）
     7. 端口 7870 占用情况
-    8. .venv 存在性（与 start.bat / precheck.ps1 的优先级约定一致）
+    8. .venv 存在性（与 start.bat 的优先级约定一致；precheck.ps1 为维护者本地脚本，未随仓库分发）
 
 用法：
     python scripts/doctor.py                # 人类可读报告
@@ -193,7 +193,7 @@ def check_port(port: int = DEFAULT_PORT) -> CheckResult:
 
 
 def check_venv(project_root: Path | None = None) -> CheckResult:
-    """检查项目 .venv 是否存在（start.bat / precheck.ps1 / run_checks.bat 的默认解释器）。"""
+    """检查项目 .venv 是否存在（start.bat 与维护者本地、未随仓库分发的 precheck.ps1 / run_checks.bat 的默认解释器）。"""
     project_root = project_root or PROJECT_ROOT
     marker = ".venv/Scripts/python.exe" if sys.platform == "win32" else ".venv/bin/python"
     if (project_root / marker).exists():

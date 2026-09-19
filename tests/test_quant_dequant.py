@@ -2,7 +2,7 @@
 
 诚实边界：本文件用**合成量化数据**验证 dequant 函数的数学自洽与 dispatch 行为；
 真实权重上的格式约定（nibble 序 / swizzle / 旋转核）需下载 Comfy-Org 包做真机验证，
-见 docs/plans/ 交接文档。
+步骤记录在维护者本地目录 docs/plans/ 的交接文档里（未随仓库分发，可在 Issue 中索取）。
 """
 
 import json

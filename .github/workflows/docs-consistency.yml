@@ -16,3 +16,5 @@ jobs:
           python-version: '3.12'
       - name: Audit spec references
         run: python scripts/check_spec_refs.py
+      - name: Check reference availability (no phantom refs to undistributed local files)
+        run: python scripts/check_local_only_refs.py --all

@@ -25,3 +25,5 @@ jobs:
           else
             echo "scripts/check_spec_refs.py not present; skipping"
           fi
+      - name: Check reference availability (no phantom refs to undistributed local files)
+        run: python scripts/check_local_only_refs.py --all

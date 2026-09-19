@@ -175,8 +175,9 @@ $PYTHON_CMD -m pip install -r requirements.txt --timeout 300 --retries 3 || {
 }
 
 # ============================================================
-# 6. Install git hooks - two-layer chain per AGENTS.md (parity with install.bat)
-#    commit layer = pre-commit; pre-push layer = precheck.ps1 (GIT_HOOK_PRE_PUSH.sh)
+# 6. Install git hooks - two-layer chain per the hook-reproducibility rule
+#    (full protocol lives in maintainer-local AGENTS.md, not distributed with this repo)
+#    commit layer = pre-commit; pre-push layer = precheck.ps1 (maintainer-local; GIT_HOOK_PRE_PUSH.sh)
 # ============================================================
 if command -v git &>/dev/null && [ -d "$SCRIPT_DIR/.git" ]; then
     if ! "$PYTHON_CMD" -m pre_commit --version &>/dev/null; then

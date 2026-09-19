@@ -66,7 +66,7 @@ model/                                 # 15.35GB 级权重，元数据仅存 con
 - `RuntimeTaskConfig`（:444-490）：`checkpoint_dir/checkpoint_every/auto_recover/stale_threshold_minutes`
 - `ModelEntryConfig`（:95-139）：5 个 sha256 字段
 
-**⚠️ 发现一处配置漂移**：`routes/restore/upload.py:198-201` 注释声称从 `runtime.security.max_upload_*_mb` 读取大小限制，但 `RuntimeSecurityConfig` 模型与 config.yaml 均未定义这两个字段——实际永远走 `common.py:47-48` 的回退硬编码（图 50MB / 视频 500MB）。这是"文档/注释与机器事实不一致"的典型治理缺口（恰好违反本项目 AGENTS.md 铁律 #1 的精神）。
+**⚠️ 发现一处配置漂移**：`routes/restore/upload.py:198-201` 注释声称从 `runtime.security.max_upload_*_mb` 读取大小限制，但 `RuntimeSecurityConfig` 模型与 config.yaml 均未定义这两个字段——实际永远走 `common.py:47-48` 的回退硬编码（图 50MB / 视频 500MB）。这是"文档/注释与机器事实不一致"的典型治理缺口（恰好违反本项目治理协议铁律 #1 的精神；协议全文 `AGENTS.md` 为维护者本地文件，未随仓库分发，其对外可执行部分见 `docs/CODING_STANDARDS.md` 第 5 节）。
 
 ### 1.3 模型 Checkpoint Metadata —— **部分实现（55 分）**
 
@@ -150,7 +150,7 @@ model/                                 # 15.35GB 级权重，元数据仅存 con
 
 ### 4.1 Golden 数据集 —— **未实现（15 分）**
 
-- `tests/test-assets/` 仅 3 个"最小合法魔数"占位文件（585B JPEG / 70B PNG / 64B MP4），`generate_test_assets.py:29-72` 自述"1×1 红像素 + 仅 ftyp 骨架，**不可解码播放**"，仅供 Playwright 前端校验
+- `tests/test-assets/`（未随仓库分发，克隆后由已跟踪的 `tests/generate_test_assets.py` 重建）仅 3 个"最小合法魔数"占位文件（585B JPEG / 70B PNG / 64B MP4），`generate_test_assets.py:29-72` 自述"1×1 红像素 + 仅 ftyp 骨架，**不可解码播放**"，仅供 Playwright 前端校验
 - **无真实 golden 图片/视频、无"退化输入→期望输出"基准对**
 - 讽刺点：应用层有现成的 `HierarchicalDegradationProcessor.apply_degradation`（`video_processing_enhance.py:1536-1601`：降采样+噪声+模糊+色偏，注释明说"用于训练数据增强或退化模拟"）——**现成的合成退化生成器存在却未接入测试体系**
 - `test_color_fix.py` 用 numpy 合成图像自建输入，属"测试内联数据"而非受版本管理的 golden 集

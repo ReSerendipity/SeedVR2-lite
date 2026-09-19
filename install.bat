@@ -11,7 +11,7 @@ echo.
 set "PYTHON_CMD="
 
 :: ============================================================
-:: 0. Prefer project-local .venv (consistent with start.bat / precheck.ps1)
+:: 0. Prefer project-local .venv (consistent with start.bat / precheck.ps1 - maintainer-local, not distributed)
 ::    Environment policy: install target = run target = check target, all .venv;
 ::    removes the "install into system Python, run with .venv" split (DX P1-5).
 :: ============================================================
@@ -135,7 +135,7 @@ echo Using Python: %PYTHON_CMD%
 echo.
 
 :: ============================================================
-:: 4. Unify on project-local .venv (same priority as start.bat / precheck.ps1)
+:: 4. Unify on project-local .venv (same priority as start.bat / precheck.ps1 - maintainer-local)
 :: ============================================================
 if exist "%~dp0.venv\Scripts\python.exe" goto :venv_ready
 
@@ -252,11 +252,12 @@ if errorlevel 1 (
     echo [WARN] Some dependencies failed to install
 )
 
-:: Install git hooks - two-layer chain per AGENTS.md "hook repro" clause:
+:: Install git hooks - two-layer chain per the hook-reproducibility rule (full protocol
+::   lives in maintainer-local AGENTS.md, not distributed with this repo):
 ::   commit layer   = pre-commit (ruff/black/file hygiene)
-::   pre-push layer = precheck.ps1 fast checks (copy GIT_HOOK_PRE_PUSH.sh)
+::   pre-push layer = precheck.ps1 fast checks (maintainer-local script; copy GIT_HOOK_PRE_PUSH.sh)
 :: NOTE: do NOT call scripts\install-hooks.ps1 - it repoints core.hooksPath to its
-::       own subfolder and silently disables BOTH layers (AGENTS.md v1.58+ warning).
+::       own subfolder and silently disables BOTH layers (AGENTS.md v1.58+ warning, maintainer-local).
 where git >nul 2>&1
 if not errorlevel 1 (
     "%PYTHON_CMD%" -m pre_commit --version >nul 2>&1
