@@ -1,9 +1,12 @@
-use std::time::Duration;
+﻿use std::time::Duration;
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
 
 /// 健康检查响应中的完整性自检状态（桌面端 B-2：据此展示篡改告警）。
+/// checked / manifest_signed 为 /api/system/health 响应契约字段，
+/// 当前仅 failed/failed_files 被消费，余保留供托盘/警告增强使用。
 #[derive(Debug, Clone, Default, Deserialize)]
+#[allow(dead_code)]
 pub struct IntegrityStatus {
     #[serde(default)]
     pub checked: bool,

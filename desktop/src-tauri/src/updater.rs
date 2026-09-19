@@ -234,6 +234,7 @@ fn parse_proxy_server(s: &str) -> String {
 }
 
 /// 拉取 GitHub release JSON（latest 或按 tag 定位）
+#[allow(dead_code)]
 async fn fetch_github_release(
     client: &reqwest::Client,
     owner: &str,
@@ -743,6 +744,7 @@ const PRESERVE_TOP_DIRS: &[&str] = &["runtime", "model", "data", "logs"];
 /// 换载时从旧 `app/` 保留到新 `app/` 的根级单文件（用户可修改/本机持有，丢失代价高）：
 /// - `config.yaml`：用户对端口/限流/日志/水印等的修改，整体换载会被新版默认配置覆盖；
 /// - `.watermark_key`：水印 HMAC 签名密钥，丢失即旧产物无法验证（溯源举证链断裂）。
+///
 /// 保留旧文件优先（用户修改/本机密钥 > 新版默认），增量包不含这些文件，不会产生覆盖。
 const PRESERVE_ROOT_FILES: &[&str] = &["config.yaml", ".watermark_key"];
 
