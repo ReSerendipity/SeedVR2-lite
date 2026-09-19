@@ -19,6 +19,7 @@
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +61,11 @@ _I18N_TRANSLATIONS: dict[str, dict[str, Any]] = {}
 # 默认语言
 _DEFAULT_LANG: str = "zh"
 
+# 兜底拼文件名时允许的语言代码形态：BCP-47 主语言 + 最多两个子标签（zh-TW、pt-BR 等）。
+# 白名单放在这里而不是入站，是因为 locale 字段一路直传到 _load_translations：
+# POST /api/system/locale 只把 body["locale"] 交给 set_locale，不做可用语言校验。
+_LANG_TAG_RE = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}")
+
 
 def _get_locales_dir() -> str:
     """获取 locales 目录路径"""
@@ -83,7 +89,13 @@ def _load_translations(lang: str) -> dict[str, Any] | None:
 
     filename = _LANG_FILE_MAP.get(lang)
     if filename is None:
-        # 尝试直接用 lang 作为文件名（如 "zh-TW.json"）
+        # 未映射的语言：仅接受合法语言代码形态，再直接用 lang 作文件名（如 "zh-TW.json"）。
+        # 此前无条件拼接，而 locales/ 之外的路径可以靠 "../../..." 抵达——
+        # `POST /api/system/locale` 的 locale 字段不做校验，于是任意 `.json`
+        # 文件可被读进翻译缓存，并留下存在性预言机（404/解码失败/权限不足三种日志可区分）。
+        if not _LANG_TAG_RE.fullmatch(str(lang)):
+            logger.debug(f"忽略非法语言代码: {lang!r}")
+            return None
         filename = f"{lang}.json"
 
     filepath = os.path.join(_get_locales_dir(), filename)

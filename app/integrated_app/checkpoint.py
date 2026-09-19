@@ -72,6 +72,7 @@ class TaskCheckpoint:
             checkpoint_dir: checkpoint 文件存储目录路径，不存在时自动创建。
         """
         self.checkpoint_dir = Path(checkpoint_dir)
+        self._base = self.checkpoint_dir.resolve()
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, task_id: str) -> Path:
@@ -81,9 +82,19 @@ class TaskCheckpoint:
             task_id: 批量任务 ID。
 
         Returns:
-            checkpoint 文件的 Path 对象。
+            checkpoint 文件的 Path 对象，必定落在 checkpoint_dir 之内。
+
+        Raises:
+            ValueError: task_id 非法（空、含路径分隔符或 `..`）或解析后越出目录。
+                入站虽有幂等键正则 `^[A-Za-z0-9_.\\-]{1,64}$` 把关，但 sink 侧不
+                该假设每个调用方都校验过——本函数下游是 read/write/unlink。
         """
-        return self.checkpoint_dir / f"{task_id}.json"
+        if not task_id or "/" in task_id or "\\" in task_id or ".." in task_id:
+            raise ValueError(f"非法任务 ID：不得含路径分隔符或 '..'（收到 {task_id!r}）")
+        path = (self.checkpoint_dir / f"{task_id}.json").resolve()
+        if not path.is_relative_to(self._base):
+            raise ValueError(f"任务 ID 解析后越出 checkpoint 目录: {task_id!r}")
+        return path
 
     def save_checkpoint(
         self,

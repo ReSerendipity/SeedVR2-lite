@@ -217,3 +217,32 @@ class TestEdgeCases:
 
         result = _load_translations("en")
         assert result is not None  # 空 JSON 是合法的
+
+
+class TestLangCodeCannotEscapeLocalesDir:
+    """P1 安全回归（CodeQL py/path-injection 217/218）。
+
+    `POST /api/system/locale` 把 body["locale"] 原样交给 set_locale，未做可用语言校验；
+    未映射语言的兜底拼接因此曾是 `f"{lang}.json"`，`../` 可以越出 locales/ 读任意
+    `.json`。现由 _LANG_TAG_RE 白名单挡住，且**合法**的新语言标签仍要走通。
+    """
+
+    def test_traversal_lang_is_rejected_without_touching_filesystem(self, tmp_path, monkeypatch):
+        locales_dir = tmp_path / "locales"
+        locales_dir.mkdir()
+        outside = tmp_path / "bank.json"
+        outside.write_text('{"secret": "leaked"}', encoding="utf-8")
+        monkeypatch.setattr("app.integrated_app.i18n._get_locales_dir", lambda: str(locales_dir))
+
+        for bad in ("../bank", r"..\..\bank", "/etc/passwd", "a/b", "zh-CN\x00"):
+            _I18N_TRANSLATIONS.pop(bad, None)
+            assert _load_translations(bad) is None, f"{bad!r} 不应被当作文件名"
+
+    def test_unmapped_but_wellformed_tag_still_loads(self, tmp_path, monkeypatch):
+        locales_dir = tmp_path / "locales"
+        locales_dir.mkdir()
+        (locales_dir / "de-DE.json").write_text('{"greeting": "Hallo"}', encoding="utf-8")
+        monkeypatch.setattr("app.integrated_app.i18n._get_locales_dir", lambda: str(locales_dir))
+
+        _I18N_TRANSLATIONS.pop("de-DE", None)
+        assert _load_translations("de-DE") == {"greeting": "Hallo"}

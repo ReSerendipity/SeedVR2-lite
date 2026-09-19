@@ -673,7 +673,8 @@ function addFile(f){
   userFile=f;
   const isImg=f.type.startsWith('image/');
   const url=URL.createObjectURL(f);
-  $('#fileCard').innerHTML=`<div class="file-card">${isImg?`<img src="${url}">`:'<div class="thumb" style="display:flex;align-items:center;justify-content:center;font-size:20px">🎬</div>'}<div class="meta"><b>${f.name}</b><span>${(f.size/1024/1024).toFixed(2)} MB · ${isImg?'图片':'视频'} · 仅预览</span></div></div>`;
+  $('#fileCard').innerHTML=`<div class="file-card">${isImg?`<img src="${url}">`:'<div class="thumb" style="display:flex;align-items:center;justify-content:center;font-size:20px">🎬</div>'}<div class="meta"><b id="fileNameLbl"></b><span>${(f.size/1024/1024).toFixed(2)} MB · ${isImg?'图片':'视频'} · 仅预览</span></div></div>`;
+  $('#fileNameLbl').textContent=f.name; // 文件名按文本落地：含 < > 的命名不会变成 HTML
 }
 $('#btnClearImage').onclick=()=>{userFile=null;$('#fileCard').innerHTML='';showToast('已清空图片')};
 $('#btnChangeFile').onclick=()=>$('#fileInput').click();
@@ -766,7 +767,7 @@ $('#runBtn').onclick=()=>{
   $('#progressWrap').classList.remove('hidden');
   $('#resultEmpty').classList.add('hidden');$('#resultArea').classList.remove('hidden');
   const log=$('#logBox');log.innerHTML='';
-  const addLog=(t,c='')=>{const d=document.createElement('div');d.innerHTML=t;if(c)d.className=c;log.appendChild(d);log.scrollTop=log.scrollHeight};
+  const addLog=(t,c='')=>{const d=document.createElement('div');d.textContent=t;if(c)d.className=c;log.appendChild(d);log.scrollTop=log.scrollHeight};
   addLog(`[init] 任务 ${Date.now().toString(36)} 已创建 · 输入: ${userFile?userFile.name:'内置示例'}`, 'ok');
   const model=$('#model').value, prec=$('#precision').value;
   const vramBase={'SeedVR2-3B':6.3,'SeedVR2-7B':14.8,'SeedVR2-7B-Sharp':14.9}[model];
@@ -825,8 +826,9 @@ $('#btnScanFolder').onclick=()=>{
   const p=$('#folderPath').value.trim()||'未命名路径';
   const found=BATCH_FILES.slice(0,4+Math.floor(Math.random()*3));
   $('#scanResults').classList.remove('hidden');
-  $('#scanResults').innerHTML=`<div class="card-title" style="margin-top:0"><span class="bar"></span>扫描结果：${p}（找到 ${found.length} 个文件）</div>`+
+  $('#scanResults').innerHTML=`<div class="card-title" style="margin-top:0"><span class="bar"></span></div>`+
     found.map((n,i)=>`<div class="scan-item">${n.endsWith('.mp4')?'🎬':'🖼'} <span>${n}</span><span class="st" style="color:var(--success)">✓ 已加入</span></div>`).join('');
+  $('#scanResults .card-title').append(`扫描结果：${p}（找到 ${found.length} 个文件）`); // 用户输入的路径按文本落地
   found.forEach(n=>batchQueue.push({name:n,state:'wait',pct:0}));
   renderBatch();showToast(`扫描完成：${found.length} 个文件已加入队列（模拟）`);
 };
@@ -933,7 +935,8 @@ $('#estBtn').onclick=()=>{
   const est=base+resMap+(frames>1?(frames/16)*2.4:0);
   const risk=est>22?'⚠ 风险高：建议 FP8 + BlockSwap 或降低分辨率':est>16?'⚠ 偏高：建议 FP8 精度':'✓ 推荐参数可流畅运行';
   $('#estResult').classList.remove('hidden');
-  $('#estResult').innerHTML=`<b>估算结果：</b>${m} / ${r} / ${frames} 帧 → 约 <b style="color:var(--primary)">${est.toFixed(1)} GB</b> 显存<br><span style="color:var(--text-muted)">${risk}</span>`;
+  $('#estResult').innerHTML='<b>估算结果：</b><span id="estSum"></span> → 约 <b style="color:var(--primary)">'+est.toFixed(1)+' GB</b> 显存<br><span style="color:var(--text-muted)">'+risk+'</span>';
+  $('#estSum').textContent=`${m} / ${r} / ${frames} 帧`; // 表单值按文本落地（est/risk 均为算得的常量）
   $('#vramRec').classList.remove('hidden');
   $('#vramRecPrecision').textContent=est>16?'FP8':'FP16';
   $('#vramRecTileSize').textContent=est>22?'512':'1024';

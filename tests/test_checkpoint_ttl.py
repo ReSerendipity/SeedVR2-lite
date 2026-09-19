@@ -84,3 +84,25 @@ class TestCheckpointTtlConfig:
             RuntimeTaskConfig(checkpoint_ttl_minutes=-1)
         with pytest.raises(ValidationError):
             RuntimeTaskConfig(checkpoint_ttl_minutes=50000)
+
+
+class TestTaskIdCannotEscapeCheckpointDir:
+    """sink 侧自守（CodeQL py/path-injection 215/216）。
+
+    入站的幂等键正则 `^[A-Za-z0-9_.-]{1,64}$` 已排除分隔符，但 `_path()` 的下游是
+    read/write/unlink，不该假设每个调用方（含 DB 回读）都被校验过。
+    """
+
+    def test_rejects_separators_dotdot_and_empty(self, tmp_path):
+        import pytest
+
+        mgr = TaskCheckpoint(str(tmp_path / "ckpt"))
+        for bad in ("../../evil", r"..\evil", "a/b", "", "..", "x/../y"):
+            with pytest.raises(ValueError):
+                mgr._path(bad)
+
+    def test_legit_id_stays_directly_under_dir(self, tmp_path):
+        mgr = TaskCheckpoint(str(tmp_path / "ckpt"))
+        path = mgr._path("a1b2c3d4")
+        assert path.name == "a1b2c3d4.json"
+        assert path.parent == (tmp_path / "ckpt").resolve()
