@@ -9,7 +9,7 @@
 #   3. 只依赖 Windows PowerShell 5.1 + 系统自带 tar.exe（bsdtar）；7-Zip 存在时优先用（压缩率更高）。
 #      禁止使用 PowerShell 7 专属语法（?? 、三元、-Parallel、[IO.Path]::GetRelativePath）。
 #   4. 本文件含中文，必须存为 **UTF-8 with BOM**：PowerShell 5.1 对无 BOM 的 .ps1 按 ANSI(GBK)
-#      解码，中文会碎成乱码并直接破坏语法（同 AGENTS.md 陷阱 #18 一类问题）。
+#      解码，中文会碎成乱码并直接破坏语法（同类坑点记于维护者本地账本 AGENTS.md 陷阱 #18，未随仓库分发）。
 
 $script:GithubAssetLimitBytes = 2147483648
 $script:DefaultMaxPartBytes = 1900MB
@@ -224,7 +224,8 @@ function Test-SeedVR2PathExcluded {
 function Assert-SeedVR2NoForbiddenPayload {
     <#
         递归确认目录内没有任何 ffmpeg/ffprobe 可执行文件与私有密钥。
-        这是 docs/COMPLIANCE_CHECKLIST.md「便携包分发检查项」第 1、2 条的真实实现，
+        这是便携包分发合规检查项「禁止随包携带 ffmpeg/ffprobe 与私有密钥」的真实实现
+        （对应条目记于维护者本地文件 docs/COMPLIANCE_CHECKLIST.md §2，未随仓库分发），
         失败即抛异常中断构建，而不是留一个勾选项在文档里空转。
         无输出（成功时不打印任何内容）。
     #>

@@ -18,8 +18,9 @@
 - 输入用 `golden_scenes.build_sources` 确定性源图——**不依赖任何私有图片**，跨机器可复现；
 - 指标复用项目唯一实现 `image_metrics`（PSNR/SSIM）。**不引入 LPIPS/torchmetrics**：
   项目未声明该依赖，铁律禁止为评估工具新增第三方包；PSNR+SSIM 足以识别「可见降质」；
-- 本脚本零模型/GPU 代码（requests + PIL + numpy），真机跑法见 BENCHMARK_GUIDE.md
-  「量化质量基线」节；CI 自动接线待 smoke 服务提供「启动后常驻」模式（记录在案，非缺失）。
+- 本脚本零模型/GPU 代码（requests + PIL + numpy），真机跑法见 BENCHMARK_GUIDE.md「量化质量基线」节
+  （该指南为维护者本地文件，未随仓库分发；具体参数见本文件的 argparse 定义）；
+  CI 自动接线待 smoke 服务提供「启动后常驻」模式（记录在案，非缺失）。
 """
 
 from __future__ import annotations

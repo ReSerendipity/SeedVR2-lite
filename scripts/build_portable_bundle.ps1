@@ -162,7 +162,7 @@ function Clear-SeedVR2YamlValue {
 function Get-SeedVR2ModelFilesFromConfig {
     <#
         从 config.yaml 读取 3b 条目实际引用的权重文件名，避免打包清单与运行时配置漂移。
-        只读不写（config.yaml 属 AGENTS.md 第 3.2 节禁区）。
+        只读不写（config.yaml 属禁区，公开清单见 docs/CODING_STANDARDS.md §5.1；细则在未随仓库分发的维护者本地 AGENTS.md）。
         用最简的缩进 + 单键匹配，不做完整 YAML 解析。
     #>
     param([Parameter(Mandatory = $true)][string]$ConfigPath)
@@ -210,7 +210,7 @@ function Get-SeedVR2ModelFilesFromConfig {
 # --------------------------------------------------- 组件 payload 组装 ----
 # 仓库内嵌权重小资产（pos_emb/neg_emb），随代码一并提交，CI 无需联网拉取。
 # HF 社区模型仓库 numz/SeedVR2_comfyUI 缺失这两个文件（CI 已 404），
-# 但它们很小且本地模型正常运行必需 → 入库作为权威来源（见 docs/project/PORTABLE_BUNDLES.md）。
+# 但它们很小且本地模型正常运行必需 → 入库作为权威来源（细则见 docs/project/PORTABLE_BUNDLES.md，维护者本地文件，未随仓库分发）。
 $BundleAssetsDir = Join-Path $PSScriptRoot 'bundle_assets'
 
 $CoreIncludeDirs = @('app', 'common', 'model_lib', 'configs_3b', 'configs_7b', 'data')
@@ -1015,7 +1015,7 @@ $manifest = [ordered]@{
         ffmpeg_not_distributed = $true
         watermark_key_excluded = $true
         license_and_notice_included = $true
-        note = '构建期由 Assert-SeedVR2NoForbiddenPayload 递归断言，见 NOTICE 第 4 条与 docs/COMPLIANCE_CHECKLIST.md §2'
+        note = '构建期由 Assert-SeedVR2NoForbiddenPayload 递归断言，见 NOTICE 第 4 条与 docs/COMPLIANCE_CHECKLIST.md §2（后者为维护者本地文件，未随仓库分发）'
     }
 }
 Write-SeedVR2Json -Object $manifest -Path (Join-Path $OutDir 'manifest.json')

@@ -1,7 +1,9 @@
 # ComfyUI-Mie-Package-Launcher 技术学习报告（SeedVR2-lite 竞品对标 · 代码级）
 
-> **性质**：竞品对标学习报告（非建议文档）。事实来自 `C:\Users\Doro\reference_repos\SeedVR2-lite\Mie-Package-Launcher` 浅克隆 + `gh api` 实时核验。
+> **性质**：竞品对标学习报告（非建议文档）。事实来自本机浅克隆目录 `reference_repos/SeedVR2-lite/Mie-Package-Launcher`（不在仓库内）+ `gh api` 实时核验。
 > **核验**：`MieMieeeee/ComfyUI-Mie-Package-Launcher` — **273★ / Apache-2.0 / 推送 2026-08-27**。
+> **本地未分发引用**：§一 提到的 `AGENTS.md` / `cli.md` 是**被分析仓库自带的文件**，不是本仓文件；§四 提到的本仓
+> `AGENTS.md` 属维护者本地治理协议，未随仓库分发（对外可执行部分见 `docs/CODING_STANDARDS.md` 第 5 节）。
 
 ## 一、概览
 - **定位**：**ComfyUI 启动器**——PyQt5 GUI + 无窗口 CLI，统一管理 ComfyUI 启停 / 多环境切换 / 镜像代理 / 内核+前端+模板库+依赖更新。
@@ -21,7 +23,7 @@
 
 ## 四、与 SeedVR2-lite 对标点（关键）
 - **便携包内核/前端分离**：本仓 SeedVR2-lite 以 **PyInstaller 便携包 + VitePress 文档站**交付（主报告 §4.3 标「便携包内核/前端分离更新」）——Mie-Launcher 的分离更新范式可直接借鉴进本仓便携包维护。
-- **Agent CLI 契约**：本仓若提供 agent/自动化接口，其 `status/start/stop/--json/退出码` 契约是现成模板（对齐本仓 `AGENTS.md` 规范）。
+- **Agent CLI 契约**：本仓若提供 agent/自动化接口，其 `status/start/stop/--json/退出码` 契约是现成模板（对齐本仓治理协议；协议全文在未随仓库分发的维护者本地 `AGENTS.md`，公开子集见 `docs/CODING_STANDARDS.md` 第 5 节）。
 - **合规清洁**：Apache-2.0，无 GPL 风险。
 
 ## 五、许可与合规
