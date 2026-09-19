@@ -117,3 +117,18 @@ grep -rn --include='*.py' -iE 'C:\\Users|/home/|/Users/' .
 
 - `docs/DOD.md`（完成定义）；`docs/COMPLIANCE_CHECKLIST.md` 为维护者本地文件，未随仓库分发
 - `docs/release-governance.md`（版本与发布）、`docs/ci/local_ref_baseline.json`（引用可用性基线）
+
+---
+
+## 8. Markdown 写作规范
+
+所有 .md 文件遵循以下约定（2026-09-19 家族统一新增）：
+
+- **编码**：UTF-8 **无 BOM**。禁止保存为带 BOM 的 UTF-8、UTF-16 或 GBK。
+- **行尾**：统一 LF（.gitattributes 已锁 *.md text eol=lf），禁止 CRLF 入库。
+- **行宽**：正文建议 ≤ 120 字符；URL、表格、代码块、长 JSON 不强制折行。
+- **标题**：每个文件仅一个 #（一级标题），标题层级不跳级（# → ## → ###）。
+- **中英文混排**：中文字符与英文/数字之间加一个半角空格（例：使用 ruff check .、Python 3.12）。
+- **文件名**：公开文档优先英文 kebab-case（如 developer-guide.md）；存量中文文件名保留，新文档同一目录内风格保持一致。日期后缀统一用 -YYYYMMDD（如 exec-checklist-20260910.md）。
+- **换行**：markdown 行尾两个空格表示硬换行；不要用 \ 转义。
+- **链接**：相对路径引用仓库内文件，禁止引用本地绝对路径（C:\...、/home/...）。
