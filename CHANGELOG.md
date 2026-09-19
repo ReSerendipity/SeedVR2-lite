@@ -52,7 +52,7 @@
 
 * **`docs/repo-analysis/ComfyUI-Mie-Package-Launcher_技术学习报告.md` 泄露本机绝对路径**（`C:\Users\<用户名>\reference_repos\...`）：改为不含用户名的相对描述。同类残留在 `docs/repo-analysis/` 另两份报告与 `docs/增量更新发布手册.md`、`docs/壳更新-下一轮改动清单.md` 中，按第 1 节现有 docs 豁免口径未一并处理。
 
-* **首启协议遮罩把整套 E2E 打红（`main` 自 #89 起连红）**：`restore.html` 的 `#agreementModal` 没有遮罩关闭路径（必须勾选后点「同意并开始使用」），fresh Playwright context 下 `.sv-modal-overlay.show` 持续拦截指针事件 → 34 条点击类用例全灭，另有 4 张视觉基线把遮罩画进了产物。现 `tests/fixtures/api-mocks.ts` 新增 `seedFirstRunFlags()`，在 `setupAllMocks()` 里以 `addInitScript` 统一预置 `sv_onboarding_seen_v2` / `sv_agreement_seen_v1`，同时把原先散落在 4 个 spec 里的同款预置收口到一处。**代价与兜底**：预置后测试再也看不到该浮层，于是新增 `tests/specs/first-run-agreement.spec.ts` 专门守住两格——「未确认时遮罩可见且真实点击被拦截」「勾选同意后 seen 标记落库且跨页面保持」。seen 值须与模板里的 `AGREEMENT_VERSION` 严格相等；改协议版本而未同步此处，会以同样的 "intercepts pointer events" 红灯复现，不会静默放行。验证：本地真起服务跑 chromium-desktop 全量 233/233（workers=2）；firefox/webkit 由 CI 矩阵覆盖。
+* **首启协议遮罩把整套 E2E 打红（`main` 自 #89 起连红）**：`restore.html` 的 `#agreementModal` 没有遮罩关闭路径（必须勾选后点「同意并开始使用」），fresh Playwright context 下 `.sv-modal-overlay.show` 持续拦截指针事件 → 34 条点击类用例全灭，另有 4 张视觉基线把遮罩画进了产物。现由 `tests/playwright.config.ts` 的 `storageState` 统一预置 `sv_onboarding_seen_v2` / `sv_agreement_seen_v1`（数据在 `fixtures/test-data.ts` 的 `FIRST_RUN_LOCAL_STORAGE`）。**为什么放 config 而不是某个 helper**：`security.spec.ts` 有 4 条用例不经过 `setupAllMocks()`，逐处预置必然再漏一次。**代价与兜底**：预置后测试再也看不到该浮层，于是新增 `tests/specs/first-run-agreement.spec.ts` 专门守住两格——「未确认时遮罩可见且真实点击被拦截」「勾选同意后 seen 标记落库且跨页面保持」。seen 值须与模板里的 `AGREEMENT_VERSION` 严格相等；改协议版本而未同步此处，会以同样的遮罩拦截红灯复现，不会静默放行。验证：本地真起服务跑 chromium-desktop 全量 233/233（workers=2）；firefox/webkit 由 CI 矩阵覆盖。
 
 ## [1.5.8] - 2026-09-13
 

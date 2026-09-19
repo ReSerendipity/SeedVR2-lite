@@ -9,6 +9,7 @@
  * - Optional web server startup with reuse support
  */
 import { defineConfig, devices } from '@playwright/test';
+import { FIRST_RUN_LOCAL_STORAGE } from './fixtures/test-data';
 
 /**
  * Base URL for the SeedVR2 application.
@@ -63,6 +64,15 @@ export default defineConfig({
   use: {
     // Base URL for page.goto('/') and page.url assertions
     baseURL: BASE_URL,
+
+    // 预置首启浮层的「已看过」标记（见 fixtures/test-data.ts 的说明）。
+    // 放 config 而不是某个 helper：协议遮罩会挡住**全部**点击类用例，而
+    // security.spec.ts 等 spec 并不都经过 setupAllMocks()，逐处预置必然漏。
+    // 需要真实首启状态的文件自行 test.use({ storageState: { cookies: [], origins: [] } })。
+    storageState: {
+      cookies: [],
+      origins: [{ origin: BASE_URL, localStorage: FIRST_RUN_LOCAL_STORAGE }],
+    },
 
     // Collect trace on first retry for debugging
     trace: 'on-first-retry',

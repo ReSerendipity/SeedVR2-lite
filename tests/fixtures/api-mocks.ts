@@ -729,33 +729,8 @@ export async function abortRemoteFonts(page: Page): Promise<void> {
   await page.route('**fonts.gstatic.com/**', (route) => route.abort());
 }
 
-/**
- * Seed the "first run" acknowledgement flags before any navigation, so the
- * first-run overlays don't intercept pointer events in every test.
- *
- * 这两个浮层都是 `.sv-modal-overlay`，fresh context 的 localStorage 为空即会打开：
- * - `sv_onboarding_seen_v2`（引导）
- * - `sv_agreement_seen_v1`（P1-1 首启协议确认，restore.html）—— 它没有遮罩关闭路径，
- *   必须勾选后点「同意并开始使用」，所以会一直挡住点击（main E2E 自 #89 起连红的根因）。
- *
- * seen 值必须与模板里的常量严格相等（AGREEMENT_VERSION = '2026-09-15'）。改了协议
- * 版本而这里没跟上时，遮罩会重新出现并让点击用例报错——是有声失败，不会静默放行。
- * 协议本身的行为由 specs/first-run-agreement.spec.ts 守住。
- */
-export async function seedFirstRunFlags(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    try {
-      localStorage.setItem('sv_onboarding_seen_v2', '1');
-      localStorage.setItem('sv_agreement_seen_v1', '2026-09-15');
-    } catch (e) {
-      /* 禁用存储的浏览器下忽略：浮层会照常出现，由用例自己处理 */
-    }
-  });
-}
-
 export async function setupAllMocks(page: Page): Promise<void> {
   await abortRemoteFonts(page);
-  await seedFirstRunFlags(page);
   // System API mocks
   await mockHealthSuccess(page);
   await mockGpuInfoSuccess(page);
