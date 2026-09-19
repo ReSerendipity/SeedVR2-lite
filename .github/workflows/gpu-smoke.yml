@@ -46,7 +46,7 @@ on:
         required: false
         default: false
   schedule:
-    - cron: "0 3 * * 1,4" # 周一 + 周四 03:00 UTC（周四专补「无发布窗口」的 main 源码回归）
+    - cron: "0 15 * * 1,4" # 周一 + 周四 15:00 UTC（北京时间 23 点，GPU 机器空闲时段；原 03:00 UTC=北京时间 11 点，真机推理曾因系统内存被其他负载挤占失败）
   workflow_run:
     workflows: ["Portable Release"] # name: 必须与 portable-release.yml 的 name 一致
     types: [completed]
