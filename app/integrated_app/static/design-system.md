@@ -1,6 +1,6 @@
 # SeedVR2 Design System
 
-> 本文档与实际实现（`bin/integrated_app/static/css/style.css`）保持一致，最后核对：2026-08-08。
+> 本文档与实际实现（`app/integrated_app/static/css/style.css`）保持一致，最后核对：2026-09-17。
 > 主题机制：`<html data-theme="dark|light">`（默认 dark），`localStorage('sv-theme')` 持久化。
 > 设计规范：Warm Print 暖暮（深色）/ 暖纸（浅色），苔绿主色 + 陶土/金/珊瑚辅助。
 
