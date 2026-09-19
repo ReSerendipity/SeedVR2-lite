@@ -1,6 +1,6 @@
 # SeedVR2-lite
 
-![Version](https://img.shields.io/badge/version-1.5.8-blue?style=for-the-badge) ![License](https://img.shields.io/badge/license-Apache%202.0-green?style=for-the-badge) ![Python](https://img.shields.io/badge/python-3.12+-yellow?style=for-the-badge&logo=python&logoColor=white) ![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white) ![Models](https://img.shields.io/badge/model-3B%20%7C%207B%20%7C%207B--Sharp-ff69b4?style=for-the-badge) [![CI](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/ReSerendipity/SeedVR2-lite/actions) [![gitleaks](https://img.shields.io/badge/secret%20scan-gitleaks%20passing-0080FF?style=for-the-badge)](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/gitleaks.yml)
+![Version](https://img.shields.io/badge/version-1.5.7-blue?style=for-the-badge) ![License](https://img.shields.io/badge/license-Apache%202.0-green?style=for-the-badge) ![Python](https://img.shields.io/badge/python-3.12+-yellow?style=for-the-badge&logo=python&logoColor=white) ![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white) ![Models](https://img.shields.io/badge/model-3B%20%7C%207B%20%7C%207B--Sharp-ff69b4?style=for-the-badge) [![CI](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/ReSerendipity/SeedVR2-lite/actions) [![gitleaks](https://img.shields.io/badge/secret%20scan-gitleaks%20passing-0080FF?style=for-the-badge)](https://github.com/ReSerendipity/SeedVR2-lite/actions/workflows/gitleaks.yml)
 
 **基于 SeedVR2 扩散模型的视频与图像超分辨率修复工具箱 — 独立运行、一键修复，无需 ComfyUI**
 
@@ -34,11 +34,25 @@
 - **单实例与崩溃恢复**：重复启动自动聚焦已有窗口；Python 后端意外退出自动重启
 - **卸载干净**：安装/卸载自动终止运行中的程序，卸载清理注册表与快捷方式
 
-> 桌面版与网页版共享同一套 Python 后端与模型。发布物见 [Releases](https://github.com/ReSerendipity/SeedVR2-lite/releases/latest)（当前稳定版 v1.5.8）。
+> 桌面版与网页版共享同一套 Python 后端与模型。当前稳定版 **v1.5.7**（[Releases](https://github.com/ReSerendipity/SeedVR2-lite/releases/latest)）。
+>
+> **取包提醒**：`/releases/latest` 只有增量更新包，首次安装不在那里。按用途取包：
+>
+> | 你要什么 | 去哪儿拿 |
+> |---|---|
+> | 首次安装桌面版（安装器 + 3 个数据分卷，约 5.3 GB） | [v1.5.4](https://github.com/ReSerendipity/SeedVR2-lite/releases/tag/v1.5.4)：`SeedVR2-Setup-v1.5.4.exe` + `SeedVR2-Data.7z.001/.002/.003` + `SHA256SUMS-v1.5.4.txt` |
+> | 已装用户走托盘「检查更新」（约 1.4 MB） | [`/releases/latest`](https://github.com/ReSerendipity/SeedVR2-lite/releases/latest)：`app-v1.5.7.zip`（+ `.sha256`） |
+> | 便携分卷包（`core` / `torch` / `model-*`） | 目前不可公开下载，见下一节「网页版 / 便携包」 |
 
 ## 网页版 / 便携包（开发与内部使用）
 
 不想装 Python、不想配环境时，可用便携分卷包（已含便携 Python、全部依赖与 3B FP8 模型）或直接源码运行：
+
+> **当前状态**：便携分卷包只挂在 `v1.5.6` 上，而该 release 已标记「误发布 · 请勿使用」并处于草稿状态，**未登录或脚本拉取都取不到这些资产**。在它重新发布之前，请改用上一节的桌面版或下面的源码方式运行；步骤本身保留，重新发布后即为可用。
+
+源码运行（不依赖分卷包）：`python -m venv .venv` → `.venv\Scripts\pip install -r requirements.txt`（torch 需装 CUDA 版，命令见[完整文档站](https://reserendipity.github.io/SeedVR2-lite/docs/)）→ `.venv\Scripts\python app/integrated_app/app_server.py`，浏览器打开 <http://127.0.0.1:7870>。
+
+便携分卷包步骤：
 
 1. 从 [Releases](https://github.com/ReSerendipity/SeedVR2-lite/releases) 下载 `core` / `torch` / `model-shared` / `model-fp8` 四个组件的**全部** `.00N` 分卷，外加 `manifest.json`、`SHA256SUMS.txt`、`unpack_portable_bundle.ps1`、`portable_bundle_lib.ps1`（合计约 5.6 GB）
 2. 放进同一文件夹，执行 `powershell -ExecutionPolicy Bypass -File .\unpack_portable_bundle.ps1 -TargetDir D:\SeedVR2`

@@ -10,7 +10,10 @@ jobs:
   spec-refs:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 —— 版本口径门禁要读 tag，浅克隆拿不到（脚本会硬失败而不是静默跳过）
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -18,3 +21,5 @@ jobs:
         run: python scripts/check_spec_refs.py
       - name: Check reference availability (no phantom refs to undistributed local files)
         run: python scripts/check_local_only_refs.py --all
+      - name: Check README release version matches published tags
+        run: python scripts/check_readme_release_version.py
