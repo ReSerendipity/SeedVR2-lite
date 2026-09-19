@@ -768,3 +768,24 @@ export interface ScanFolderResponse {
   }>;
   total: number;
 }
+
+// ============================================================
+// First-run client state
+// ============================================================
+
+/**
+ * 预置「首次运行」标记，供 playwright.config.ts 组 storageState 使用。
+ *
+ * 两个首启浮层都是 `.sv-modal-overlay`，localStorage 为空即打开并拦截指针事件：
+ * - `sv_onboarding_seen_v2`：首次引导（有遮罩关闭路径）
+ * - `sv_agreement_seen_v1`：P1-1 首启协议确认（restore.html）——**没有**遮罩关闭路径，
+ *   必须勾选后点「同意并开始使用」，所以会一直挡住点击（main 的 E2E 自 #89 起连红的根因）。
+ *
+ * 值必须与模板常量严格相等（`AGREEMENT_VERSION = '2026-09-15'`）。协议升版而未同步
+ * 这里时，遮罩会重新出现并把点击用例顶成报错——是有声失败，不会静默放行。
+ * 协议自身的行为由 specs/first-run-agreement.spec.ts 守住（该文件自行清空 storageState）。
+ */
+export const FIRST_RUN_LOCAL_STORAGE: Array<{ name: string; value: string }> = [
+  { name: 'sv_onboarding_seen_v2', value: '1' },
+  { name: 'sv_agreement_seen_v1', value: '2026-09-15' },
+];
