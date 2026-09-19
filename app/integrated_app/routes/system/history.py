@@ -30,6 +30,7 @@ from app.integrated_app.checkpoint import TaskCheckpoint
 from app.integrated_app.dependencies import get_config, get_history_db, get_task_queue
 from app.integrated_app.history_db import HistoryDB, HistoryRecord
 from app.integrated_app.security.path_guard import build_default_path_guard
+from app.integrated_app.security.watermark import strip_watermark_envelope
 from app.integrated_app.task_queue import TaskQueue
 from app.integrated_app.utils.response import respond_success
 
@@ -97,7 +98,8 @@ async def resolve_output_provenance(
     支持三种入口，任一命中即返回该输出对应的任务、输入与完整参数：
     - output_file: 输出文件路径（精确匹配，取最新一条）
     - task_id: 任务/批量 ID（水印 payload 即为此值）
-    - watermark_payload: 从输出图中提取到的水印 payload，等价于 task_id
+    - watermark_payload: 从输出图中提取到的水印载荷；签名摘要与品牌前缀在此
+      自动剥除，等价于 task_id
 
     API 端点：GET /api/system/history/resolve
 
@@ -117,7 +119,7 @@ async def resolve_output_provenance(
     Returns:
         统一格式的 JSON 响应；未命中时 found=false（HTTP 200，便于前端直接判空）。
     """
-    resolve_task_id = task_id or watermark_payload
+    resolve_task_id = task_id or (strip_watermark_envelope(watermark_payload) if watermark_payload else None)
     record = None
 
     if resolve_task_id:

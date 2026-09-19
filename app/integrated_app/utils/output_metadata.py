@@ -8,6 +8,11 @@
 - JPEG/WebP/TIFF：EXIF UserComment (0x9286)，并与源图 EXIF（拍摄信息）
   合并进同一次编码保存——避免二次有损压缩与 copy_exif 的相互覆盖
 
+载荷同时携带机器可读的 AI 生成标识字段（``ai_generated`` / ``ai_generator``，
+见 :data:`AI_MARKER_FIELDS`），使下游程序能就文件本身判定「AI 生成合成内容」。
+注意：这些字段明文可读、可改、重编码即丢，属合规显式标识的机器可读侧；
+不可举证的隐式溯源由 security/watermark.py 负责。
+
 失败仅告警返回，绝不影响推理主流程。
 
 所属项目：SeedVR2 (SeedVR2 视频/图像修复工具)
@@ -25,23 +30,28 @@ logger = logging.getLogger(__name__)
 METADATA_TAG = "seedvr2_params"
 _EXIF_USER_COMMENT = 0x9286
 
+# 机器可读的 AI 生成标识字段（与参数同层写入 tEXt / EXIF UserComment）。
+# 合规口径下隐式标识要能被下游程序判定「这是 AI 生成合成内容」，只有一堆推理参数
+# 是不够的；标识义务不因参数为空而缺席，故 params={} 时也照样写。
+AI_MARKER_FIELDS: dict = {"ai_generated": True, "ai_generator": "SeedVR2"}
+
 # 元数据载荷上限（EXIF UserComment 过大部分工具解析异常；60KB 足够参数 JSON）
 _MAX_PAYLOAD_BYTES = 60000
 
 
 def generation_params_payload(params: dict) -> str:
-    """把生成参数字典序列化为元数据 JSON 载荷。
+    """把生成参数字典序列化为元数据 JSON 载荷（附带 AI 生成标识字段）。
 
     Args:
-        params: 生成参数（推理配置字典，值可能含不可序列化对象）。
+        params: 生成参数（推理配置字典，值可能含不可序列化对象）。可为空——
+            空参数仍产出仅含标识字段的载荷（标识不缺席）。
 
     Returns:
-        JSON 字符串（超长截断）；空参数返回空串。
+        JSON 字符串（超长截断）；序列化失败返回空串。
     """
-    if not params:
-        return ""
+    data = {**(params or {}), **AI_MARKER_FIELDS}
     try:
-        payload = json.dumps(params, ensure_ascii=False, default=str, sort_keys=True)
+        payload = json.dumps(data, ensure_ascii=False, default=str, sort_keys=True)
     except (TypeError, ValueError) as e:
         logger.debug(f"生成参数序列化失败（跳过元数据嵌入）: {e}")
         return ""

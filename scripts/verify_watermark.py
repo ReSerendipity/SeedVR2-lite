@@ -10,7 +10,7 @@
 - 未配置密钥时：退化为品牌字符串包含检测（仅参考）
 
 用法:
-    python scripts/verify_watermark.py <image> [--show-payload]
+    python scripts/verify_watermark.py <image> --show-payload   # 打印载荷 + 可反查 task_id
     python scripts/verify_watermark.py <video> --frames 8   # 均匀采样 N 帧验证
 
 视频判定口径：任一采样帧携带可信水印即通过（部分帧可能因编码量化
@@ -35,7 +35,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from app.integrated_app.security.watermark import extract_watermark, verify_watermark  # noqa: E402
+from app.integrated_app.security.watermark import (  # noqa: E402
+    extract_watermark_best,
+    strip_watermark_envelope,
+    verify_watermark,
+)
 
 _VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv"}
 
@@ -83,7 +87,7 @@ def _verify_video(path: Path, sample_frames: int, require_all: bool) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="SeedVR2 输出水印验证工具（图像/视频）")
     parser.add_argument("path", help="待验证的图像或视频文件路径")
-    parser.add_argument("--show-payload", action="store_true", help="打印提取到的水印载荷（仅图像）")
+    parser.add_argument("--show-payload", action="store_true", help="打印提取到的水印载荷与可反查的 task_id（仅图像）")
     parser.add_argument("--frames", type=int, default=8, help="视频采样帧数（默认 8）")
     parser.add_argument(
         "--require-all",
@@ -107,9 +111,14 @@ def main() -> int:
         print(f"[错误] 图像读取/解析失败: {e}")
         return 2
 
-    payload = extract_watermark(arr)
+    # 逐档尝试提取（鲁棒档产物用默认无损档参数只会读出乱码）
+    payload = extract_watermark_best(arr)
     if args.show_payload and payload:
-        print(f"提取载荷: {payload[:200]}")
+        printable = "".join(ch if ch.isprintable() else "?" for ch in payload[:200])
+        print(f"提取载荷: {printable}")
+        task_id = strip_watermark_envelope(payload)
+        clean_id = "".join(ch if ch.isprintable() else "?" for ch in task_id)
+        print(f"反查 ID: {clean_id}" if clean_id else "反查 ID: （载荷无法解析为任务 ID）")
 
     if verify_watermark(arr):
         print(f"[通过] 检测到可信 SeedVR2 归属水印: {path}")

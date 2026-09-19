@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""水印嵌入失败处置策略测试（评估报告 R2：fail-closed 兜底）。
+"""水印失败处置策略测试（评估报告 R2：fail-closed 兜底 + 落盘后复验）。
 
 覆盖：
 - resolve_watermark_failure_policy：默认值 / 合法值 / 非法值回退
 - embed_with_retry：成功路径 / 首次失败重试成功 / 双重失败返回错误
 - handle_watermark_failure：block 抛异常 + 审计 / mark_metadata 降级审计 / ignore 静默
 - write_provenance_sidecar：侧车文件内容与路径规则
+- select_image_embed_tier：有损格式必须走鲁棒档（2026-09-19 实测无损档经 JPEG q95 即失效）
+- output_carries_watermark + handle_watermark_loss：落盘复验与三档处置
+- report_missing_watermark_key：密钥缺失只审计一次
 
 所属项目：SeedVR2 (SeedVR2 视频/图像修复工具)
 """
@@ -16,13 +19,22 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from app.integrated_app.security.watermark import (
+    _VIDEO_ALPHA,
+    _VIDEO_REPEAT,
+    _WATERMARK_ALPHA,
+    embed_watermark,
+)
 from app.integrated_app.services import watermark_policy
 from app.integrated_app.services.watermark_policy import (
     DEFAULT_WATERMARK_FAILURE_POLICY,
     WatermarkEmbedError,
     embed_with_retry,
     handle_watermark_failure,
+    handle_watermark_loss,
+    output_carries_watermark,
     resolve_watermark_failure_policy,
+    select_image_embed_tier,
     write_provenance_sidecar,
 )
 
@@ -130,3 +142,155 @@ def test_sidecar_written_next_to_output(tmp_path):
     assert body["watermark_embedded"] is False
     assert body["payload"] == "task-1"
     assert body["tool"] == "SeedVR2"
+
+
+# ---------- select_image_embed_tier / output_carries_watermark（自适应档位 + 落盘复验） ----------
+
+
+def _smooth_img(size: int = 512) -> np.ndarray:
+    """平滑渐变图（低频内容）：鲁棒档经 JPEG 的存活对内容敏感，均匀白噪声是
+    中频 QIM 的最坏情形（实测连 q95 都活不下来），拿它当夹具会测出假阴性。
+
+    尺寸取 512：签名载荷（task_id + 64 位摘要）× repeat 3 需 ≥2328 个 8x8 块，
+    约 400px 以下冗余会被砍（见 test_repeat_downgrade_is_warned）。
+    """
+    ramp = np.linspace(40, 220, size, dtype=np.uint8)
+    return np.repeat(ramp[None, :, None], size, axis=0)[:, :, [0, 0, 0]].copy()
+
+
+@pytest.mark.parametrize("ext", [".jpg", ".jpeg", ".webp", ".JPEG"])
+def test_lossy_formats_select_robust_tier(ext):
+    assert select_image_embed_tier(ext) == (_VIDEO_ALPHA, _VIDEO_REPEAT)
+
+
+@pytest.mark.parametrize("ext", [".png", ".bmp", ".tiff", ""])
+def test_lossless_formats_select_lossless_tier(ext):
+    assert select_image_embed_tier(ext) == (_WATERMARK_ALPHA, 1)
+
+
+def _save_jpeg(arr: np.ndarray, path: Path, quality: int = 95) -> None:
+    from PIL import Image
+
+    # 与图像管线的 JPEG 落盘参数一致（quality=95 + optimize）
+    Image.fromarray(arr).save(path, quality=quality, optimize=True)
+
+
+def test_robust_tier_survives_pipeline_jpeg_encoder(tmp_path):
+    """有损格式换鲁棒档后，产物经流水线同款编码仍可验签（此前该场景水印全灭）。"""
+    alpha, repeat = select_image_embed_tier(".jpg")
+    path = tmp_path / "out.jpg"
+    _save_jpeg(embed_watermark(_smooth_img(), payload="task-jpg", alpha=alpha, repeat=repeat), path)
+    assert output_carries_watermark(str(path)) is True
+
+
+def test_production_shaped_payload_keeps_redundancy_at_512(tmp_path, monkeypatch):
+    """生产载荷形状（品牌前缀 + 16 位任务 ID + 64 位摘要 ≈ 824 bit）在 512×512 上
+    仍撑得起 repeat=3，且经流水线同款编码后可验签——容量预算的回归锁。"""
+    monkeypatch.setenv("SEEDVR2_WATERMARK_KEY", "issuer-key-production")
+    alpha, repeat = select_image_embed_tier(".jpg")
+    path = tmp_path / "prod.jpg"
+    _save_jpeg(embed_watermark(_smooth_img(), payload="3f9a1c7e2b8d40a6", alpha=alpha, repeat=repeat), path)
+    assert output_carries_watermark(str(path)) is True
+
+
+def test_lossless_tier_is_erased_by_jpeg_encoder(tmp_path):
+    """回归哨兵：无损档水印经 JPEG q95 必失——这正是有损格式必须换档的实测依据。
+
+    反过来不成立：鲁棒档对 JPEG 是临界存活（依内容摆动），所以产物真伪以
+    落盘复验为准，不靠档位承诺。
+    """
+    alpha, repeat = select_image_embed_tier(".png")
+    path = tmp_path / "out.jpg"
+    _save_jpeg(embed_watermark(_smooth_img(), payload="task-jpg", alpha=alpha, repeat=repeat), path)
+    assert output_carries_watermark(str(path)) is False
+
+
+def test_repeat_downgrade_is_warned(tmp_path, monkeypatch, caplog):
+    """256×256 装不下「签名载荷 × repeat 3」，冗余被砍必须告警而非静默。"""
+    import logging
+
+    monkeypatch.setenv("SEEDVR2_WATERMARK_KEY", "fixed-key-for-deterministic-payload-length")
+    alpha, repeat = select_image_embed_tier(".jpg")
+    small = np.full((256, 256, 3), 128, dtype=np.uint8)
+    with caplog.at_level(logging.WARNING, logger="app.integrated_app.security.watermark"):
+        embed_watermark(small, payload="task-small", alpha=alpha, repeat=repeat)
+    assert any("重复码" in m for m in caplog.messages), "冗余降档不得静默发生"
+
+
+def test_lossless_tier_survives_png_output(tmp_path):
+    from PIL import Image
+
+    alpha, repeat = select_image_embed_tier(".png")
+    path = tmp_path / "out.png"
+    Image.fromarray(embed_watermark(_smooth_img(), payload="task-png", alpha=alpha, repeat=repeat)).save(path)
+    assert output_carries_watermark(str(path)) is True
+
+
+def test_output_carries_watermark_false_for_unreadable_file(tmp_path):
+    """读不到/解不开一律判「未携带」，让调用方走策略处置而非当作有水印。"""
+    assert output_carries_watermark(str(tmp_path / "missing.png")) is False
+
+
+# ---------- handle_watermark_loss（落盘后水印丢失） ----------
+
+
+def test_loss_mark_metadata_writes_sidecar(tmp_path, monkeypatch):
+    events = []
+    monkeypatch.setattr(watermark_policy, "audit_event", lambda event, **kw: events.append(event))
+    output = tmp_path / "o.png"
+    output.write_bytes(b"\x89PNG fake")
+    handle_watermark_loss(policy="mark_metadata", output_path=str(output), error="编码吃掉水印", payload="task-1")
+    assert output.exists(), "mark_metadata 档不得删除产物"
+    sidecar = json.loads((tmp_path / "o.provenance.json").read_text(encoding="utf-8"))
+    assert sidecar["reason"] == "编码吃掉水印"
+    assert events == ["WATERMARK_LOSS_DEGRADED"]
+
+
+def test_loss_block_removes_output_and_raises(tmp_path, monkeypatch):
+    events = []
+    monkeypatch.setattr(watermark_policy, "audit_event", lambda event, **kw: events.append(event))
+    output = tmp_path / "o.png"
+    output.write_bytes(b"\x89PNG fake")
+    with pytest.raises(WatermarkEmbedError, match="落盘后不可验证"):
+        handle_watermark_loss(policy="block", output_path=str(output), error="编码吃掉水印")
+    assert not output.exists(), "block 档必须兑现「产出不落盘」"
+    assert not (tmp_path / "o.provenance.json").exists()
+    assert events == ["WATERMARK_LOSS_BLOCKED"]
+
+
+def test_loss_ignore_keeps_output_without_sidecar(tmp_path, monkeypatch):
+    events = []
+    monkeypatch.setattr(watermark_policy, "audit_event", lambda event, **kw: events.append(event))
+    output = tmp_path / "o.png"
+    output.write_bytes(b"\x89PNG fake")
+    handle_watermark_loss(policy="ignore", output_path=str(output), error="编码吃掉水印")
+    assert output.exists()
+    assert not (tmp_path / "o.provenance.json").exists()
+    assert events == []
+
+
+# ---------- report_missing_watermark_key（密钥缺失降级可见化） ----------
+
+
+def test_missing_key_audited_once(monkeypatch):
+    import app.integrated_app.security.watermark as wm
+
+    events = []
+    monkeypatch.setattr(watermark_policy, "audit_event", lambda event, **kw: events.append(event))
+    monkeypatch.setattr(watermark_policy, "_key_missing_audited", False)
+    monkeypatch.setattr(wm, "watermark_key_available", lambda: False)
+
+    assert watermark_policy.report_missing_watermark_key() is False
+    assert watermark_policy.report_missing_watermark_key() is False
+    assert events == ["WATERMARK_KEY_MISSING"], "取证日志只记一次，避免批量/逐帧刷屏"
+
+
+def test_key_present_audits_nothing(monkeypatch):
+    import app.integrated_app.security.watermark as wm
+
+    events = []
+    monkeypatch.setattr(watermark_policy, "audit_event", lambda event, **kw: events.append(event))
+    monkeypatch.setattr(wm, "watermark_key_available", lambda: True)
+
+    assert watermark_policy.report_missing_watermark_key() is True
+    assert events == []

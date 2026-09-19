@@ -105,5 +105,14 @@ class TestResolveEndpoint:
             )["data"]
             assert by_payload["found"] is True
 
+            # 真实取证入口拿到的是从图中提取的信封（签名摘要 + 按字节补齐的尾部噪声），
+            # 必须剥回 task_id 才能对上历史记录
+            envelope = "task-777|" + "b" * 64 + "\ufffd\ufffd噪声"
+            by_envelope = json.loads((await resolve_output_provenance(history_db=db, watermark_payload=envelope)).body)[
+                "data"
+            ]
+            assert by_envelope["found"] is True
+            assert by_envelope["task"]["task_id"] == "task-777"
+
             missing = json.loads((await resolve_output_provenance(history_db=db, task_id="task-none")).body)["data"]
             assert missing["found"] is False

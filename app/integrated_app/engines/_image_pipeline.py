@@ -370,29 +370,6 @@ class _ImagePipelineMixin:
         del input_video, ref_np, original_alpha
         gc.collect()
 
-        # 嵌入不可感知数字水印 (归属溯源, DCT 频域)
-        # 失败处置策略化（评估报告 R2）：不再静默输出无水印文件
-        watermark_cfg = self.config.get("security", {}).get("watermark", {})
-        enable_watermark = watermark_cfg.get("enable", True)
-        watermark_embedded = True
-        watermark_policy = None
-        if enable_watermark:
-            from app.integrated_app.security.audit import audit_event
-            from app.integrated_app.services.watermark_policy import (
-                embed_with_retry,
-                handle_watermark_failure,
-                resolve_watermark_failure_policy,
-                write_provenance_sidecar,
-            )
-
-            # P3-1：payload 绑定 task_id，使输出图可反查到产生它的任务与参数
-            watermark_policy = resolve_watermark_failure_policy(self.config)
-            result_np, watermark_embedded, wm_error = embed_with_retry(result_np, payload=watermark_payload)
-            if watermark_embedded:
-                logger.debug("数字水印已嵌入输出图像 (payload=%s)", watermark_payload or "auto")
-            else:
-                handle_watermark_failure(policy=watermark_policy, error=wm_error, payload=watermark_payload)
-
         # 保存：默认按「日期_时分秒_模型」命名；批量场景传入 output_name 保留原文件名
         # 获取输出格式（从 inf 或默认自动匹配）
         requested_format = inf.get("output_format", "").lower().strip()
@@ -469,6 +446,27 @@ class _ImagePipelineMixin:
         except Exception as e:
             logger.debug(f"生成参数元数据构建失败（跳过嵌入）: {e}")
 
+        # 嵌入不可感知数字水印 (归属溯源, DCT 频域)——强制启用，无关闭开关。
+        # 失败处置策略化（评估报告 R2）：不再静默输出无水印文件
+        # P3-1：payload 绑定 task_id，使输出图可反查到产生它的任务与参数
+        from app.integrated_app.services.watermark_policy import (
+            embed_with_retry,
+            handle_watermark_loss,
+            output_carries_watermark,
+            report_missing_watermark_key,
+            resolve_watermark_failure_policy,
+            select_image_embed_tier,
+        )
+
+        watermark_policy = resolve_watermark_failure_policy(self.config)
+        report_missing_watermark_key()
+        # 自适应档位：有损编码格式连 JPEG q95 都会抹掉无损档水印（2026-09-19 实测），
+        # 那类产物直接用鲁棒档（PSNR ≈ 37dB）换可举证性；PNG/BMP/TIFF 保持无损档画质。
+        tier_alpha, tier_repeat = select_image_embed_tier(ext)
+        result_np, watermark_embedded, wm_error = embed_with_retry(
+            result_np, payload=watermark_payload, alpha=tier_alpha, repeat=tier_repeat
+        )
+
         pil_img = PILImage.fromarray(result_np)
         # JPEG/WebP 不支持透明通道，需要转换为 RGB
         if requested_format in ("jpg", "jpeg") and pil_img.mode in ("RGBA", "LA", "P"):
@@ -492,15 +490,27 @@ class _ImagePipelineMixin:
             except Exception as e:
                 logger.debug(f"EXIF 复制失败: {e}")
 
-        # 水印缺失兜底（评估报告 R2）：mark_metadata 策略下写侧车元数据标识，
-        # 保证「输出无隐式水印」这件事本身可被发现而非静默
-        if enable_watermark and not watermark_embedded and watermark_policy == "mark_metadata":
-            try:
-                sidecar_path = write_provenance_sidecar(output_path, payload=watermark_payload)
-                logger.warning(f"输出无水印，已写溯源侧车: {sidecar_path}")
-            except OSError as e:
-                logger.error(f"[SECURITY] 水印缺失且溯源侧车写入失败: {e}")
-                audit_event("WATERMARK_SIDECAR_FAILED", detail=str(e), payload=watermark_payload)
+        # 水印缺失统一处置（评估报告 R2）：嵌入报错 ≠ 唯一失败方式——编码器/后处理
+        # 同样能抹掉它，只有重读落盘产物验签才知道真伪；缺失绝不再静默。
+        if not watermark_embedded:
+            loss_reason = wm_error
+        elif output_carries_watermark(output_path):
+            logger.debug(
+                "数字水印已嵌入并落盘验签通过 (payload=%s, alpha=%s, repeat=%s)",
+                watermark_payload or "auto",
+                tier_alpha,
+                tier_repeat,
+            )
+            loss_reason = None
+        else:
+            loss_reason = f"{requested_format.upper()} 编码后水印验签未通过（alpha={tier_alpha}, repeat={tier_repeat}）"
+        if loss_reason:
+            handle_watermark_loss(
+                policy=watermark_policy,
+                output_path=output_path,
+                error=loss_reason,
+                payload=watermark_payload,
+            )
 
         # 计算输出统计
         if result_np.shape[-1] >= 3:
