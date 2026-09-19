@@ -95,6 +95,7 @@ grep -rn --include='*.py' -iE 'C:\\Users|/home/|/Users/' .
 | 单测与覆盖率 | `pytest tests/ --cov=app/integrated_app -q`（阈值 55%：`pyproject.toml` 的 `fail_under` 与 `ci.yml` 的 Coverage Gate 同值） | `ci.yml` |
 | 前后端契约 | `python -m pytest tests/test_api_contract.py -q` | `ci.yml` |
 | API 一致性 | `python scripts/audit_api_consistency.py all` | `ci.yml` |
+| 端到端 UI（3 浏览器矩阵） | `cd tests && npx playwright test --project=chromium-desktop`（CI 另跑 firefox / webkit；本地需先起 `app_server.py`） | `e2e.yml` —— **main 必需检查**；PR 触发刻意不带 `paths` 过滤，被过滤掉的 workflow 不产生 check run，必需检查会永远停在 Expected |
 | 根目录结构 | `python .github/scripts/check_layout.py` | `structure-guard.yml`、pre-commit |
 | 路径可移植性 | `python scripts/check_no_hardcoded_paths.py --all` | `.githooks/pre-commit` |
 | 引用可用性 | `python scripts/check_local_only_refs.py --all` | `structure-guard.yml`、`docs-consistency.yml`、`.githooks/pre-commit` |

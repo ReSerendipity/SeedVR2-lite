@@ -1,15 +1,13 @@
 name: CI - E2E Playwright
 
 on:
+  # 故意不加 paths 过滤：本 workflow 的 3 个 job 是 main 的必需检查。被路径过滤掉的
+  # workflow 一个 check run 都不产生，必需检查就会永远停在 "Expected"，纯文档 PR 直接
+  # 卡死合不进去——main 的 6b0d7a0 就是实例（docs 合并没有触发 E2E）。
+  # 代价：文档类 PR 也要等一轮 E2E 矩阵（约 6-13 分钟）。
   pull_request:
     branches: [main]
-    paths:
-      - 'app/integrated_app/**'
-      - 'tests/specs/**'
-      - 'tests/pages/**'
-      - 'tests/fixtures/**'
-      - 'tests/utils/**'
-      - 'tests/playwright.config.ts'
+  # push 侧保留过滤：main 上的 E2E 只是事后验证，没有东西在等它，不必为文档改动跑矩阵。
   push:
     branches: [main]
     paths:
