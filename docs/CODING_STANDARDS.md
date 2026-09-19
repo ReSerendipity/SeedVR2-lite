@@ -1,7 +1,7 @@
 # 编码与 Git 规范（Coding & Git Standards）
 
 > 本文件是仓库内所有入库内容的**可移植性、依赖与 Git 卫生**约束。任何修改请在提交前通读并对照检查。
-> 最后更新：2026-09-18（路径可移植性专项修复 + 新增第 5 节「禁区与门禁口径」公开子集）。
+> 最后更新：2026-09-20（新增「发布版号口径」门禁：README 声明版号须等于最新稳定 tag）。原 2026-09-18：路径可移植性专项修复 + 新增第 5 节「禁区与门禁口径」公开子集。
 
 ## 1. 路径可移植性（强制）
 
@@ -99,6 +99,7 @@ grep -rn --include='*.py' -iE 'C:\\Users|/home/|/Users/' .
 | 路径可移植性 | `python scripts/check_no_hardcoded_paths.py --all` | `.githooks/pre-commit` |
 | 引用可用性 | `python scripts/check_local_only_refs.py --all` | `structure-guard.yml`、`docs-consistency.yml`、`.githooks/pre-commit` |
 | 规范引用幻影 | `python scripts/check_spec_refs.py`（依赖仓外家族 auditor，缺失时自动 skip） | `docs-consistency.yml`、`structure-guard.yml` |
+| 发布版号口径 | `python scripts/check_readme_release_version.py`（README 声明须等于最新稳定 tag；浅克隆会硬失败） | `docs-consistency.yml` |
 | 密钥扫描 | `gitleaks detect --config gitleaks.toml` | `gitleaks.yml`、`.githooks/pre-push` |
 
 - **push 前本地预检**：钩子目录 `.githooks/` 随仓库分发，克隆后执行 `git config core.hooksPath .githooks`
