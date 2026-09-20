@@ -63,8 +63,12 @@ test.describe('First-run agreement gate', () => {
     await expect(page.locator('#agreementModal')).toBeHidden();
     expect(await page.evaluate((k) => localStorage.getItem(k), SEEN_KEY)).toBe(AGREEMENT_VERSION);
 
-    // 再次进入不再打扰（用 goto 而非 reload：app.js 的 SSE 重连会让 reload 偶发超时）
-    await page.goto('/restore', { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('#agreementModal')).toBeHidden();
+    // 跨页面保持要在**新标签页**验证：同一标签页里再 goto 会撞上 app.js 的 SSE 重连风暴
+    // （base.page.ts 为 firefox 记过同一症状：旧文档拆载与新文档 domcontentloaded 之间死锁，
+    // 60s 超时）。新标签页没有待拆载的文档，且共享同一 storageState，正好是要断言的语义。
+    const second = await page.context().newPage();
+    await second.goto('/restore', { waitUntil: 'domcontentloaded' });
+    await expect(second.locator('#agreementModal')).toBeHidden();
+    await second.close();
   });
 });
