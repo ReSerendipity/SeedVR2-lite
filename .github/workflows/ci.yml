@@ -7,7 +7,7 @@ on:
     # 都是 main 的必需检查，而 workflow 级过滤掉的 workflow **不产生任何 check run**，
     # 必需检查就永远停在 Expected、纯文档 PR 直接冻死（#99/#101 实测卡 BLOCKED，
     # 20 项已上报的检查全绿也没用）。该过滤自 3e59722（2026-08-30）起存在。
-    # 省时间的快路径下移到 jobs.changes + 各 job 的 if，见下。
+    # 快路径只能给非必需检查用（见 jobs.changes 的注释）；必需的两组在 PR 上恒跑。
   push:
     branches: [main]
     paths-ignore:
@@ -20,9 +20,11 @@ permissions:
   contents: read
 
 jobs:
-  # 判定本批改动是否与后端门禁相关。口径与原 paths-ignore 一致：只改 docs/ website/
-  # demo/ 或 .md 时判为不相关。与 workflow 级过滤的区别是：这里跳过，job 仍会登记
-  # 一个 skipped 的 check run，必需检查因此能被满足而不是悬空。
+  # 判定本批改动是否与后端门禁相关，目前只喂给 security-assertions（非必需检查）。
+  # **不要把它接到 quality-gate / typecheck 的 job 级 `if` 上**：必需检查的 context 名带矩阵
+  # 后缀（`quality-gate (ubuntu-latest)`），而被 `if` 跳过的 job 只登记一个裸名 `quality-gate`
+  # 的 skipped 记录，名字对不上 → 必需检查依旧不满足，纯文档 PR 仍卡 BLOCKED。
+  # （#102 就是这个形态，在 #99/#101 上实测确认）
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -50,8 +52,6 @@ jobs:
           printf '%s\n' "$files" | head -20
 
   quality-gate:
-    needs: changes
-    if: needs.changes.outputs.relevant == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -182,8 +182,6 @@ jobs:
   # （原步骤见 git 历史；迁移记录 docs/reports/mypy-ratchet-组织级门禁迁移_20260903.md 为维护者本地文件，未随仓库分发）
   typecheck:
     name: Typecheck (mypy ratchet)
-    needs: changes
-    if: needs.changes.outputs.relevant == 'true'
     uses: ReSerendipity/.github/.github/workflows/python-quality-baseline.yml@main
     with:
       package: app/integrated_app
