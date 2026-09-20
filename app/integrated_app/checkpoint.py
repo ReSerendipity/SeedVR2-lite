@@ -79,7 +79,7 @@ class TaskCheckpoint:
         self.checkpoint_dir = Path(checkpoint_dir)
         # checkpoint_dir 取自 config 的 runtime.task.checkpoint_dir（管理员本地配置），
         # 不是请求输入；这里的 resolve() 正是为了拿到「必须落在其内」的白名单基线。
-        self._base = self.checkpoint_dir.resolve()  # codeql[py/path-injection] ignore
+        self._base = self.checkpoint_dir.resolve()
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, task_id: str) -> Path:
