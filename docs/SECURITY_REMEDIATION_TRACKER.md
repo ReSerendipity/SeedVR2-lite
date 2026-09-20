@@ -36,6 +36,25 @@
 | C-01 | 0.0.0.0 监听 | `config.yaml` 仅 `127.0.0.1`；`ServerConfig.host` 强制回环校验器（`host_must_be_loopback`）；CI `security-assertions` 禁 0.0.0.0 | ✅ 既有 | `config_models.py`、`ci.yml` |
 | H 系 | 鉴权/速率/CSRF | `basic_auth.py` / `rate_limit.py` / `csrf.py` 中间件齐备 | ✅ 既有 | `app/integrated_app/middleware/` |
 | M 系 | 路径白名单/完整性 | `path_guard.py`、`integrity_selfcheck.py`、`integrity_manifest.json(.sig)`、`weight_encryption.py`、`watermark.py` 齐备 | ✅ 既有 | `app/integrated_app/security/` |
+| I-01 | 语言代码可越出 `locales/` | `_load_translations()` 的未映射语言兜底曾无条件 `f"{lang}.json"`；`POST /api/system/locale` 不校验 locale，`../` 可读取任意 `.json`（存在性预言机 + 内容进翻译缓存）。现按 `_LANG_TAG_RE`（BCP-47 主标签 + ≤2 子标签）白名单放行，非法值直接返回 None 且**不触碰文件系统** | ✅ 已修 | `app/integrated_app/i18n.py`、`tests/test_i18n.py` |
+| K-01 | checkpoint 任务 ID 越界 | `_path()` 下游是 read/write/unlink，此前只靠入站幂等键正则把关。现 sink 侧自守：`[A-Za-z0-9_.-]{1,64}` 白名单 `fullmatch` 并取匹配值拼文件名、拒绝全点号 ID，再断言 resolve 后仍在 `checkpoint_dir` 内 | ✅ 已修（工具仍报，见下） | `app/integrated_app/checkpoint.py`、`tests/test_checkpoint_ttl.py` |
+| D-01 | 演示站 HTML 注入 | `demo/index.html` 四处把「用户文件名 / 手输路径 / 表单值」拼进 `innerHTML`。改为 DOM API 组装 + `textContent`（真实浏览器验证：修复前会真的注入 `<img>` 且文件名被吃掉成 `.png`，修复后按字面显示且估算文案一字未变） | ✅ 已修 | `demo/index.html` |
+
+> **CodeQL 高危告警对账（2026-09-20，15 条 high）**
+>
+> - **代码侧收口、CI 已确认告警不再出现（6 条）**：`py/path-injection` 217/218（i18n 语言代码
+>   白名单，真实可利用）与 `js/xss-through-dom` 231–234（demo 四处注入点）。判据：PR #98 的
+>   CodeQL 结果里这两条 rule 已无告警。
+> - **消毒已落地但工具仍报（3 条）**：`py/path-injection` 214/215/216（checkpoint）。构造函数那处
+>   `checkpoint_dir` 取自管理员本地 config 而非请求输入；`_path()` 已是白名单匹配值 + 目录包含
+>   断言。`# codeql[py/path-injection] ignore` 放行尾与放上一行**两种位置都实测无效**（告警只按
+>   新行号重锚），故不保留该注释。→ 合并后在告警面按 `false positive` 关闭并留理由，不改代码迁就查询建模。
+> - **修复后新增 1 条**：`demo/index.html:678` 的 `img.src = URL.createObjectURL(f)`——blob URL 由
+>   浏览器自造，`<img>` 的 src 无脚本执行面 → 同按 `false positive` 关闭。
+> - **已复核为误报并关闭（6 条）**：`security/path_guard.py` 的 3 条（`resolve()` 本身就是消毒动作，
+>   输入是配置里的白名单条目；该目录属禁区，不改码）、两处下载端点的 `FileResponse`（`output_path`
+>   来自服务端任务态且已过 PathGuard）、`tests/test_i18n_completeness.py` 的 `py/bad-tag-filter`
+>   （测试里用来剥标签查裸键的正则，非安全边界）。
 
 > 注：SeedVR2-lite 安全基线较成熟（auth/CSRF/rate-limit/path-guard/完整性校验/
 > 权重加密/水印均已具备），本仓重点补强的是「配置-实现一致性根因门禁」与「安全

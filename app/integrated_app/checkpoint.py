@@ -30,11 +30,16 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# checkpoint 文件名的允许字符集（与入站幂等键同一口径）：`_path()` 取匹配结果拼文件名，
+# 使 sink 侧的消毒不依赖调用方自觉。
+_TASK_ID_RE = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
 
 
 def _file_fingerprint(path: str) -> dict[str, Any]:
@@ -72,6 +77,9 @@ class TaskCheckpoint:
             checkpoint_dir: checkpoint 文件存储目录路径，不存在时自动创建。
         """
         self.checkpoint_dir = Path(checkpoint_dir)
+        # checkpoint_dir 取自 config 的 runtime.task.checkpoint_dir（管理员本地配置），
+        # 不是请求输入；这里的 resolve() 正是为了拿到「必须落在其内」的白名单基线。
+        self._base = self.checkpoint_dir.resolve()
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, task_id: str) -> Path:
@@ -81,9 +89,21 @@ class TaskCheckpoint:
             task_id: 批量任务 ID。
 
         Returns:
-            checkpoint 文件的 Path 对象。
+            checkpoint 文件的 Path 对象，必定落在 checkpoint_dir 之内。
+
+        Raises:
+            ValueError: task_id 不符合 `[A-Za-z0-9_.-]{1,64}`、只由点号组成，
+                或解析后越出目录。入站虽有同款幂等键正则把关，但 sink 侧不该假设
+                每个调用方（含 DB 回读）都被校验过——本函数下游是 read/write/unlink。
         """
-        return self.checkpoint_dir / f"{task_id}.json"
+        match = _TASK_ID_RE.fullmatch(task_id or "")
+        if match is None or not match.group(0).strip("."):
+            raise ValueError(f"非法任务 ID：{task_id!r}")
+        name = match.group(0)
+        path = (self._base / f"{name}.json").resolve()
+        if not path.is_relative_to(self._base):
+            raise ValueError(f"任务 ID 解析后越出 checkpoint 目录: {task_id!r}")
+        return path
 
     def save_checkpoint(
         self,
