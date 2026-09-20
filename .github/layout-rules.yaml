@@ -58,11 +58,13 @@ gitignored_expect:
   - coverage
 root_allowlist:
   - .dockerignore
+  - .editorconfig
   - .env.example
   - .gitattributes
   - .githooks
   - .github
   - .gitignore
+  - .mailmap
   - .pre-commit-config.yaml
   - CHANGELOG.md
   - CONTRIBUTING.md  # 允许出现在根目录：仓库内副本属维护者本地，未随仓库分发（以组织级 CONTRIBUTING.md 为准）
@@ -71,6 +73,7 @@ root_allowlist:
   - NOTICE
   - PRIVACY_POLICY.md
   - README.md
+  - SECURITY_MATRIX.md
   - THIRD_PARTY_NOTICES.md
   - USER_AGREEMENT.md
   - _archive
@@ -87,6 +90,7 @@ root_allowlist:
   - docker-compose.yml
   - docs
   - experiments
+  - gitleaks.toml
   - install.bat
   - install.sh
   - launcher
