@@ -1,10 +1,20 @@
 version: 2
+# 冷却期（cooldown）：新发布的版本先等若干天再生成 PR。本仓对 dependabot 的非 major
+# PR 开了自动合并（.github/workflows/automerge.yml），没有冷却就等于"上游刚发布即自动进主干"，
+# 正是投毒窗口最窄的时刻。数值语义：default-days 为未显式分类时的兜底；
+# 安全补丁类更新不受冷却影响，仍即时生成 PR。
+# 参考 https://docs.github.com/code-security/dependabot/dependabot-version-updates/optimizing-pr-creation-version-updates
 updates:
   # minor/patch 合并为单个 PR，major 仍各自单独开 PR（便于逐个评审高风险版本跳跃）。
   # open-pull-requests-limit 限制并发 PR 数，避免 Dependabot 一次性铺开挤占 Actions 并发额度。
   - package-ecosystem: pip
     directory: "/"
     schedule: { interval: monthly }
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     open-pull-requests-limit: 5
     labels: [dependencies]
     ignore:
@@ -22,6 +32,11 @@ updates:
   - package-ecosystem: npm
     directory: "/desktop"
     schedule: { interval: monthly }
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     open-pull-requests-limit: 5
     labels: [dependencies]
     groups:
@@ -32,6 +47,11 @@ updates:
   - package-ecosystem: npm
     directory: "/tests"
     schedule: { interval: monthly }
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     open-pull-requests-limit: 5
     labels: [dependencies]
     groups:
@@ -42,6 +62,11 @@ updates:
   - package-ecosystem: npm
     directory: "/website"
     schedule: { interval: monthly }
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     open-pull-requests-limit: 5
     labels: [dependencies]
     groups:
@@ -52,6 +77,11 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule: { interval: monthly }
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     open-pull-requests-limit: 5
     labels: [dependencies]
     groups:
