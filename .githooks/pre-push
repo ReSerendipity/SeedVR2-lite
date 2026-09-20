@@ -5,6 +5,10 @@
 #   3) 否则 -> 退回根目录守卫 structure-guard
 # gitleaks v8.30.1 无 `git pre-push` 子命令，改用 detect --log-opts 扫描 remote..local 范围。
 # 紧急绕过：git push --no-verify（仅限用户明确要求时）
+#
+# 本地未分发引用：precheck.ps1 —— 家族既有的本地四步预检脚本，按「干净交付」决策不随仓库
+# 分发；本钩子对其做存在性判断，缺失时自动降级为 structure-guard + CI 兜底（克隆后没有它
+# 属预期，不是坏境）。
 failed=0
 
 # 1) gitleaks 扫描待推送提交（密钥防线）

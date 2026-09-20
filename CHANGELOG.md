@@ -61,6 +61,24 @@
 
 * **CodeQL 其余 6 条 high 复核为误报并已在告警面 dismiss 写理由**：`security/path_guard.py` 3 条（`resolve()` 即消毒动作本身，入参是配置中的白名单条目；该目录属 `docs/CODING_STANDARDS.md` §5.1 禁区，未改码）、两处下载端点的 `FileResponse`（`output_path` 来自服务端任务态且过 PathGuard 才放行）、`tests/test_i18n_completeness.py` 的 `py/bad-tag-filter`（测试内剥标签正则，非安全边界）。对账记录见 `docs/SECURITY_REMEDIATION_TRACKER.md` §2 及其后注。
 
+### Fixed
+
+* **完整性清单的行尾陷阱（`generate_integrity_manifest.py` 写 CRLF → 签名对新克隆失效）**：生成器按宿主文本模式写文件，在 Windows 上产出 CRLF，而 `.gitattributes` 规定 `*.json eol=lf`、`pre-commit` 的 end-of-file-fixer 还会补/改结尾换行——**签在磁盘字节上的签名，与克隆出来的字节不是同一份**，用户端启动自检会误报"清单签名无效"（`integrity_enforce=true` 时直接拒绝启动）。现生成器以 `newline="
+"` + 单个结尾换行直接产出 git 存放态字节，顺序不再敏感；`sign_integrity_manifest.py` 的 HMAC 分支补上与 Ed25519 分支同口径的"签完立即回验、失败即非零退出"，把这类事故从人工记顺序变成机器门禁。
+* **`.githooks/pre-push` 的幻影引用声明在 rebase/合并中被丢回，导致 `check_local_only_refs --all` 报 5 处**：`docs-consistency.yml` 与 `structure-guard.yml` 跑的都是 `--all`，即**当时 CI 已经会红**。已补回文件级「本地未分发引用：precheck.ps1」声明；现全库 745 个追踪文件零幻影引用。
+* **门禁回归测试用条件 skip 换绿灯（CI 上 14 例中 3 例静默失效）**：`tests/test_local_ref_gate.py` 读本机 `git ls-files` 结果再决定是否 skip，而 `AGENTS.md` / `docs/agents/` / `docs/README.md` 只存在于维护者机器 → CI 上这三例必跳。**最终落地形态是 #120 的最小 git 仓夹具**（在 `tmp_path` 里 `git init` 一个可控仓、把 `check_local_only_refs.ROOT` 重定向过去），三种磁盘状态在受控夹具里复现，生产代码不必为测试开洞；本 PR 原先加的 `hits_local_only(..., exists=)` 注入缝因此撤销，只保留一条「真仓库采集器仍有效」的用例作夹具与本仓的对照。
+* **`desktop/src-tauri/src/health_check.rs` 被编辑器带进 UTF-8 BOM**（HEAD 版本无 BOM）：已去除。`window.rs` 的既有 BOM 未动（属另一条进行中的桌面壳工作，避免并行改撞车）。
+
+### Added
+
+* **取证模式 `SEEDVR2_WATERMARK_PROOF_MODE=1`**：图像输出为 JPEG/WebP 时强制转存 PNG。有损编码器对隐式标识是临界存活（实测 JPEG q90/q95 依内容摆动、q80 以下必失），开启后产物侧变为确定性可验证；默认关闭以保持交付格式习惯。视频维持 H.264 CRF18（实测 16/16 帧存活），不加无损档。
+* **溯源记录改落 `data/provenance/`（可用 `SEEDVR2_PROVENANCE_DIR` 覆写）**：原先写在产物旁边（`<产物名>.provenance.json`）——输出目录是交付面，多出来的 JSON 会被当垃圾删掉（连带丢掉可发现性）并污染保留策略的文件计数。现文件名内嵌产物路径哈希（`<名>__<blake2b8>.provenance.json`），JSON 增加 `output_path` 绝对路径字段保持关联；`.gitignore` 加 `data/provenance/`。
+
+### Changed
+
+* **`docs/AI应用分发安全加固指南.md` 第六节按代码重写，并纠正一处过度承诺**：原文称签名水印"能证明对方删过"——**不成立**：产物一旦被重编码/缩放，水印本就不可读，"缺失"与"被删"无法区分。现写清四层事实（载荷形态、三层标识、跨分发不可归属项目方、可鉴定范围仅未再加工原件）与两条产品取舍（画面无角标、文件名不改名）。README 里"输出文件名默认携带 `_AI` 后缀"的过时说明同步纠正，`.env.example` 补 `SEEDVR2_WATERMARK_PROOF_MODE` 与 `SEEDVR2_PROVENANCE_DIR`。
+* **本轮明确记录、决定不动的四项**：单任务输出目录保持 `outputs/image|video`（保留策略与历史库按目录管理，不随批量模板改）；元数据 `ai_generated` 标识保留（画面与文件名均不可见）；抗缩放/裁剪的同步定位码不做（载荷格式变更会让历史产物验证链断裂，需单独立项）；跨分发可归属需在线签发，暂不做。
+
 ## [1.5.8] - 2026-09-13
 
 ### Fixed

@@ -59,6 +59,7 @@ model/*.pt
 !model/.gitkeep
 
 # Data
+data/provenance/
 data/uploads/*
 !data/uploads/.gitkeep
 outputs/*

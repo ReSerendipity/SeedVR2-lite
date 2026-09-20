@@ -118,8 +118,13 @@ def main():
         "files": files,
     }
 
-    with open(manifest_path, "w", encoding="utf-8") as f:
+    # 显式 newline="\n" + 单个结尾换行：.gitattributes 规定 *.json eol=lf，且 pre-commit
+    # 的 end-of-file-fixer 会补结尾换行——若这里按宿主文本模式写出 CRLF，签名之后的任何
+    # 一次行尾改写都会让清单字节与签名脱钩（新克隆验签必失败，2026-09-19 实测踩过）。
+    # 由生成器直接产出 git 存放态字节，顺序不再敏感。
+    with open(manifest_path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
+        f.write("\n")
 
     print(f"\n已生成: {manifest_path} ({len(files)} 个模块)")
 

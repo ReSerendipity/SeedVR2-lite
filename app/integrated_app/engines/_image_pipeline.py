@@ -395,6 +395,13 @@ class _ImagePipelineMixin:
             logger.warning(f"⚠️ [WARN] 无效的输出格式 '{requested_format}', 回退到 PNG")
             requested_format = "png"
 
+        # 取证模式（SEEDVR2_WATERMARK_PROOF_MODE=1）：强制无损落盘。有损编码器会抹掉
+        # 隐式标识（实测 JPEG q95 属临界存活），换 PNG 后产物侧变成确定性可验证。
+        # 只影响本机显式开启的部署，默认关闭以保持交付格式习惯。
+        if os.environ.get("SEEDVR2_WATERMARK_PROOF_MODE", "0") == "1" and requested_format in ("jpg", "jpeg", "webp"):
+            logger.info(f"取证模式已启用：输出格式 {requested_format} → PNG（无损，标识确定性可验证）")
+            requested_format = "png"
+
         logger.info(f"✅ [INFO] 最终使用输出格式：{requested_format.upper()}")
 
         format_map = {

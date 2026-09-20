@@ -102,6 +102,15 @@ def main() -> int:
     if not sig_path:
         print("[FAIL] 签名写入失败")
         return 1
+    # 与 Ed25519 路径同口径：签完立刻回验。清单在签名后被改写（行尾归一化、编辑器、
+    # pre-commit 钩子）会在此处立刻暴露，而不是等到运行期启动自检才发现。
+    if not verify_file_signature(args.manifest):
+        print("[FAIL] HMAC 签名回验失败：清单字节在签名后被改动")
+        print(
+            "       常见原因：行尾被改写（.gitattributes 规定 *.json eol=lf，"
+            "请用 scripts/generate_integrity_manifest.py 重新生成后再签名）"
+        )
+        return 1
     print(f"[OK] 已签名(HMAC，开发模式): {args.manifest} -> {sig_path}")
     print("    提示：发布构建请先生成 Ed25519 密钥对（scripts/generate_manifest_signing_key.py）")
     return 0

@@ -1,4 +1,4 @@
-﻿use std::time::Duration;
+use std::time::Duration;
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
 

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-19T22:31:04.681045",
+  "generated_at": "2026-09-20T23:24:54.670556",
   "generator": "scripts/generate_integrity_manifest.py",
   "description": "核心安全模块 SHA256 完整性清单，用于启动时自检",
   "files": {
