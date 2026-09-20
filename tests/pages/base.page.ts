@@ -37,7 +37,36 @@ export class BasePage {
     this.breadcrumb = page.locator('.sv-breadcrumb');
   }
 
+  /**
+   * 导航前掐断当前文档的 SSE 连接。
+   *
+   * app.js 每次载入都 `new EventSource('/api/sse/events')`，而 api-mocks 的 SSE 用
+   * `route.fulfill` 返回**有限**响应体，连接关闭后 EventSource 依规范自动重连，
+   * 形成重连风暴；此时发起导航，firefox 会在“旧文档拆载 + 新文档 domcontentloaded”
+   * 之间死锁。原本只有 `reloadApplyingClientState()` 做这一步，`navigate()` 没做，
+   * 于是同一个坑从 reload 挪到了 goto：CI #103 的 `theme.spec.ts` 就是
+   * `page.goto: Timeout 60000ms`（本类 navigate 内部即是 goto）。
+   */
+  private async closeSseBeforeNavigation(): Promise<void> {
+    // 首个文档（about:blank）没有连接可关；evaluate 在文档拆载中会抛错，一并忽略。
+    if (this.page.url() === 'about:blank') return;
+    try {
+      await this.page.evaluate(() => {
+        try {
+          const conn = (window as unknown as { __sseConnection?: { close?: () => void } })
+            .__sseConnection;
+          conn?.close?.();
+        } catch (e) {
+          /* ignore */
+        }
+      });
+    } catch (e) {
+      /* 文档正在切换：没有连接可关 */
+    }
+  }
+
   async navigate(path: string): Promise<void> {
+    await this.closeSseBeforeNavigation();
     await this.page.goto(path, { waitUntil: 'domcontentloaded' });
     await this.waitForPageLoad();
   }
@@ -58,20 +87,16 @@ export class BasePage {
    *
    * 对策（两处都改）：
    * 1) 先客户端 `__sseConnection.close()` 掐断重连风暴（app.js 在
-   *    `initGlobalSSE` 里把实例挂到了 `window.__sseConnection`）；
-   * 2) 用 `page.goto(当前 URL)` 而非 `reload()`——`goto` 是本类
-   *    `navigate()` 一直在用的原语，8 次失败签名里从无一次卡 `goto`。
+   *    `initGlobalSSE` 里把实例挂到了 `window.__sseConnection`）；本类已把它抽成
+   *    `closeSseBeforeNavigation()`，`navigate()` 同样会走一遍；
+   * 2) 用 `page.goto(当前 URL)` 而非 `reload()`。
+   *
+   * 更正：原文此处写过"8 次失败签名里从无一次卡 goto"——不成立。#103 上 firefox 就是
+   * `page.goto: Timeout 60000ms`（theme.spec.ts 经 `navigate()`）。goto 只是比 reload
+   * 更少触发，真正的因是第 1 点没做。
    */
   async reloadApplyingClientState(): Promise<void> {
-    await this.page.evaluate(() => {
-      try {
-        const conn = (window as unknown as { __sseConnection?: { close?: () => void } })
-          .__sseConnection;
-        conn?.close?.();
-      } catch (e) {
-        /* ignore */
-      }
-    });
+    await this.closeSseBeforeNavigation();
     await this.page.goto(this.page.url(), { waitUntil: 'domcontentloaded' });
     await this.waitForPageLoad();
   }
