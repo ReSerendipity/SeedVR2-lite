@@ -36,12 +36,19 @@ jobs:
           fetch-depth: 0
       - id: scope
         shell: bash
+        # 表达式一律经 env 传入，绝不直接插进 run：分支名等字段属可影响字符串，
+        # 内插等于把 Actions 脚本注入面交给提交者
+        # （semgrep yaml.github-actions.security.run-shell-injection，ERROR 阻断）
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            files="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            files="$(git diff --name-only "origin/$BASE_REF...HEAD")"
           else
-            files="$(git diff --name-only '${{ github.sha }}^' '${{ github.sha }}')"
+            files="$(git diff --name-only "$HEAD_SHA^" "$HEAD_SHA")"
           fi
           if [ -n "$(printf '%s\n' "$files" | grep -vE '^(docs|website|demo)/|\.md$' | head -1)" ]; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
