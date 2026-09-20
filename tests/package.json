@@ -14,7 +14,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
-    "@types/node": "^26.5.1",
+    "@types/node": "^26.6.1",
     "axe-core": "^4.13.0",
     "jsdom": "^24.1.0",
     "typescript": "^5.7.0"
