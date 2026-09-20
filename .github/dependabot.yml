@@ -3,6 +3,8 @@ version: 2
 # PR 开了自动合并（.github/workflows/automerge.yml），没有冷却就等于"上游刚发布即自动进主干"，
 # 正是投毒窗口最窄的时刻。数值语义：default-days 为未显式分类时的兜底；
 # 安全补丁类更新不受冷却影响，仍即时生成 PR。
+# default-days 不得低于 7：semgrep 规则除要求 cooldown 存在外，另有分句把任意
+# default-days < 7 直接判违规（首版写 5 天，所以告警没消）。
 # 参考 https://docs.github.com/code-security/dependabot/dependabot-version-updates/optimizing-pr-creation-version-updates
 updates:
   # minor/patch 合并为单个 PR，major 仍各自单独开 PR（便于逐个评审高风险版本跳跃）。
@@ -11,7 +13,7 @@ updates:
     directory: "/"
     schedule: { interval: monthly }
     cooldown:
-      default-days: 5
+      default-days: 7
       semver-major-days: 30
       semver-minor-days: 7
       semver-patch-days: 3
@@ -33,7 +35,7 @@ updates:
     directory: "/desktop"
     schedule: { interval: monthly }
     cooldown:
-      default-days: 5
+      default-days: 7
       semver-major-days: 30
       semver-minor-days: 7
       semver-patch-days: 3
@@ -48,7 +50,7 @@ updates:
     directory: "/tests"
     schedule: { interval: monthly }
     cooldown:
-      default-days: 5
+      default-days: 7
       semver-major-days: 30
       semver-minor-days: 7
       semver-patch-days: 3
@@ -63,7 +65,7 @@ updates:
     directory: "/website"
     schedule: { interval: monthly }
     cooldown:
-      default-days: 5
+      default-days: 7
       semver-major-days: 30
       semver-minor-days: 7
       semver-patch-days: 3
@@ -78,7 +80,7 @@ updates:
     directory: "/"
     schedule: { interval: monthly }
     cooldown:
-      default-days: 5
+      default-days: 7
       semver-major-days: 30
       semver-minor-days: 7
       semver-patch-days: 3
