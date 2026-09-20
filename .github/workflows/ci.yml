@@ -3,12 +3,11 @@ name: CI - Backend Quality Gate
 on:
   pull_request:
     branches: [main]
-    # 文档/演示站改动不触发后端质量门禁（DX 评估 P2：docs-only push 不必全量跑流水线）
-    paths-ignore:
-      - 'docs/**'
-      - 'website/**'
-      - 'demo/**'
-      - '**/*.md'
+    # 刻意不放 paths-ignore：quality-gate (ubuntu/windows) 与 Typecheck (mypy ratchet)
+    # 都是 main 的必需检查，而 workflow 级过滤掉的 workflow **不产生任何 check run**，
+    # 必需检查就永远停在 Expected、纯文档 PR 直接冻死（#99/#101 实测卡 BLOCKED，
+    # 20 项已上报的检查全绿也没用）。该过滤自 3e59722（2026-08-30）起存在。
+    # 省时间的快路径下移到 jobs.changes + 各 job 的 if，见下。
   push:
     branches: [main]
     paths-ignore:
@@ -21,7 +20,38 @@ permissions:
   contents: read
 
 jobs:
+  # 判定本批改动是否与后端门禁相关。口径与原 paths-ignore 一致：只改 docs/ website/
+  # demo/ 或 .md 时判为不相关。与 workflow 级过滤的区别是：这里跳过，job 仍会登记
+  # 一个 skipped 的 check run，必需检查因此能被满足而不是悬空。
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.scope.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            files="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")"
+          else
+            files="$(git diff --name-only '${{ github.sha }}^' '${{ github.sha }}')"
+          fi
+          if [ -n "$(printf '%s\n' "$files" | grep -vE '^(docs|website|demo)/|\.md$' | head -1)" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "--- 参与判定的变更 ---"
+          printf '%s\n' "$files" | head -20
+
   quality-gate:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -152,6 +182,8 @@ jobs:
   # （原步骤见 git 历史；迁移记录 docs/reports/mypy-ratchet-组织级门禁迁移_20260903.md 为维护者本地文件，未随仓库分发）
   typecheck:
     name: Typecheck (mypy ratchet)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     uses: ReSerendipity/.github/.github/workflows/python-quality-baseline.yml@main
     with:
       package: app/integrated_app
@@ -163,6 +195,8 @@ jobs:
 
   # ── 安全断言（部署安全红线，2026-08-17 新增） ──────────────────
   security-assertions:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
