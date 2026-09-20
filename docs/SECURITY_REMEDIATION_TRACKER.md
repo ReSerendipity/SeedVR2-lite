@@ -40,21 +40,30 @@
 | K-01 | checkpoint 任务 ID 越界 | `_path()` 下游是 read/write/unlink，此前只靠入站幂等键正则把关。现 sink 侧自守：`[A-Za-z0-9_.-]{1,64}` 白名单 `fullmatch` 并取匹配值拼文件名、拒绝全点号 ID，再断言 resolve 后仍在 `checkpoint_dir` 内 | ✅ 已修（工具仍报，见下） | `app/integrated_app/checkpoint.py`、`tests/test_checkpoint_ttl.py` |
 | D-01 | 演示站 HTML 注入 | `demo/index.html` 四处把「用户文件名 / 手输路径 / 表单值」拼进 `innerHTML`。改为 DOM API 组装 + `textContent`（真实浏览器验证：修复前会真的注入 `<img>` 且文件名被吃掉成 `.png`，修复后按字面显示且估算文案一字未变） | ✅ 已修 | `demo/index.html` |
 
-> **CodeQL 高危告警对账（2026-09-20，15 条 high）**
+> **CodeQL 高危告警对账（2026-09-20，起始 15 条 high）**
 >
-> - **代码侧收口、CI 已确认告警不再出现（6 条）**：`py/path-injection` 217/218（i18n 语言代码
->   白名单，真实可利用）与 `js/xss-through-dom` 231–234（demo 四处注入点）。判据：PR #98 的
->   CodeQL 结果里这两条 rule 已无告警。
-> - **消毒已落地但工具仍报（3 条）**：`py/path-injection` 214/215/216（checkpoint）。构造函数那处
->   `checkpoint_dir` 取自管理员本地 config 而非请求输入；`_path()` 已是白名单匹配值 + 目录包含
->   断言。`# codeql[py/path-injection] ignore` 放行尾与放上一行**两种位置都实测无效**（告警只按
->   新行号重锚），故不保留该注释。→ 合并后在告警面按 `false positive` 关闭并留理由，不改代码迁就查询建模。
-> - **修复后新增 1 条**：`demo/index.html:678` 的 `img.src = URL.createObjectURL(f)`——blob URL 由
->   浏览器自造，`<img>` 的 src 无脚本执行面 → 同按 `false positive` 关闭。
-> - **已复核为误报并关闭（6 条）**：`security/path_guard.py` 的 3 条（`resolve()` 本身就是消毒动作，
->   输入是配置里的白名单条目；该目录属禁区，不改码）、两处下载端点的 `FileResponse`（`output_path`
->   来自服务端任务态且已过 PathGuard）、`tests/test_i18n_completeness.py` 的 `py/bad-tag-filter`
->   （测试里用来剥标签查裸键的正则，非安全边界）。
+> 判据以 **main 上 `493c314` 重扫后的告警状态**为准（`code-scanning/alerts` 按
+> `most_recent_instance.ref == refs/heads/main` 统计），结果为
+> **high open 0 / dismissed 14 / fixed 4**（total 18 含重锚产生的新实例）。
+>
+> - **代码改动后旧实例自然消失（4 条）**：`js/xss-through-dom` 231–234（demo 四处把用户文件名 /
+>   手输路径 / 表单值拼进 `innerHTML`，改 DOM 组装）。
+> - **修复有效、但工具仍报，已按 `false positive` 关闭（7 条）**：
+>   `py/path-injection` 217/218（i18n 语言代码白名单，**原始缺陷真实可利用**：
+>   `POST /api/system/locale` 的 locale 无校验，可越出 `locales/` 读任意 `.json`）；
+>   214/215/216 + 重锚新增 260/264（checkpoint：`_path()` 已是白名单 fullmatch + 取匹配值 +
+>   `is_relative_to` 断言，`checkpoint_dir` 来自管理员本地 config）。CodeQL 不把
+>   `Path.resolve()` / `os.path.join` 前的自定义校验认作 sanitizer，改代码迁就它没有意义。
+> - **修复后新增 1 条，同按 `false positive` 关闭**：`demo/index.html` 的
+>   `img.src = URL.createObjectURL(f)`——blob URL 由浏览器自造，`<img>` 的 src 无脚本执行面。
+> - **复核即误报、合并前已关闭（6 条）**：`security/path_guard.py` 的 3 条（`resolve()` 本身就是
+>   消毒动作，入参是配置里的白名单条目；该目录属禁区不改码）、两处下载端点的 `FileResponse`
+>   （`output_path` 来自服务端任务态且已过 PathGuard）、`tests/test_i18n_completeness.py` 的
+>   `py/bad-tag-filter`（测试内剥标签正则，非安全边界）。
+>
+> **方法教训（写给下一次做 triage 的人，包括我自己）**：不要用 PR 检查里"new alerts introduced
+> by this PR"的清单来判断某条告警是否已消除——那个口径只覆盖**改动行上**的实例，旧实例即使
+> 仍在报也不会出现在里面。只有分支重扫后的 `alert.state` 算数。
 
 > 注：SeedVR2-lite 安全基线较成熟（auth/CSRF/rate-limit/path-guard/完整性校验/
 > 权重加密/水印均已具备），本仓重点补强的是「配置-实现一致性根因门禁」与「安全
