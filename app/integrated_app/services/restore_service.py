@@ -638,6 +638,7 @@ async def process_image_task(
     params,
     history_db: HistoryDB,
     task_queue,
+    output_name: str | None = None,
 ):
     """后台单张图像修复任务（服务层编排）。
 
@@ -648,6 +649,9 @@ async def process_image_task(
         params: 图像修复参数（ImageRestoreParams）。
         history_db: 历史数据库实例。
         task_queue: 任务队列实例。
+        output_name: 期望输出文件名（上传分支用来保住用户原始文件名——输入路径
+            已被上传缓存层改名为 `<时间戳>_<原名>_<uuid6>`，引擎从路径推会丢原名）。
+            None 时由引擎按输入名生成。
     """
 
     # 重要：进度回调必须为同步函数。
@@ -693,7 +697,11 @@ async def process_image_task(
                 cfg = dataclasses.replace(cfg, force_reload_dit=True)
             # P3-1：水印 payload 绑定 task_id（输出图可反查到本任务与参数）
             return await engine.infer_image(
-                image_path=input_path, output_dir=output_dir, config=cfg, watermark_payload=task_id
+                image_path=input_path,
+                output_dir=output_dir,
+                config=cfg,
+                output_name=output_name,
+                watermark_payload=task_id,
             )
 
         retry_result = await retry_with_bad_case_detection(
@@ -747,6 +755,7 @@ async def process_video_task(
     history_db: HistoryDB,
     task_queue,
     resume_frames: bool = False,
+    output_name: str | None = None,
 ):
     """后台单视频修复任务（服务层编排）。
 
@@ -828,6 +837,7 @@ async def process_video_task(
                 force_reload_dit=merged["force_reload_dit"],
                 resume_frames=resume_frames_flag["flag"],
                 frames_dir_override=frames_dir_override,
+                output_name=output_name,
                 # P3-1：水印 payload 绑定 task_id
                 watermark_payload=task_id,
             )

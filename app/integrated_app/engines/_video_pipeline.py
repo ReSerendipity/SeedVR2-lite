@@ -19,7 +19,7 @@ from torchvision.transforms import Compose, Lambda, Normalize
 
 from app.integrated_app.color_fix import apply_color_correction
 from app.integrated_app.engine_interface import RestoreResult
-from app.integrated_app.engines._image_pipeline import _build_output_name, _resolve_unique_path
+from app.integrated_app.engines._image_pipeline import _resolve_unique_path
 from app.integrated_app.engines._memory_utils import (
     MAX_SEED,
     TEMPORAL_ALIGN_MULTIPLE,
@@ -38,6 +38,7 @@ from app.integrated_app.exceptions import InferenceCancelledError
 from app.integrated_app.gpu_utils import oom_protect
 from app.integrated_app.optimization.gpu.cache_manager import get_cache_manager
 from app.integrated_app.optimization.gpu.memory_manager import clear_memory
+from app.integrated_app.utils.output_names import build_output_name
 
 logger = logging.getLogger(__name__)
 
@@ -353,7 +354,7 @@ class _VideoPipelineMixin:
 
             # 输出文件名：默认沿用输入视频文件名（只换扩展名）；批量场景传入 output_name 保留原文件名
             if output_name is None:
-                output_name = _build_output_name(video_path, ".mp4")
+                output_name = build_output_name(video_path, ".mp4")
             output_path = _resolve_unique_path(output_dir, output_name)
 
             # ==================== 分段流式主循环 ====================

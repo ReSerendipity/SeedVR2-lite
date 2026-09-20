@@ -37,6 +37,11 @@
 
 ### Fixed
 
+* **网页上传路径的产物名仍是缓存层改名结果（纠正上一提交"四条路径统一"的过度声明）**：`POST /api/restore/` 的上传分支会先把文件存成 `<时间戳>_<原名>_<uuid6>.ext`（`cache.generate_unique_filename`），引擎从 `input_path` 推名字时拿到的已经是这个名字——用户看到的产物形如 `1758383000_镜头A特写_a1b2c3.png`，**"输入什么名就是什么名"在网页上传这条最常用路径上并未兑现**。现由上传路由把 `multipart` 原始文件名一路传下来：新增 `app/integrated_app/utils/output_names.py` 作为唯一信任边界（`build_output_name` / `sanitize_stem`），`process_image_task` 与 `process_video_task` 增加 `output_name` 形参，扩展名仍由引擎按目标格式覆写；引擎侧原 `_build_output_name` 迁入该模块，两条路径共用一个实现。
+* **顺带堵住该路径引入的穿越面**：客户端可控的文件名若直接 `os.path.join(output_dir, filename)` 可把产物写到 `outputs/` 之外；NUL 等控制字符还会写出无法访问的文件（原清洗表只剥 `\ / : * ? " < > |`）。清洗点现统一剥控制字符（`\x00-\x1f` 与 `\x7f`）、折叠 `..`、截断 48 字符、空名退回时间戳。新增 `tests/test_output_naming.py::TestSanitizeIsTheTrustBoundary`，用 6 组穿越样例（`../../evil.png`、`..\..\x.png`、`/etc/passwd`、`a/../../b.png`、`....//x.png`、`C:\Windows\sys32.png`）钉住"产物名永不含分隔符与 `..`"。
+
+### Fixed
+
 * **有损图像输出的水印静默全灭（隐式标识取证链缺口）**：`security/watermark.py` 的图像档（`alpha=0.5`）此前对**所有**图像输出统一使用，而 2026-09-19 实测该档水印**经 JPEG q95 即不可验证**（WebP 同样失效），项目图像输出又明确支持 `jpg` / `webp` 格式（`output_format` 参数）——选有损格式的产物实际带着「以为有水印、其实没有、且无人知晓」的状态出厂。视频管线早在 R2 就有合成后抽帧复验，图像管线只检查「嵌入是否抛异常」，而编码器抹掉水印不算异常，`mark_metadata` 兜底永不触发。现：① `watermark_policy.select_image_embed_tier()` 按输出格式选档（无损 `0.5×1` 保画质，JPEG/WebP 走鲁棒档 `0.05×3`）；② 落盘后 `output_carries_watermark()` 重读产物验签；③ 缺失统一交 `handle_watermark_loss()` 按 `watermark_on_failure` 处置（`mark_metadata` 写溯源侧车 + 审计 `WATERMARK_LOSS_DEGRADED`；`block` 删除已落盘产物并抛错，兑现「产出不落盘」字面语义）。验证：`tests/test_watermark_policy.py` 新增 14 例（含无损档 JPEG q95 必失的回归哨兵）。**诚实边界**：鲁棒档对 JPEG 是**临界存活**（实测真实照片/平滑渐变 q90-q95 活、合成细密纹理与均匀白噪声 q95 即死、q80 以下全死），因此结论只来自落盘复验，不来自档位承诺。
 
 * **`security.watermark.enable` 是无人可读也无人可写的死开关**：图像与视频管线都读 `config["security"]["watermark"]["enable"]`，但 `AppConfig` 里根本没有顶层 `security` 段（安全配置在 `runtime.security`），`config.yaml` 也没有该键，于是恒为 `True`——一个看似可关水印、实际永远关不掉的配置。现按「内容标识不可关」的合规口径**移除该读取**，水印强制启用（要关只能改代码），并清理两处恒真分支。
