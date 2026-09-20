@@ -1,36 +1,13 @@
 #!/bin/sh
 # 通用 pre-push（无机器特定路径，可随仓库分发）。
 #   1) 先执行 gitleaks 待推送提交扫描（密钥防线，最高优先）
-#   2) 仓库提供 precheck.ps1 -> 执行它（该脚本为维护者本地文件，未随仓库分发，克隆后通常不存在）
+#   2) 仓库提供 precheck.ps1 -> 执行它（家族既有门禁口径）
 #   3) 否则 -> 退回根目录守卫 structure-guard
-# 本地未分发引用：precheck.ps1（仅维护者本机存在，本钩子对其做存在性判断，缺失即降级）
 # gitleaks v8.30.1 无 `git pre-push` 子命令，改用 detect --log-opts 扫描 remote..local 范围。
-# precheck.ps1 按 GOTCHAS #127 口径以 -Command 调用式执行（先显式设 Console UTF-8，防 -File 下中文乱码），
-# 并传入本次推送范围 -FromSha/-ToSha，使「仅文档类变更跳过 Python 预检」快速路径真正生效。
 # 紧急绕过：git push --no-verify（仅限用户明确要求时）
 failed=0
 
-# 0) 先把 stdin（每行 <local-ref> <local-sha> <remote-ref> <remote-sha>）读尽并存入变量，
-#    避免子进程（gitleaks / powershell）吞掉未读的引用行；tr 剥除潜在 CR。
-#    同时选出预检范围：base=远端旧 rsha / head=本地 lsha，取首条「非删除、优先已有远端基线」
-#    的引用；新建分支 rsha 全 0，会被 precheck.ps1 判为非仅文档 → 自动回退全量预检。
-refs="$(tr -d '\r' | cat)"
-base_sha=""
-head_sha=""
-while read lref lsha rref rsha; do
-    [ -z "$lsha" ] && continue
-    [ "$lsha" = "0000000000000000000000000000000000000000" ] && continue  # 删除远程分支
-    if [ -z "$head_sha" ]; then
-        base_sha="$rsha"; head_sha="$lsha"
-    fi
-    if [ "$base_sha" = "0000000000000000000000000000000000000000" ] && [ "$rsha" != "0000000000000000000000000000000000000000" ]; then
-        base_sha="$rsha"; head_sha="$lsha"  # 升级到带真实基线的引用
-    fi
-done <<EOF
-$refs
-EOF
-
-# 1) gitleaks 扫描待推送提交（密钥防线；逐引用读取变量，而非直接读 stdin）
+# 1) gitleaks 扫描待推送提交（密钥防线）
 if command -v gitleaks >/dev/null 2>&1; then
     while read lref lsha rref rsha; do
         [ -z "$lsha" ] && continue
@@ -47,9 +24,7 @@ if command -v gitleaks >/dev/null 2>&1; then
             echo "[pre-push] gitleaks 检测到泄露，推送已拒绝。绕过：git push --no-verify" >&2
             failed=1
         fi
-    done <<EOF
-$refs
-EOF
+    done
 else
     echo "[pre-push] gitleaks 未安装，跳过推送前密钥扫描" >&2
 fi
@@ -58,10 +33,7 @@ fi
 if [ -f ./precheck.ps1 ]; then
     echo "[pre-push] 运行本地预检 precheck.ps1 ..."
     if command -v powershell.exe >/dev/null 2>&1; then
-        # -Command 调用式（GOTCHAS #127）：先显式设 Console UTF-8 再 & 执行脚本；
-        # 推送范围经 -FromSha/-ToSha 传入，仅文档类变更时走快速跳检路径。
-        ps_cmd='[Console]::OutputEncoding=[Text.Encoding]::UTF8; & "./precheck.ps1" -FromSha '"'$base_sha'"' -ToSha '"'$head_sha'"''
-        if ! powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ps_cmd"; then
+        if ! powershell.exe -NoProfile -ExecutionPolicy Bypass -File "./precheck.ps1"; then
             echo "[pre-push] 预检未通过。绕过：git push --no-verify" >&2
             exit 1
         fi
