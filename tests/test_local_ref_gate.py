@@ -119,6 +119,7 @@ class TestArtifactExemption:
             "desktop/node_modules/vue/index.js",
             "tests/playwright-report",
             "outputs/image/2026.png",
+            "data/provenance/photo__1a2b3c4d.provenance.json",
             "dist/bundles/SeedVR2.zip",
         ):
             assert _gate.is_artifact(rel), rel

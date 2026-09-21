@@ -65,6 +65,7 @@ ARTIFACT_PARTS = {
     "uploads",
     "checkpoints",
     "heartbeats",
+    "provenance",  # 空目录时 `ls-files --others --ignored` 列不到，.gitignore 豁免失效，只能靠本表
     "target",
     "gen",
     "model",

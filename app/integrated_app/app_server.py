@@ -683,8 +683,9 @@ async def lifespan(app: FastAPI):
             )
             app.state.output_cleanup_task = output_cleanup_task
             logger.info(
+                # 磁盘「水位」刻意写成 disk_floor：与数字水印同名会让「日志无水印字样」无法字面判定
                 f"outputs 保留策略已启用: max_age_days={max_age_days}, max_files={max_files}, "
-                f"interval={cleanup_interval}s, watermark_min_free_gb={watermark_min_free:.1f}"
+                f"interval={cleanup_interval}s, disk_floor_gb={watermark_min_free:.1f}"
             )
     except Exception as e:
         logger.warning(f"outputs 保留策略清理初始化失败（不影响服务启动）: {e}")
