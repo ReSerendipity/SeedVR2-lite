@@ -8,9 +8,12 @@
 5. 启动自检查觉未签名清单：非 enforce 时告警继续，enforce 时拒绝启动。
 """
 
+import hashlib
+import json
 import os
 import stat
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -227,3 +230,31 @@ class TestIcaclsSubprocessDecoding:
         key_file.write_text(TEST_KEY.hex(), encoding="utf-8")
         assert harden_secret_file_permissions(key_file) is True
         assert called == ["icacls"]
+
+
+class TestManifestTracksSource:
+    """清单必须跟着源码走：改了受清单模块却没重算重签，用户端启动自检会误报清单被篡改。"""
+
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+    MANIFEST = REPO_ROOT / "app" / "integrated_app" / "security" / "integrity_manifest.json"
+
+    def _entries(self) -> dict:
+        return json.loads(self.MANIFEST.read_text(encoding="utf-8"))["files"]
+
+    def test_every_covered_module_hash_matches_source(self):
+        app_dir = self.MANIFEST.parents[1]
+        stale = sorted(
+            rel
+            for rel, digest in self._entries().items()
+            if hashlib.sha256((app_dir / rel).read_bytes()).hexdigest() != digest
+        )
+        assert not stale, (
+            f"清单哈希已过期，改动了核心模块却没重算：{stale}。"
+            "动作：scripts/generate_integrity_manifest.py 后接 scripts/sign_integrity_manifest.py，与改动同批提交。"
+        )
+
+    def test_manifest_bytes_are_git_canonical(self):
+        """签的是磁盘字节，克隆出来的必须同一份：CRLF 或多余换行会让新克隆验签失败。"""
+        raw = self.MANIFEST.read_bytes()
+        assert b"\r\n" not in raw, "清单含 CRLF（.gitattributes 规定 *.json eol=lf），签名会对新克隆失效"
+        assert raw.endswith(b"\n") and not raw.endswith(b"\n\n"), "清单须以单个换行结尾，与 end-of-file-fixer 同口径"
