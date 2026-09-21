@@ -8,8 +8,8 @@
 本模块把失败处置策略化（runtime.security.watermark_on_failure）：
 
 - ``mark_metadata``（默认）：重试 1 次仍失败 → error 日志 + 审计事件，
-  并由调用方在产物落盘后写 ``<输出名>.provenance.json`` 侧车
-  （显式元数据标识，可被审计发现）
+  并由调用方在产物落盘后写溯源记录（``data/provenance/*.provenance.json``，
+  不落在产物旁边：输出目录属交付面）作为显式元数据标识，可被审计发现
 - ``block``：直接抛出 :class:`WatermarkEmbedError`，产出不落盘（严格合规档）
 - ``ignore``：仅 debug 日志，保持历史行为
 
@@ -30,10 +30,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -223,8 +225,20 @@ def handle_watermark_failure(*, policy: str, error: str, payload: str | None = N
     audit_event("WATERMARK_EMBED_DEGRADED", detail=error, payload=payload)
 
 
+def _provenance_dir() -> Path:
+    """溯源记录目录：`data/provenance/`（可用 SEEDVR2_PROVENANCE_DIR 覆写）。
+
+    不放产物旁边是刻意的：输出目录属于交付面，旁边的 JSON 会被用户当垃圾删掉或
+    被批量目录清扫带走，也会污染保留策略的文件计数——挪走后它只归运维看。
+    """
+    override = os.environ.get("SEEDVR2_PROVENANCE_DIR", "").strip()
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[3] / "data" / "provenance"
+
+
 def write_provenance_sidecar(output_path: str, *, payload: str | None = None, reason: str | None = None) -> str:
-    """产物旁写 ``<输出名>.provenance.json`` 侧车（水印缺失时的显式元数据标识）。
+    """为缺水印的产物写溯源记录（``data/provenance/<名>__<路径哈希>.provenance.json``）。
 
     Args:
         output_path: 已落盘的产物路径（图像或视频）。
@@ -232,14 +246,21 @@ def write_provenance_sidecar(output_path: str, *, payload: str | None = None, re
         reason: 缺失原因；None 时用「嵌入失败」默认描述。
 
     Returns:
-        str: 侧车文件路径。
+        str: 溯源记录文件路径（文件名内嵌产物路径哈希，避免同名产物互相覆盖）。
 
     Raises:
         OSError: 写盘失败由调用方决定是否记审计（不静默吞）。
     """
-    sidecar_path = os.path.splitext(output_path)[0] + _PROVENANCE_SIDECAR_SUFFIX
+    abs_output = os.path.abspath(output_path)
+    # blake2b 只作文件名去重键（非安全用途），避开 sha1 的 bandit 告警
+    key = hashlib.blake2b(abs_output.encode("utf-8"), digest_size=4).hexdigest()
+    stem = os.path.splitext(os.path.basename(abs_output))[0]
+    directory = _provenance_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    sidecar_path = str(directory / f"{stem}__{key}{_PROVENANCE_SIDECAR_SUFFIX}")
     body: dict[str, Any] = {
         "tool": "SeedVR2",
+        "output_path": abs_output,
         "watermark_embedded": False,
         "reason": reason or "watermark embedding failed; provenance marked via sidecar metadata",
         "payload": payload,

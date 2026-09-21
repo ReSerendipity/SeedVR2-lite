@@ -133,12 +133,16 @@ def test_handle_ignore_is_silent(monkeypatch):
 # ---------- write_provenance_sidecar ----------
 
 
-def test_sidecar_written_next_to_output(tmp_path):
+def test_sidecar_written_to_provenance_dir(tmp_path, monkeypatch):
+    """溯源记录落在 data/provenance（此处经 env 注入到 tmp），文件名含产物路径哈希。"""
+    monkeypatch.setenv("SEEDVR2_PROVENANCE_DIR", str(tmp_path / "prov"))
     output = tmp_path / "output.png"
     output.write_bytes(b"\x89PNG fake")
     sidecar = write_provenance_sidecar(str(output), payload="task-1")
-    assert sidecar.endswith("output.provenance.json")
+    assert Path(sidecar).parent == tmp_path / "prov"
+    assert Path(sidecar).name.startswith("output__") and Path(sidecar).name.endswith(".provenance.json")
     body = json.loads(Path(sidecar).read_text(encoding="utf-8"))
+    assert body["output_path"] == str(output.resolve())
     assert body["watermark_embedded"] is False
     assert body["payload"] == "task-1"
     assert body["tool"] == "SeedVR2"
@@ -235,18 +239,22 @@ def test_output_carries_watermark_false_for_unreadable_file(tmp_path):
 
 
 def test_loss_mark_metadata_writes_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEEDVR2_PROVENANCE_DIR", str(tmp_path / "prov"))
     events = []
     monkeypatch.setattr(watermark_policy, "audit_event", lambda event, **kw: events.append(event))
     output = tmp_path / "o.png"
     output.write_bytes(b"\x89PNG fake")
     handle_watermark_loss(policy="mark_metadata", output_path=str(output), error="编码吃掉水印", payload="task-1")
     assert output.exists(), "mark_metadata 档不得删除产物"
-    sidecar = json.loads((tmp_path / "o.provenance.json").read_text(encoding="utf-8"))
+    records = list((tmp_path / "prov").glob("o__*.provenance.json"))
+    assert len(records) == 1, "溯源记录应落在注入目录，而非产物旁边"
+    sidecar = json.loads(records[0].read_text(encoding="utf-8"))
     assert sidecar["reason"] == "编码吃掉水印"
     assert events == ["WATERMARK_LOSS_DEGRADED"]
 
 
 def test_loss_block_removes_output_and_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEEDVR2_PROVENANCE_DIR", str(tmp_path / "prov"))
     events = []
     monkeypatch.setattr(watermark_policy, "audit_event", lambda event, **kw: events.append(event))
     output = tmp_path / "o.png"
@@ -254,18 +262,19 @@ def test_loss_block_removes_output_and_raises(tmp_path, monkeypatch):
     with pytest.raises(WatermarkEmbedError, match="落盘后不可验证"):
         handle_watermark_loss(policy="block", output_path=str(output), error="编码吃掉水印")
     assert not output.exists(), "block 档必须兑现「产出不落盘」"
-    assert not (tmp_path / "o.provenance.json").exists()
+    assert not list((tmp_path / "prov").glob("*.provenance.json")) if (tmp_path / "prov").exists() else True
     assert events == ["WATERMARK_LOSS_BLOCKED"]
 
 
 def test_loss_ignore_keeps_output_without_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEEDVR2_PROVENANCE_DIR", str(tmp_path / "prov"))
     events = []
     monkeypatch.setattr(watermark_policy, "audit_event", lambda event, **kw: events.append(event))
     output = tmp_path / "o.png"
     output.write_bytes(b"\x89PNG fake")
     handle_watermark_loss(policy="ignore", output_path=str(output), error="编码吃掉水印")
     assert output.exists()
-    assert not (tmp_path / "o.provenance.json").exists()
+    assert not list((tmp_path / "prov").glob("*.provenance.json")) if (tmp_path / "prov").exists() else True
     assert events == []
 
 

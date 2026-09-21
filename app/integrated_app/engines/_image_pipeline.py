@@ -34,6 +34,7 @@ from app.integrated_app.engines._memory_utils import (
 )
 from app.integrated_app.exceptions import InferenceCancelledError
 from app.integrated_app.gpu_utils import oom_protect
+from app.integrated_app.utils.output_names import build_output_name
 
 logger = logging.getLogger(__name__)
 
@@ -45,41 +46,6 @@ DIT_KEEP_RESIDENT_FREE_GB = 10.0
 说明这是一张 ≥20GB 的卡，解码峰值（tile 1024 实测 5.45GB）不会触碰上限，
 卸载反而白白多付两次 CPU↔GPU 拷贝。
 """
-
-
-_ILLEGAL_IN_FILENAME = str.maketrans(dict.fromkeys('\\/:*?"<>|'))
-
-
-def _build_output_name(input_path: str | None, ext: str) -> str:
-    """输出文件名**沿用输入文件名**（只换扩展名），不加时间戳、模型标签或随机后缀。
-
-    用户靠文件名辨认内容，改名等于让产物无法检索；单文件、批量、图像、视频四条路径
-    口径统一。重名由 :func:`_resolve_unique_path` 追加 `_1/_2` 兜底（同图重复修复不会
-    覆盖上一版）。
-
-    关于「文件名可预测」的安全性：下载入口只接受 task_id / record_id
-    （``GET /api/restore/{task_id}/download``、
-    ``GET /api/system/history/{record_id}/download``，再经 PathGuard 白名单），
-    从不接受文件名参数，因此可读文件名不构成枚举面——T4-3 的防护职责在 id 与白名单
-    这一侧，不再由文件名随机后缀承担。
-
-    Args:
-        input_path: 输入媒体路径（图像或视频）。
-        ext: 目标扩展名（含点号），如 ".png"、".mp4"。
-
-    Returns:
-        如输入 ``photo_4k.jpg`` + ``.png`` → ``photo_4k.png``；输入名不可用时退回
-        时间戳名，避免产出 ``.png`` 这类无名文件。
-    """
-    # 反斜杠先归一：Linux 容器里收到 Windows 风格路径时，basename 不会切分 '\'
-    base = os.path.basename((input_path or "").replace("\\", "/"))
-    stem = os.path.splitext(base)[0].translate(_ILLEGAL_IN_FILENAME)
-    stem = stem.strip().rstrip(".")
-    if not stem:
-        stem = time.strftime("%Y%m%d_%H%M%S")
-    # 文件名级显式标识默认关闭（会改变产物名）；对外部署需时 SEEDVR2_EXPLICIT_AI_LABEL=1
-    label = "_AI" if os.environ.get("SEEDVR2_EXPLICIT_AI_LABEL", "0") == "1" else ""
-    return f"{stem}{label}{ext}"
 
 
 def _resolve_unique_path(output_dir: str, filename: str) -> str:
@@ -395,6 +361,13 @@ class _ImagePipelineMixin:
             logger.warning(f"⚠️ [WARN] 无效的输出格式 '{requested_format}', 回退到 PNG")
             requested_format = "png"
 
+        # 取证模式（SEEDVR2_WATERMARK_PROOF_MODE=1）：强制无损落盘。有损编码器会抹掉
+        # 隐式标识（实测 JPEG q95 属临界存活），换 PNG 后产物侧变成确定性可验证。
+        # 只影响本机显式开启的部署，默认关闭以保持交付格式习惯。
+        if os.environ.get("SEEDVR2_WATERMARK_PROOF_MODE", "0") == "1" and requested_format in ("jpg", "jpeg", "webp"):
+            logger.info(f"取证模式已启用：输出格式 {requested_format} → PNG（无损，标识确定性可验证）")
+            requested_format = "png"
+
         logger.info(f"✅ [INFO] 最终使用输出格式：{requested_format.upper()}")
 
         format_map = {
@@ -408,7 +381,7 @@ class _ImagePipelineMixin:
         ext = format_map.get(requested_format, ".png")
 
         if output_name is None:
-            output_name = _build_output_name(image_path, ext)
+            output_name = build_output_name(image_path, ext)
         else:
             # 指定了输出格式时，强制用目标格式的扩展名，覆盖输入文件的原始扩展名
             # （批量模板带的是 {ext}=输入扩展名，直接保存会按原格式写出）

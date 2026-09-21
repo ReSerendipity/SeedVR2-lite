@@ -119,6 +119,7 @@ class TestArtifactExemption:
             "desktop/node_modules/vue/index.js",
             "tests/playwright-report",
             "outputs/image/2026.png",
+            "data/provenance/photo__1a2b3c4d.provenance.json",
             "dist/bundles/SeedVR2.zip",
         ):
             assert _gate.is_artifact(rel), rel
@@ -189,3 +190,10 @@ class TestLocalOnlyResolution:
         tracked = _gate.tracked_files()
         ignored = _gate.ignored_paths()
         assert _gate.hits_local_only("docs/DOD.md", "no/such/file.md", tracked, ignored) is None
+
+    def test_real_repo_collectors_still_work(self):
+        """夹具把 ROOT 换掉了，采集器在真仓库上仍须有效：否则门禁会静默扫不到东西而恒绿。"""
+        tracked = _gate.tracked_files()
+        assert "scripts/check_local_only_refs.py" in tracked
+        assert "docs/CODING_STANDARDS.md" in tracked
+        assert _gate.ignored_paths() is not None

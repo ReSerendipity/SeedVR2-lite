@@ -54,6 +54,7 @@ from app.integrated_app.services.restore_service import (
 from app.integrated_app.spec import precision_from_dit_model
 from app.integrated_app.task_queue import TaskQueue
 from app.integrated_app.utils.hashing import compute_file_sha256
+from app.integrated_app.utils.output_names import build_output_name
 from app.integrated_app.utils.response import respond_success
 
 logger = logging.getLogger(__name__)
@@ -227,7 +228,12 @@ async def upload_and_restore(
     # P1-1：源文件内容哈希（内容寻址血缘），上传分支用已读入内存的字节，folder 分支落盘计算
     input_sha256: str = ""
 
+    # 上传分支的原始文件名：缓存层会把它改成 `<时间戳>_<原名>_<uuid6>`，
+    # 产物名必须回到用户看到的那个名字，否则「输出名=输入名」在网页上传路径上落空
+    upload_original_name: str | None = None
+
     if file and file.filename:
+        upload_original_name = file.filename
         file_ext = os.path.splitext(file.filename)[1].lower()
         detected_type = common.detect_media_type(file_ext)
         if detected_type is None:
@@ -305,6 +311,9 @@ async def upload_and_restore(
         float((config.get("retention", {}) or {}).get("disk_min_free_gb", 5.0) or 0),
     )
 
+    # 产物名：上传取用户原始名（扩展名由引擎按目标格式覆写），本地文件夹路径留空由引擎按输入名推
+    desired_output_name = build_output_name(upload_original_name, "") if upload_original_name else None
+
     task_type = raw_params.task_type
     if task_type == "auto":
         task_type = detected_type or "image"
@@ -370,7 +379,9 @@ async def upload_and_restore(
             img_params = params if isinstance(params, ImageRestoreParams) else ImageRestoreParams()
             await task_queue.submit(
                 task_id,
-                lambda: process_image_task(task_id, record_id, input_path, img_params, history_db, task_queue),
+                lambda: process_image_task(
+                    task_id, record_id, input_path, img_params, history_db, task_queue, output_name=desired_output_name
+                ),
                 on_cancel=on_cancel,
             )
         else:
@@ -378,7 +389,14 @@ async def upload_and_restore(
             await task_queue.submit(
                 task_id,
                 lambda: process_video_task(
-                    task_id, record_id, input_path, use_model_size, vid_params, history_db, task_queue
+                    task_id,
+                    record_id,
+                    input_path,
+                    use_model_size,
+                    vid_params,
+                    history_db,
+                    task_queue,
+                    output_name=desired_output_name,
                 ),
                 on_cancel=on_cancel,
             )
