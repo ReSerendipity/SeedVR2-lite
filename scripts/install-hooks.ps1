@@ -4,7 +4,7 @@
 #   代码页解码，下面的中文注释/提示串会变成乱码并破坏词法解析（表现为 here-string 不被识别、
 #   报 “'||' 不是此版本中的有效语句分隔符”）。做「全仓 BOM 清理」时请勿动本文件的 BOM。
 # 通过 core.hooksPath 指向 scripts/git-hooks/，避免手工拷贝到 .git/hooks
-# ⚠️ 遗留脚本：本仓库权威钩子体系是 .githooks/（见 CONTRIBUTING.md / install.bat 警告）。
+# ⚠️ 遗留脚本：本仓库权威钩子体系是 .githooks/（见 .githooks/README.md / install.bat 警告）。
 #    下方前置守卫在检测到 .githooks/ 时拒绝执行，避免误改 core.hooksPath 使钩子静默失效。
 $ErrorActionPreference = "Stop"
 

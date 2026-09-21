@@ -20,11 +20,19 @@
 """
 
 import argparse
+import contextlib
 import json
 import re
 import subprocess  # nosec B404（仅以参数列表调用 git，无 shell=True）
 import sys
 from pathlib import Path
+
+# 报告文本含中文与 ⚠ 等字符：Windows 控制台默认 GBK，违例一打印就 UnicodeEncodeError，
+# 门禁于是拿栈回溯顶替可读报告（仍然非零退出，但人看不到该修什么）。
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        with contextlib.suppress(OSError, ValueError):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
