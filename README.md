@@ -42,13 +42,13 @@
 > |---|---|
 > | 首次安装桌面版（安装器 + 3 个数据分卷，约 5.3 GB） | [v1.5.4](https://github.com/ReSerendipity/SeedVR2-lite/releases/tag/v1.5.4)：`SeedVR2-Setup-v1.5.4.exe` + `SeedVR2-Data.7z.001/.002/.003` + `SHA256SUMS-v1.5.4.txt` |
 > | 已装用户走托盘「检查更新」（约 1.4 MB） | [`/releases/latest`](https://github.com/ReSerendipity/SeedVR2-lite/releases/latest)：`app-v1.5.7.zip`（+ `.sha256`） |
-> | 便携分卷包（`core` / `torch` / `model-*`） | 目前不可公开下载，见下一节「网页版 / 便携包」 |
+> | 便携分卷包（`core` / `torch` / `model-*`，约 5.6 GB） | [v1.5.6](https://github.com/ReSerendipity/SeedVR2-lite/releases/tag/v1.5.6)：5 个分卷 + `manifest.json` + `SHA256SUMS.txt(.gpg)` + 两个解包脚本。代码等同 v1.5.7，**不含**其后合入主干的修复（见下节说明） |
 
 ## 网页版 / 便携包（开发与内部使用）
 
 不想装 Python、不想配环境时，可用便携分卷包（已含便携 Python、全部依赖与 3B FP8 模型）或直接源码运行：
 
-> **当前状态**：便携分卷包只挂在 `v1.5.6` 上，而该 release 已标记「误发布 · 请勿使用」并处于草稿状态，**未登录或脚本拉取都取不到这些资产**。在它重新发布之前，请改用上一节的桌面版或下面的源码方式运行；步骤本身保留，重新发布后即为可用。
+> **资产位置与基线**：便携分卷包公开挂在 [v1.5.6](https://github.com/ReSerendipity/SeedVR2-lite/releases/tag/v1.5.6)（该 tag 当初误发到增量通道，现作为便携包入口保留；`/releases/latest` 指向的 v1.5.7 只有 1.4 MB 增量包，不含分卷）。该包代码等同 **v1.5.7**，因此**不含**其后合入主干的修复——其中与安全相关的是 i18n 语言代码可越出 `locales/` 读取任意 `.json`（`POST /api/system/locale` 的 `locale` 字段此前无校验）与 checkpoint 任务 ID 的 sink 侧加固。应用只绑 `127.0.0.1` 且有 basic auth / CSRF / 限流，暴露面有限，但对外的正式分发仍建议用上一节的桌面版。
 
 源码运行（不依赖分卷包）：`python -m venv .venv` → `.venv\Scripts\pip install -r requirements.txt`（torch 需装 CUDA 版，命令见[完整文档站](https://reserendipity.github.io/SeedVR2-lite/docs/)）→ `.venv\Scripts\python app/integrated_app/app_server.py`，浏览器打开 <http://127.0.0.1:7870>。
 
