@@ -246,14 +246,14 @@ class TestSystemNoticeBroadcast:
             def _notify(dir_path: str, info: dict) -> None:
                 event_bus.publish(
                     "system_notice",
-                    {"level": "warning", "kind": "retention_watermark", "dir": dir_path, **info},
+                    {"level": "warning", "kind": "retention_disk_floor", "dir": dir_path, **info},
                 )
 
             removed, _freed = cleanup_watermark_dirs([str(tmp_path)], min_free_gb=5.0, max_age_days=14, notify=_notify)
             assert removed == 1
             event = await asyncio.wait_for(queue.get(), timeout=1.0)
             assert event["event"] == "system_notice"
-            assert event["data"]["kind"] == "retention_watermark"
+            assert event["data"]["kind"] == "retention_disk_floor"
             assert event["data"]["level"] == "warning"
             assert event["data"]["dir"] == str(tmp_path)
         finally:

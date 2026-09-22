@@ -68,9 +68,9 @@ SeedVR2 已实施以下安全措施：
 ### 输出保护
 
 - **内容溯源**：推理输出默认嵌入不可感知的来源标识（HMAC 签名载荷绑定任务 ID，可反查产生任务）；验证工具 `scripts/verify_watermark.py` 支持图像与视频（视频为采样帧验证）
-- **抗转码鲁棒性（后续建议 R1 落地）**：图像产物（PNG 无损，alpha=0.5）与视频产物（帧走三通道等幅 + 步长 20 + 重复码 3 的鲁棒档，alpha=0.05）均可在 H.264 编码后稳定验证——实测生产参数 CRF18/23 全帧存活（旧单通道实现曾 0/16，根因为色度下采样破坏，量化基准见 `scripts/experiment_watermark_transcode.py`，CI 回归 `tests/test_watermark_transcode.py`）。代价：视频路径 PSNR ≈ 37.5dB（视觉透明档）
-- **失败兜底**：水印嵌入失败的产物按 `runtime.security.watermark_on_failure` 策略处置（默认 `mark_metadata`：写 `<输出名>.provenance.json` 侧车 + 审计事件，绝不静默）；视频合成后另做抽样验证，通过率 < 50% 同样写侧车标记
-- **GPG 签名**：GitHub Release 自动生成 SHA256SUMS + GPG 签名
+- **可鉴定范围**：隐式水印只在**未再加工的原件**上可验。图像按目标格式选档（无损走 `alpha=0.5`；JPEG/WebP 走鲁棒档 `0.05×3`，并在落盘后重读产物验签）；视频为三通道等幅 + 重复码 3 的鲁棒档，H.264 生产参数 CRF18/23 实测 16/16 采样帧可验（量化基准见 `scripts/experiment_watermark_transcode.py`，CI 回归 `tests/test_watermark_transcode.py`；视频路径代价 PSNR ≈ 37.5dB，视觉透明）。**不抗**缩放、裁剪、旋转与二次重编码；鲁棒档对 JPEG 属**临界存活**（真实照片 / 平滑渐变 q90-q95 可验，细密纹理与均匀白噪声 q95 即失效，q80 以下全失效）。需确定性可验证时用 `SEEDVR2_WATERMARK_PROOF_MODE=1` 强制无损输出。
+- **失败兜底**：嵌入或落盘复验失败时按 `runtime.security.watermark_on_failure` 处置（默认 `mark_metadata`：溯源记录写入 `data/provenance/<输出名>__<路径哈希>.provenance.json`，目录可用 `SEEDVR2_PROVENANCE_DIR` 覆写，并记 `WATERMARK_LOSS_DEGRADED` 审计事件，绝不静默；`block` 则删除已落盘产物并抛错）；视频合成后另做抽样验证，通过率 < 50% 同样标记
+- **发布产物完整性**：GitHub Release 随包发布 `SHA256SUMS.txt` 校验和。GPG 分离签名流水线 `.github/workflows/gpg-signed-release.yml` 已就绪，但**未配置 `GPG_PRIVATE_KEY` 时按设计跳过、不产出任何签名**（当前即此状态），且装机侧没有任何路径自动验签。代价记录在案：校验和与产物同页下发，Release 被入侵时攻击者可一并改写，GPG 才是独立信任根。
 
 ### 依赖安全
 

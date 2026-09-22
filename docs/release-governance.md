@@ -25,7 +25,7 @@
 1. 确认 `[Unreleased]` 条目完整
 2. 同步版本位：`pyproject.toml` + `CHANGELOG.md`（维护者本地另有 `AGENTS.md` 一处）
 3. 打 tag `git tag v<X.Y.Z>` → `git push origin v<X.Y.Z>` 触发 `portable-release.yml`（分卷便携包）
-4. 便携包产物自动 GPG 签名 + 校验和 + provenance（细则见 `docs/project/PORTABLE_BUNDLES.md`，维护者本地账本）
+4. 便携包产物自动发布 **SHA256 校验和**；GPG 分离签名由 `.github/workflows/gpg-signed-release.yml` 承担，**未配置 `GPG_PRIVATE_KEY` 时该流水线按设计跳过、不产出签名**（细则见 `docs/project/PORTABLE_BUNDLES.md`，维护者本地账本）
 5. CI 盯到终态：push 后 `gh run list` / `gh run watch`，红了当场修或 revert 止损
 
 ## 4. 回滚判定（满足任一即触发）
@@ -64,5 +64,5 @@
 - [ ] `python scripts/check_spec_refs.py` 退出码 0
 - [ ] `python scripts/check_local_only_refs.py --all` 退出码 0（追踪文件不新增指向未分发文件的引用）
 - [ ] 便携包自测 `test_portable_bundle.ps1` 通过
-- [ ] GPG 签名 + SHA256 校验和已生成并验证
+- [ ] SHA256 校验和已生成并抽查复算；若本版本要出 GPG 签名，先确认三个 Repository Secret 已配（未配时签名流水线静默跳过，Release 上不会有任何签名文件——别把它的绿勾当成"已签名"）
 - [ ] tag 已推送触发 `portable-release.yml`

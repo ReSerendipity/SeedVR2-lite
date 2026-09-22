@@ -17,6 +17,8 @@
 * **引用可用性门禁 `scripts/check_local_only_refs.py`**：把「追踪文件指向未随仓库分发的本地文件」这一方向的幻影引用变成可执行检查（默认扫暂存区、`--all` 扫全库；`.gitignore` 与运行/构建产物目录豁免；多义路径按「命中已跟踪文件即放行」；支持文件级「本地未分发引用」声明与 `docs/ci/local_ref_baseline.json` 历史基线，只防新增不追历史）。接入 `.githooks/pre-commit`、`structure-guard.yml`、`docs-consistency.yml`，并写入 `docs/DOD.md` §3 与 `docs/release-governance.md` §8 清单；新增 `tests/test_local_ref_gate.py`（14 例）锁定取词 / 豁免 / 声明块解析 / 消歧口径。
 
 * **`docs/CODING_STANDARDS.md` 新增第 5 节「禁区与门禁口径（公开子集）」**：禁区表（`model_lib/` / `app/integrated_app/security/` / `config.yaml` 及授权改动后的兑现动作）+ 9 行门禁命令与接线位置 + 裁决顺序（代码 > 追踪文件 > 摘录）。AI 协作协议 `AGENTS.md` 与 `docs/agents/` 按「干净交付」决策仍不随仓库分发，本节的目的是：**克隆仓库后不依赖任何本地文件也能遵守禁区与门禁**。
+* **取证模式 `SEEDVR2_WATERMARK_PROOF_MODE=1`**：图像输出为 JPEG/WebP 时强制转存 PNG。有损编码器对隐式标识是临界存活（实测 JPEG q90/q95 依内容摆动、q80 以下必失），开启后产物侧变为确定性可验证；默认关闭以保持交付格式习惯。视频维持 H.264 CRF18（实测 16/16 帧存活），不加无损档。
+* **溯源记录改落 `data/provenance/`（可用 `SEEDVR2_PROVENANCE_DIR` 覆写）**：原先写在产物旁边（`<产物名>.provenance.json`）——输出目录是交付面，多出来的 JSON 会被当垃圾删掉（连带丢掉可发现性）并污染保留策略的文件计数。现文件名内嵌产物路径哈希（`<名>__<blake2b8>.provenance.json`），JSON 增加 `output_path` 绝对路径字段保持关联；`.gitignore` 加 `data/provenance/`。
 
 ### Changed
 
@@ -34,12 +36,15 @@
 * **追踪文件的规范式引用改指分发版**：`docs/DOD.md`（5 处）、`docs/release-governance.md`（3 处）、`model_lib/SOURCE.md`、`tests/frontend/README.md` 等指向 `docs/CODING_STANDARDS.md` 第 5 节；`docs/AI应用分发安全加固指南.md`、`docs/DATA_GOVERNANCE_ASSESSMENT.md`、`docs/VAE_STALL_DIAGNOSIS_20260910.md`、`docs/SECURITY_REMEDIATION_TRACKER.md`、`desktop/README.md`、`docs/发布检查清单.md`、`docs/开发者指南.md`、`docs/桌面应用分发全流程指南.md`、`docs/repo-analysis/ComfyUI-Mie-Package-Launcher_技术学习报告.md` 与本文件则以文件级声明或就地说明标注「维护者本地、未随仓库分发」；`install.bat` / `install.sh` / `pyproject.toml` / `scripts/installer/pyproject.toml` / `scripts/build_portable_bundle.ps1` / `scripts/portable_bundle_lib.ps1` 注释同步。
 
 * **两处不真实描述得到纠正**：`.github/SECURITY.md` 的链指向克隆中不存在的 `[部署文档](docs/plans/DEPLOYMENT.md)`，改指随仓库分发的 `docker-compose.yml` + `deploy/kubernetes/`；`.githooks/README.md` / `.githooks/install.sh` 把 `precheck.ps1` 描成「仓库内脚本」，改为明示它未随仓库分发、缺失时钩子自动降级。
+* **`docs/AI应用分发安全加固指南.md` 第六节按代码重写，并纠正一处过度承诺**：原文称签名水印"能证明对方删过"——**不成立**：产物一旦被重编码/缩放，水印本就不可读，"缺失"与"被删"无法区分。现写清四层事实（载荷形态、三层标识、跨分发不可归属项目方、可鉴定范围仅未再加工原件）与两条产品取舍（画面无角标、文件名不改名）。README 里"输出文件名默认携带 `_AI` 后缀"的过时说明同步纠正，`.env.example` 补 `SEEDVR2_WATERMARK_PROOF_MODE` 与 `SEEDVR2_PROVENANCE_DIR`。
+* **本轮明确记录、决定不动的四项**：单任务输出目录保持 `outputs/image|video`（保留策略与历史库按目录管理，不随批量模板改）；元数据 `ai_generated` 标识保留（画面与文件名均不可见）；抗缩放/裁剪的同步定位码不做（载荷格式变更会让历史产物验证链断裂，需单独立项）；跨分发可归属需在线签发，暂不做。
 
+* **三份对外文档与代码现实对账（2026-09-21 逐项复核）**：① `docs/DATA_GOVERNANCE_ASSESSMENT.md` 有两条 ❌ 早被代码推翻还挂着——「无 schema version / `PRAGMA user_version` 零命中」（实际 `history_db.py` 有 `SCHEMA_VERSION = 4` + v0→v4 迁移链 + 升级前自动备份，迁移异常会冒出 `initialize()` 因而不推进版本号）与「HistoryRecord 无源文件 hash 列」（实际 `input_sha256` 已建列、由 `restore_service` 写库）；「无 PSNR/SSIM」只对一半——`utils/image_metrics.py` 存在且撑起 CI 的 `tests/test_golden_quality.py`，真正缺的是**运行期打分**，措辞已改准。仍成立的三条保留并标注复核日：上传只有字节上限而无像素/时长校验、`folder_path` 与批量入口不过魔数、权重 SHA-256 不入历史。**另补一条本层最深的矛盾**：留存策略按龄删除输入原件与产物，而这两者恰是水印反查与内容比对所需的证据本体（`pinned` 只能人工豁免，磁盘水位触发时连按龄缓冲都没有）。② `.github/SECURITY.md`「输出保护」按实测重写：删去「图像与视频均可在 H.264 编码后稳定验证」这类过度承诺，写清能证明什么（有密钥只证明"出自持钥的那个实例"，分发版各自生成密钥故跨分发不可归属）、不抗什么（缩放/裁剪/旋转、二次重编码；鲁棒档对 JPEG 临界存活），并把失败兜底的侧车真实路径 `data/provenance/` 补上。③ **GPG 措辞纠偏**：SECURITY.md 与 `docs/release-governance.md` §3.4 / §8 均写着 Release 自动生成 GPG 签名，实际 `GPG_PRIVATE_KEY` 从未配置——工作流按设计 notice 跳过、不产出任何签名，且装机侧零验签路径；现改述为「SHA256 校验和 + 已就绪但未启用的 GPG」，并把放弃独立信任根的代价记在案上（历史上 v1.5.2 / v1.5.3 / v1.5.4 / v1.5.7 四条 Release 都在这条流水线红过，#106 与空值守卫之后才转绿）。④ 本文件 `[Unreleased]` 里重复出现的小标题（`### Fixed` 两次、`### Added` / `### Changed` 各一次重复）收拢成每个类型单一小节，按 Added / Changed / Removed / Fixed 排序；条目正文以「移动前后集合相等」的断言把守，一字未改。
 ### Fixed
 
 * **网页上传路径的产物名仍是缓存层改名结果（纠正上一提交"四条路径统一"的过度声明）**：`POST /api/restore/` 的上传分支会先把文件存成 `<时间戳>_<原名>_<uuid6>.ext`（`cache.generate_unique_filename`），引擎从 `input_path` 推名字时拿到的已经是这个名字——用户看到的产物形如 `1758383000_镜头A特写_a1b2c3.png`，**"输入什么名就是什么名"在网页上传这条最常用路径上并未兑现**。现由上传路由把 `multipart` 原始文件名一路传下来：新增 `app/integrated_app/utils/output_names.py` 作为唯一信任边界（`build_output_name` / `sanitize_stem`），`process_image_task` 与 `process_video_task` 增加 `output_name` 形参，扩展名仍由引擎按目标格式覆写；引擎侧原 `_build_output_name` 迁入该模块，两条路径共用一个实现。
 * **顺带堵住该路径引入的穿越面**：客户端可控的文件名若直接 `os.path.join(output_dir, filename)` 可把产物写到 `outputs/` 之外；NUL 等控制字符还会写出无法访问的文件（原清洗表只剥 `\ / : * ? " < > |`）。清洗点现统一剥控制字符（`\x00-\x1f` 与 `\x7f`）、折叠 `..`、截断 48 字符、空名退回时间戳。新增 `tests/test_output_naming.py::TestSanitizeIsTheTrustBoundary`，用 6 组穿越样例（`../../evil.png`、`..\..\x.png`、`/etc/passwd`、`a/../../b.png`、`....//x.png`、`C:\Windows\sys32.png`）钉住"产物名永不含分隔符与 `..`"。
-* **启动日志里的 `watermark_min_free_gb=` 改为 `disk_floor_gb=`**：真机日志扫描下，默认 INFO 级别唯一出现「watermark」字样的三行来自这里，而它指的是**磁盘水位**（低于该剩余空间就按保留策略清理），与数字水印毫无关系——同名让「默认日志不出现水印字样」这条口径无法字面成立。纯文案改动：`periodic_output_cleanup()` 的形参名与 SSE `kind: "retention_watermark"` 保持不变（后者有测试把守，改它属于另一层契约），零行为影响。
+* **启动日志里的 `watermark_min_free_gb=` 改为 `disk_floor_gb=`，SSE 事件 `kind` 同步改成 `retention_disk_floor`**：真机日志扫描下，默认 INFO 级别唯一出现「watermark」字样的三行来自这里，而它指的是**磁盘水位**（低于该剩余空间就按保留策略清理），与数字水印毫无关系——同名让「默认日志不出现水印字样」这条口径无法字面成立。两处仍是原样：`periodic_output_cleanup()` 的形参名（内部签名，不在任何对外可见面上）。**同时纠正本条目最初的错误说法**：它当时写「SSE kind 保持不变，因为有测试把守」——不成立，`test_output_retention_watermark.py` 那两处只是把**测试自己构造的**字面量灌进 `event_bus` 再读回，既不引用生产者也不锁契约；改名前后靠全仓 grep 确认「一个生产者、零消费者」（前端 / 桌面壳 / 文档均未读该 kind），因此这层一致性由 grep 而非 CI 兜底。
 * **幻影引用门禁的忽略豁免对「存在但为空」的忽略目录失效**：`ignored_paths()` 走 `git ls-files --others --ignored --directory`，而 git 不追踪空目录——`data/provenance/` 存在但为空时列不出来，文档引用它就被判成本机独有路径（本文件自己中招，提交被 pre-commit 拒绝）。现把 `provenance` 补进 `check_local_only_refs.ARTIFACT_PARTS`，与 `outputs` / `checkpoints` 同一口径：运行时路径约定，不是「请去阅读的文件」；`tests/test_local_ref_gate.py` 增样例锁定。
 * **幻影引用门禁在 GBK 控制台下「报告即崩」**：违例文本含中文与 `⚠`，`print` 直接抛 `UnicodeEncodeError`——门禁仍以非零码退出，但维护者看到的是一栈回溯而不是「该修哪一行」。现按 `generate_integrity_manifest.py` 同口径，模块级把 stdout/stderr 重设为 UTF-8（`errors="replace"`）。
 * **顺手抓出 main 上的一处幻影引用（并记录这类门禁的可见性边界）**：`scripts/install-hooks.ps1` 的注释让读者去看 `CONTRIBUTING.md`，而它按「干净交付」决策不随仓库分发（现改指随仓库分发的 `.githooks/README.md`）。**要点在于：命中条件要求路径「本机存在且被忽略」，所以这类引用在维护者机器上红、在 CI 克隆里恒绿**——`--all` 在 CI 通过并不等于零幻影，只有维护者本机跑才算数；本条即本机 `--all` 抓出、PR 门禁全绿。
@@ -67,25 +72,11 @@
 * **演示站 `demo/index.html` 四处 HTML 注入（`js/xss-through-dom` 231–234）**：用户挑的文件名、手输的文件夹路径、表单选中值被拼进 `innerHTML`。已改为 `textContent` / 文本节点落地。真实浏览器对照验证（同一探针脚本）：修复前 `<img src=x onerror=…>` 形态的文件夹路径会**真的生成 `<img>` 节点**、文件名被吃掉成 `.png`；修复后按字面显示、`#fileCard` 只剩预览用的那一个 `<img>`，显存估算文案一字未变、控制台无报错。**风险定性要诚实**：该页是无后端的静态模拟器，四处输入均出自访问者本人（不读 URL 参数，远程不可触发），属自 XSS 面——收口理由是「公开托管在 `reserendipity.github.io` 上不该有注入点」，不是修一个可远程打的洞。
 
 * **CodeQL 其余 6 条 high 复核为误报并已在告警面 dismiss 写理由**：`security/path_guard.py` 3 条（`resolve()` 即消毒动作本身，入参是配置中的白名单条目；该目录属 `docs/CODING_STANDARDS.md` §5.1 禁区，未改码）、两处下载端点的 `FileResponse`（`output_path` 来自服务端任务态且过 PathGuard 才放行）、`tests/test_i18n_completeness.py` 的 `py/bad-tag-filter`（测试内剥标签正则，非安全边界）。对账记录见 `docs/SECURITY_REMEDIATION_TRACKER.md` §2 及其后注。
-
-### Fixed
-
 * **完整性清单的行尾陷阱（`generate_integrity_manifest.py` 写 CRLF → 签名对新克隆失效）**：生成器按宿主文本模式写文件，在 Windows 上产出 CRLF，而 `.gitattributes` 规定 `*.json eol=lf`、`pre-commit` 的 end-of-file-fixer 还会补/改结尾换行——**签在磁盘字节上的签名，与克隆出来的字节不是同一份**，用户端启动自检会误报"清单签名无效"（`integrity_enforce=true` 时直接拒绝启动）。现生成器以 `newline="
 "` + 单个结尾换行直接产出 git 存放态字节，顺序不再敏感；`sign_integrity_manifest.py` 的 HMAC 分支补上与 Ed25519 分支同口径的"签完立即回验、失败即非零退出"，把这类事故从人工记顺序变成机器门禁。
 * **`.githooks/pre-push` 的幻影引用声明在 rebase/合并中被丢回，导致 `check_local_only_refs --all` 报 5 处**：`docs-consistency.yml` 与 `structure-guard.yml` 跑的都是 `--all`，即**当时 CI 已经会红**。已补回文件级「本地未分发引用：precheck.ps1」声明；现全库 745 个追踪文件零幻影引用。
 * **门禁回归测试用条件 skip 换绿灯（CI 上 14 例中 3 例静默失效）**：`tests/test_local_ref_gate.py` 读本机 `git ls-files` 结果再决定是否 skip，而 `AGENTS.md` / `docs/agents/` / `docs/README.md` 只存在于维护者机器 → CI 上这三例必跳。**最终落地形态是 #120 的最小 git 仓夹具**（在 `tmp_path` 里 `git init` 一个可控仓、把 `check_local_only_refs.ROOT` 重定向过去），三种磁盘状态在受控夹具里复现，生产代码不必为测试开洞；本 PR 原先加的 `hits_local_only(..., exists=)` 注入缝因此撤销，只保留一条「真仓库采集器仍有效」的用例作夹具与本仓的对照。
 * **`desktop/src-tauri/src/health_check.rs` 被编辑器带进 UTF-8 BOM**（HEAD 版本无 BOM）：已去除。`window.rs` 的既有 BOM 未动（属另一条进行中的桌面壳工作，避免并行改撞车）。
-
-### Added
-
-* **取证模式 `SEEDVR2_WATERMARK_PROOF_MODE=1`**：图像输出为 JPEG/WebP 时强制转存 PNG。有损编码器对隐式标识是临界存活（实测 JPEG q90/q95 依内容摆动、q80 以下必失），开启后产物侧变为确定性可验证；默认关闭以保持交付格式习惯。视频维持 H.264 CRF18（实测 16/16 帧存活），不加无损档。
-* **溯源记录改落 `data/provenance/`（可用 `SEEDVR2_PROVENANCE_DIR` 覆写）**：原先写在产物旁边（`<产物名>.provenance.json`）——输出目录是交付面，多出来的 JSON 会被当垃圾删掉（连带丢掉可发现性）并污染保留策略的文件计数。现文件名内嵌产物路径哈希（`<名>__<blake2b8>.provenance.json`），JSON 增加 `output_path` 绝对路径字段保持关联；`.gitignore` 加 `data/provenance/`。
-
-### Changed
-
-* **`docs/AI应用分发安全加固指南.md` 第六节按代码重写，并纠正一处过度承诺**：原文称签名水印"能证明对方删过"——**不成立**：产物一旦被重编码/缩放，水印本就不可读，"缺失"与"被删"无法区分。现写清四层事实（载荷形态、三层标识、跨分发不可归属项目方、可鉴定范围仅未再加工原件）与两条产品取舍（画面无角标、文件名不改名）。README 里"输出文件名默认携带 `_AI` 后缀"的过时说明同步纠正，`.env.example` 补 `SEEDVR2_WATERMARK_PROOF_MODE` 与 `SEEDVR2_PROVENANCE_DIR`。
-* **本轮明确记录、决定不动的四项**：单任务输出目录保持 `outputs/image|video`（保留策略与历史库按目录管理，不随批量模板改）；元数据 `ai_generated` 标识保留（画面与文件名均不可见）；抗缩放/裁剪的同步定位码不做（载荷格式变更会让历史产物验证链断裂，需单独立项）；跨分发可归属需在线签发，暂不做。
-
 ## [1.5.8] - 2026-09-13
 
 ### Fixed
