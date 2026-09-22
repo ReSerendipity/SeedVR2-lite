@@ -1,7 +1,7 @@
 name: Docs Consistency
 on:
   pull_request:
-    paths: ['**/*.md', '.pre-commit-config.yaml', 'package.json', '.github/workflows/**']
+    paths: ['**/*.md', '.pre-commit-config.yaml', 'package.json', 'pyproject.toml', '.github/workflows/**']
   push:
     branches: [main]
 permissions:
@@ -23,3 +23,7 @@ jobs:
         run: python scripts/check_local_only_refs.py --all
       - name: Check README release version matches published tags
         run: python scripts/check_readme_release_version.py
+      - name: Check release state (pyproject / CHANGELOG vs published tags)
+        # README 那条只管对外声明；这条管"代码里写着的版本号有没有真发过"——v1.5.8 曾以
+        # pyproject + CHANGELOG 双在册、却无任何 tag/Release 的状态挂了 9 天而无门禁报警。
+        run: python scripts/check_release_state.py

@@ -19,6 +19,7 @@
 * **`docs/CODING_STANDARDS.md` 新增第 5 节「禁区与门禁口径（公开子集）」**：禁区表（`model_lib/` / `app/integrated_app/security/` / `config.yaml` 及授权改动后的兑现动作）+ 9 行门禁命令与接线位置 + 裁决顺序（代码 > 追踪文件 > 摘录）。AI 协作协议 `AGENTS.md` 与 `docs/agents/` 按「干净交付」决策仍不随仓库分发，本节的目的是：**克隆仓库后不依赖任何本地文件也能遵守禁区与门禁**。
 * **取证模式 `SEEDVR2_WATERMARK_PROOF_MODE=1`**：图像输出为 JPEG/WebP 时强制转存 PNG。有损编码器对隐式标识是临界存活（实测 JPEG q90/q95 依内容摆动、q80 以下必失），开启后产物侧变为确定性可验证；默认关闭以保持交付格式习惯。视频维持 H.264 CRF18（实测 16/16 帧存活），不加无损档。
 * **溯源记录改落 `data/provenance/`（可用 `SEEDVR2_PROVENANCE_DIR` 覆写）**：原先写在产物旁边（`<产物名>.provenance.json`）——输出目录是交付面，多出来的 JSON 会被当垃圾删掉（连带丢掉可发现性）并污染保留策略的文件计数。现文件名内嵌产物路径哈希（`<名>__<blake2b8>.provenance.json`），JSON 增加 `output_path` 绝对路径字段保持关联；`.gitignore` 加 `data/provenance/`。
+* **发布状态门禁 `scripts/check_release_state.py`**：既有的 `check_readme_release_version.py` 只核「README 声明 == 最新稳定 tag」，抓不到**代码侧版本号超前于实际发布**——实测 `pyproject.toml` 写 1.5.8、CHANGELOG 有 `## [1.5.8] - 2026-09-13` 段落，而仓库最新 tag 停在 v1.5.7：**1.5.8 从未发过版，这样挂了 9 天无人报警**，访客照 CHANGELOG 去找 Release 会拿不到任何东西。新脚本以最新稳定 tag 为锚做四向核对：`pyproject == tag` 为正常；`pyproject > tag` 时 CHANGELOG 对应小节必须显式标注「未发版」；`pyproject < tag`（发版后没回写版本位）报错；任何高于 tag 的 CHANGELOG 小节缺标注同样报错（防止只在 CHANGELOG 里先写一个未来版本）。拿不到 tag 时硬失败，不静默放行。判定核心是纯函数，`tests/test_release_state.py` 13 例全部用构造输入覆盖（含「当前仓库必须自洽」这条不 skip 的实况用例）。接线：`docs-consistency.yml` 新增该步并把 `pyproject.toml` 加进 paths 触发；口径写进 `docs/CODING_STANDARDS.md` §5.2 门禁表与 `docs/release-governance.md` §3 步骤 2 / §8 清单。**同时把本文件 `[1.5.8]` 标题就地标注为未发版**（其条目将随 1.6.0 一并发布）——门禁先红后绿，两个方向都在真仓库上验过。
 
 ### Changed
 
@@ -77,7 +78,7 @@
 * **`.githooks/pre-push` 的幻影引用声明在 rebase/合并中被丢回，导致 `check_local_only_refs --all` 报 5 处**：`docs-consistency.yml` 与 `structure-guard.yml` 跑的都是 `--all`，即**当时 CI 已经会红**。已补回文件级「本地未分发引用：precheck.ps1」声明；现全库 745 个追踪文件零幻影引用。
 * **门禁回归测试用条件 skip 换绿灯（CI 上 14 例中 3 例静默失效）**：`tests/test_local_ref_gate.py` 读本机 `git ls-files` 结果再决定是否 skip，而 `AGENTS.md` / `docs/agents/` / `docs/README.md` 只存在于维护者机器 → CI 上这三例必跳。**最终落地形态是 #120 的最小 git 仓夹具**（在 `tmp_path` 里 `git init` 一个可控仓、把 `check_local_only_refs.ROOT` 重定向过去），三种磁盘状态在受控夹具里复现，生产代码不必为测试开洞；本 PR 原先加的 `hits_local_only(..., exists=)` 注入缝因此撤销，只保留一条「真仓库采集器仍有效」的用例作夹具与本仓的对照。
 * **`desktop/src-tauri/src/health_check.rs` 被编辑器带进 UTF-8 BOM**（HEAD 版本无 BOM）：已去除。`window.rs` 的既有 BOM 未动（属另一条进行中的桌面壳工作，避免并行改撞车）。
-## [1.5.8] - 2026-09-13
+## [1.5.8] - 未发版（原记 2026-09-13；无 tag、无 Release，条目随 1.6.0 一并发布）
 
 ### Fixed
 * **权重文件名双命名兼容（numz `seedvr2_ema_*` ↔ Comfy-Org `seedvr2_*`）**（GOTCHAS #122 / KNOWN_ISSUES #91）：此前把 Comfy-Org 转包版权重（如 `seedvr2_3b_fp8_e4m3fn.safetensors`）放入 `model/` 后，`POST /api/restore/` 会因「按精确文件名找不到文件」恒 503 并报「已尝试 fp16, fp8 均无对应文件」——即便文件就在磁盘上。现 `check_model_exists`、引擎加载（DiT+VAE）、`verify_weight_hashes`、`verify_model_files` 统一走别名解析（`app/integrated_app/utils/weight_names.py`），同一精度的两套命名文件均可直接使用、**无需改名或重新下载**；`config.yaml` 补 `sha256_{fp16,fp8}_alt` 登记 Comfy-Org 版哈希，命中主哈希或 `_alt` 任一即通过白名单（完整性门禁不放松）。**已真机验收**：用户实测 `POST /api/restore/` 正常出图（此前恒 503）。

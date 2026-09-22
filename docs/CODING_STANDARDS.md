@@ -101,6 +101,7 @@ grep -rn --include='*.py' -iE 'C:\\Users|/home/|/Users/' .
 | 引用可用性 | `python scripts/check_local_only_refs.py --all` | `structure-guard.yml`、`docs-consistency.yml`、`.githooks/pre-commit` |
 | 规范引用幻影 | `python scripts/check_spec_refs.py`（依赖仓外家族 auditor，缺失时自动 skip） | `docs-consistency.yml`、`structure-guard.yml` |
 | 发布版号口径 | `python scripts/check_readme_release_version.py`（README 声明须等于最新稳定 tag；浅克隆会硬失败） | `docs-consistency.yml` |
+| 发布状态口径 | `python scripts/check_release_state.py`（`pyproject` 版本与 CHANGELOG 小节须对上最新稳定 tag；版本超前时 CHANGELOG 必须标「未发版」；无 tag 时硬失败） | `docs-consistency.yml` |
 | 密钥扫描 | `gitleaks detect --config gitleaks.toml` | `gitleaks.yml`、`.githooks/pre-push` |
 
 - **push 前本地预检**：钩子目录 `.githooks/` 随仓库分发，克隆后执行 `git config core.hooksPath .githooks`
