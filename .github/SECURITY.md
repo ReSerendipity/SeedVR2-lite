@@ -70,7 +70,7 @@ SeedVR2 已实施以下安全措施：
 - **内容溯源**：推理输出默认嵌入不可感知的来源标识（HMAC 签名载荷绑定任务 ID，可反查产生任务）；验证工具 `scripts/verify_watermark.py` 支持图像与视频（视频为采样帧验证）
 - **可鉴定范围**：隐式水印只在**未再加工的原件**上可验。图像按目标格式选档（无损走 `alpha=0.5`；JPEG/WebP 走鲁棒档 `0.05×3`，并在落盘后重读产物验签）；视频为三通道等幅 + 重复码 3 的鲁棒档，H.264 生产参数 CRF18/23 实测 16/16 采样帧可验（量化基准见 `scripts/experiment_watermark_transcode.py`，CI 回归 `tests/test_watermark_transcode.py`；视频路径代价 PSNR ≈ 37.5dB，视觉透明）。**不抗**缩放、裁剪、旋转与二次重编码；鲁棒档对 JPEG 属**临界存活**（真实照片 / 平滑渐变 q90-q95 可验，细密纹理与均匀白噪声 q95 即失效，q80 以下全失效）。需确定性可验证时用 `SEEDVR2_WATERMARK_PROOF_MODE=1` 强制无损输出。
 - **失败兜底**：嵌入或落盘复验失败时按 `runtime.security.watermark_on_failure` 处置（默认 `mark_metadata`：溯源记录写入 `data/provenance/<输出名>__<路径哈希>.provenance.json`，目录可用 `SEEDVR2_PROVENANCE_DIR` 覆写，并记 `WATERMARK_LOSS_DEGRADED` 审计事件，绝不静默；`block` 则删除已落盘产物并抛错）；视频合成后另做抽样验证，通过率 < 50% 同样标记
-- **发布产物完整性**：GitHub Release 随包发布 `SHA256SUMS.txt` 校验和。GPG 分离签名流水线 `.github/workflows/gpg-signed-release.yml` 已就绪，但**未配置 `GPG_PRIVATE_KEY` 时按设计跳过、不产出任何签名**（当前即此状态），且装机侧没有任何路径自动验签。代价记录在案：校验和与产物同页下发，Release 被入侵时攻击者可一并改写，GPG 才是独立信任根。
+- **发布产物完整性**：GitHub Release 随包发布 `SHA256SUMS.txt` 校验和，GPG 分离签名由 `.github/workflows/gpg-signed-release.yml` 与 `portable-release.yml` 的 `sign-release` job 承担——**密钥已配置，但签名不是发版的默认步骤**：那条 job 只在手动 dispatch 且勾选 `upload_to_release` 时运行，且只认文件名恰为 `SHA256SUMS.txt` 的资产。实测 12 个 Release 中仅 v1.5.0 与 v1.5.6 带 `SHA256SUMS.gpg`。验证公钥随仓库发布于 `website/docs/guide/release-signing-key.asc`，用户可比对 `gpg --verify SHA256SUMS.gpg SHA256SUMS.txt`。装机侧没有任何路径自动验签。代价记录在案：校验和与产物同页下发，Release 被入侵时攻击者可一并改写，GPG 才是独立信任根。
 
 ### 依赖安全
 
