@@ -55,8 +55,8 @@ model/                                 # 15.35GB 级权重，元数据仅存 con
 - 明确"单连接串行写"契约（:345 注释），多进程并发依赖 WAL 兜底
 
 **缺陷**：
-- ❌ **无 schema version**：全仓 `PRAGMA user_version` / migrations 零命中。迁移是"CREATE IF NOT EXISTS + PRAGMA table_info 探测补列"（:167-173），属隐式迁移。新增列一旦涉及类型变更或 NOT NULL 约束即失控
-- ❌ 迁移无失败处理与回滚记录——补列失败只是静默跳过
+- ✅ ~~无 schema version~~（数据治理 P0-2 已落地，本行按 2026-09-21 复核改写）：`app/integrated_app/history_db.py` 有 `SCHEMA_VERSION = 4` 与 `_MIGRATIONS` 版本化迁移链（v0→v1 补 `output_size_bytes`/`vram_peak_mb`，v1→v2 补 `input_sha256`，v2→v3 补 `pinned`，v3→v4 补 `deleted_at`），`PRAGMA user_version` 由 `_get_schema_version` 读、在全部迁移完成后于 `initialize()` 统一落盘；库版本高于代码版本时告警并跳过（防程序回滚把新库改坏）。原描述里的"隐式迁移"已不成立。
+- ✅ 迁移失败不再静默跳过：迁移函数抛错会直接冒出 `initialize()`，而 `user_version` 在其之后才写，所以失败即版本不推进、下次启动重跑该步；P2-4 另加升级前自动备份 `_backup_before_migration`（空库/同版本不备份，仅**备份自身**失败不阻断主流程）。**仍缺的是自动回滚**——备份文件得人工恢复。
 
 ### 1.2 配置即 Schema（Pydantic 治理）—— **已实现（90 分）**
 
@@ -104,15 +104,15 @@ model/                                 # 15.35GB 级权重，元数据仅存 con
 - 损坏文件失败路径完整：PIL 解码失败 → `RestoreResult(success=False)` → 落库 failed（`_image_pipeline.py:795-798` → `restore_service.py:332-335`）；视频打不开/0 帧均清理 frames_dir 并失败（`_video_pipeline.py:289-293, 594-597`）
 
 **缺口**：
-- ❌ 上传时**无分辨率/时长/帧数上限校验**——ffprobe 能力已有（`video_processor.py:130-198`）但只用于"两倍分辨率"参数覆写，不用于拒绝 4 小时 8K 视频（这会静默生成数十 GB 中间帧）
+- ❌ 上传只有**字节**上限，没有**像素/时长/帧数**维度的拒绝性校验：`app/integrated_app/routes/restore/common.py` 按 `runtime.security.max_upload_image_mb`（默认 50）/ `max_upload_video_mb`（默认 500）挡体积，而 ffprobe 能力虽已有（`video_processor.py:130-198`）却只用于"两倍分辨率"参数覆写，不用于挡掉 4 小时或 8K 输入（这类输入会静默生成数十 GB 中间帧）。**2026-09-21 复核：本条仍成立**——被挡下的是磁盘面，不是解码后的内存峰值面。
 - ❌ 无 HTTP content-type 白名单（以魔数替代，尚可接受）
-- ❌ **`folder_path` 模式与批量入口不校验魔数/大小**（`upload.py:232-246`、`batch.py:169-181` 仅按扩展名收集直接推理）——绕过上传接口的旁路校验缺口
+- ❌ **`folder_path` 模式与批量入口不校验魔数/大小**（`upload.py:232-246`、`batch.py:169-181` 仅按扩展名收集直接推理）——绕过上传接口的旁路校验缺口（2026-09-21 复核：仍成立，`security/magic_check.validate_upload_magic` 只在 `routes/restore/upload.py` 被调用，`batch.py` / `scan.py` 侧无调用点）
 
 ### 2.2 修复质量指标 —— **关键缺口（35 分）**
 
 - ✅ color_fix 五算法（LAB/HSV/小波/小波自适应/AdaIN，`color_fix.py:27-218`），图像与视频逐帧均已接线，`tests/test_color_fix.py` 覆盖形状/值域/极端输入/回退逻辑
 - ✅ **执行失败**重试体系完整：`bad_case_retry.py` 失败分类（OOM/网络/取消）→ 三级降级阶梯（blocks_to_swap↑ → 分辨率×0.75 → fp16→fp8+seed 轮换，:246-310）→ 指数退避；批量场景 OOM 降级写回批级配置避免重复 OOM（`restore_service.py:544-577`）；OOM 熔断（503+Retry-After）；29 个单测
-- ❌ **无 LPIPS/PSNR/SSIM 输出质量评估**：全仓 SSIM 仅用于场景切换检测（`video_processing_enhance.py:1103-1152`）、PSNR 仅用于水印不可感知性验证（`watermark.py:14,41`）。修复结果"是否比输入更好"完全靠人眼
+- 🟨 ~~无 PSNR/SSIM~~ → **指标已存在，但产线不测**（2026-09-21 复核改写）：`app/integrated_app/utils/image_metrics.py` 提供 `psnr` / `ssim` / `quality_report`，CI 的质量门禁 `tests/test_golden_quality.py`（合成 golden 源 → 生产退化处理 → 断言）与 `perf/benchmark/quant_quality_baseline.py` 都在它之上；SSIM 另用于场景切换检测、PSNR 用于水印不可感知性验证。**缺的是运行期判定**：一次真实任务的输出不会被打分，"这张是否比输入更好"仍完全靠人眼。LPIPS 仍无。
 - ❌ **无"质量 bad case"重试**：现有重试只针对"执行失败"，不针对"色偏/模糊/伪影"等质量不达标输出。`retry_with_bad_case_detection` 名字里有 bad case，实际是失败重试且重试耗尽后**接受低质量输出优雅降级**（:430-440）
 
 ### 2.3 子体系小结
@@ -132,8 +132,9 @@ model/                                 # 15.35GB 级权重，元数据仅存 con
 - **DCT-QIM 频域水印 + HMAC-SHA256 签名**（`security/watermark.py` 的 `embed_watermark` / `verify_watermark`，边界见该文件 docstring）：图像与视频帧均嵌入，按输出格式自适应档位并在落盘后复验；可举证范围限于「持该密钥的实例产出的未再加工产物」——这是同类项目少有的强项
 
 **缺口**：
-- ❌ **HistoryRecord 无源文件内容 hash 列**。任务级 checkpoint 的 `_file_fingerprint`（`checkpoint.py:40-54`）只有 path+size+mtime 且不入历史库。上传文件重名/被覆盖后，历史记录与实际产出无法严格对应
-- ❌ **model_size 非精确版本**（"3b" 不区分当天权重是否被替换过，尽管 sha256 校验存在，但校验哈希未写进历史记录）
+- ✅ ~~HistoryRecord 无源文件内容 hash 列~~（数据治理 P1-1 已落地，2026-09-21 复核）：v1→v2 迁移新增 `input_sha256`，由 `services/restore_service.py` 用 `compute_file_sha256(media_path)` 算出并随记录写库，历史接口可读回。checkpoint 的 `_file_fingerprint`（`checkpoint.py:40-54`，path+size+mtime）仍是弱指纹，但它只管断点续传、不再承担血缘。
+- ❌ **权重指纹仍不入历史**（2026-09-21 复核：仍成立）：`model_size` 只记到 `"3b"` 这一档，加载时验过的权重 SHA-256 没有写进那条记录——"当天那次产出的权重文件是否被替换过"在库里问不出来，只能靠 `logs/` 与审计事件侧证。
+- ❌ **溯源证据与留存策略互相抵消**（2026-09-21 新增）：`config.yaml` 默认 `uploads_max_age_days: 7` / `outputs_max_age_days: 14` / `disk_min_free_gb: 5.0`，保留任务会按龄删除**输入原件与产物**——而这两者正是隐式水印反查（产物）与内容比对（原件）的证据本体。用户级 `pinned` 标记可豁免，但豁免要人主动打；磁盘水位触发时连"按龄"这一缓冲都没有。要长期可鉴定就得把证据层从交付层里分出来（独立留存目录或只存 hash + 缩略图），这是产品决策而非缺陷修复。
 - ✅ ~~无输出→任务反查 API~~（已实现，P3-1）：`GET /api/system/history/resolve` 支持 `output_file` / `task_id` / `watermark_payload` 三口径，水印载荷即 task_id 且自动剥去签名摘要与品牌前缀（`security/watermark.py::strip_watermark_envelope`）；命令行侧 `scripts/verify_watermark.py --show-payload` 直接打印可反查 ID
 - ⚠️ 反查依赖历史库与原始产物在册：`outputs/` 受保留策略自动清理（年龄/数量/磁盘水位），原件被清后仅剩文字记录；产物经缩放/裁剪再加工后水印不可读
 

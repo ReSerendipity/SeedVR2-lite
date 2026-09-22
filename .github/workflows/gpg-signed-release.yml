@@ -3,9 +3,15 @@
 # 对 GitHub Release 上已存在的 `SHA256SUMS.txt` 做 GPG 分离签名并上传
 # `SHA256SUMS.gpg`，供进阶用户验证发行产物未被篡改（CWE-912）。
 #
-# 定位：常规签名已由 `portable-release.yml` 的 `sign-release` job 在
-# 发布链路内自动完成。本工作流仅用于事后补签（如发布时 secrets 尚未配置、
-# 或需要为历史 Release 追加签名）。
+# 定位：**旁路补签，不是发布链路的默认步骤**。两条已实测的边界（2026-09-22 核对 12 个 Release）：
+#   1. `portable-release.yml` 的 `sign-release` job 条件是
+#      `github.event_name == 'workflow_dispatch' && inputs.upload_to_release`——按 tag 发布时
+#      根本不跑，所以"发版即自动签名"并不成立（v1.5.0 与 v1.5.6 带 SHA256SUMS.gpg，是那两次走了
+#      手动 dispatch；其余 10 个 Release 没有签名）。
+#   2. 两个工作流都只认**文件名恰为 `SHA256SUMS.txt`** 的资产。历史上出现过 `SHA256SUMS-v1.5.4.txt`
+#      与裸 `SHA256SUMS` 两种命名，都会被判"无可签名资产"而 notice 跳过。
+#   → 想让某个 Release 带签名：手动 dispatch 本工作流并显式给 tag，事后回看资产里确实多出
+#      `SHA256SUMS.gpg`。**绿色运行 ≠ 已签名**（跳过也是绿色）。
 #
 # 触发方式:
 #   - workflow_dispatch（主用途，输入 tag；留空取最新 Release）

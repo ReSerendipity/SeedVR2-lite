@@ -619,7 +619,7 @@ async def lifespan(app: FastAPI):
                         "system_notice",
                         {
                             "level": "warning",
-                            "kind": "retention_watermark",
+                            "kind": "retention_disk_floor",
                             "message": (
                                 f"磁盘剩余 {info.get('free_gb', 0):.1f}GB 低于水位 "
                                 f"{info.get('min_free_gb', 0):.1f}GB，将按保留策略清理输出目录 "

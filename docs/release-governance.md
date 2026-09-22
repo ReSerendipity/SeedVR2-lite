@@ -25,7 +25,7 @@
 1. 确认 `[Unreleased]` 条目完整
 2. 同步版本位：`pyproject.toml` + `CHANGELOG.md`（维护者本地另有 `AGENTS.md` 一处）
 3. 打 tag `git tag v<X.Y.Z>` → `git push origin v<X.Y.Z>` 触发 `portable-release.yml`（分卷便携包）
-4. 便携包产物自动 GPG 签名 + 校验和 + provenance（细则见 `docs/project/PORTABLE_BUNDLES.md`，维护者本地账本）
+4. **签名不是发版自动步骤**：便携包随包发布 `SHA256SUMS.txt`；GPG 分离签名只在 `portable-release.yml` 以 `workflow_dispatch` + `upload_to_release=true` 运行时由 `sign-release` job 产出（或事后手动跑 `gpg-signed-release.yml`），且只认文件名恰为 `SHA256SUMS.txt` 的资产（细则见 `docs/project/PORTABLE_BUNDLES.md`，维护者本地账本）
 5. CI 盯到终态：push 后 `gh run list` / `gh run watch`，红了当场修或 revert 止损
 
 ## 4. 回滚判定（满足任一即触发）
@@ -64,5 +64,5 @@
 - [ ] `python scripts/check_spec_refs.py` 退出码 0
 - [ ] `python scripts/check_local_only_refs.py --all` 退出码 0（追踪文件不新增指向未分发文件的引用）
 - [ ] 便携包自测 `test_portable_bundle.ps1` 通过
-- [ ] GPG 签名 + SHA256 校验和已生成并验证
+- [ ] SHA256 校验和已生成并抽查复算；需要 GPG 签名时**另行手动触发**并回看 Release 资产里确有 `SHA256SUMS.gpg`（`sign-release` 不在 tag 发布链路上，且绿色跳过与已签名在状态上同为 success——只有资产列表能区分）
 - [ ] tag 已推送触发 `portable-release.yml`
