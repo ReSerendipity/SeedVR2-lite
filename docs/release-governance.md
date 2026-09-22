@@ -11,7 +11,9 @@
 ## 1. 版本号规范
 
 - 遵循 SemVer `MAJOR.MINOR.PATCH`。MAJOR=不兼容变更、MINOR=向后兼容新功能、PATCH=向后兼容修复。
-- 版本权威位：`app/integrated_app/version.py`（pyproject 直读）→ `pyproject.toml`，与 `CHANGELOG.md` 一致。当前 **v1.5.8**。
+- 版本权威位：`app/integrated_app/version.py`（直读 `pyproject.toml`）→ `pyproject.toml`，与 `CHANGELOG.md` 一致。
+  **本文件不再手写「当前 vX.Y.Z」**——那个手写位点错过一次（写着 v1.5.8，而 v1.5.8 从未发版）。要问当前状态用机器：
+  已发布看 `git tag --list 'v*' --sort=-v:refname | head -1`，代码备好未发布看 `python scripts/check_release_state.py`。
   （维护者本地的 `AGENTS.md` 顶部「对应项目版本」需同步，但该文件未随仓库分发，外部贡献者可忽略此步。）
 - 可选预发布：`-alpha.N` / `-beta.N` / `-rc.N`。
 
