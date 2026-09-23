@@ -296,6 +296,9 @@ perf/benchmark/results/
 experiments/logs/
 data/heartbeats/
 data/checkpoints/
+# scripts/perf_compile_baseline.py 的四组合输出（off/dit/vae/both × 每组若干 PNG）：
+# 与 perf/benchmark/results/ 同性质，跑一次就重生成，本机实测 12 张约 4.4 MB，不入库。
+data/perf_out/
 
 # coverage XML 产物（CI coverage gate 用，属运行时生成）
 /coverage.xml

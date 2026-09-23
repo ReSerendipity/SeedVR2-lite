@@ -132,6 +132,41 @@ def check_gpu() -> bool:
         return False
 
 
+def resolve_registered_weights(
+    pretrained_dir: Path,
+    model_cfg: dict,
+    precision: str,
+) -> dict[str, dict[str, object]]:
+    """按**引擎同源的别名规则**解析 config.yaml 登记的权重。
+
+    同一档位存在两套命名——numz 的 `seedvr2_ema_*` 与 Comfy-Org 的 `seedvr2_*`（字节不同、
+    哈希不同）。引擎加载走 `find_weight_file` / `weight_hash_candidates`，本脚本若直查
+    config 登记名，就会对"用户放的是另一源命名、文件确实在场"的情况假报「权重不存在」。
+
+    Returns:
+        {用途: {"registered": 登记名, "resolved": Path | None, "hit": 命中名, "candidates": [哈希…]}}
+        用途键：DiT-<precision> / VAE / pos_emb / neg_emb。
+    """
+    from app.integrated_app.utils.weight_names import find_weight_file, weight_hash_candidates
+
+    wanted = {
+        f"DiT-{precision}": (model_cfg.get(f"checkpoint_{precision}", ""), precision),
+        "VAE": (model_cfg.get("vae_checkpoint", ""), "vae"),
+        "pos_emb": (model_cfg.get("pos_emb", ""), "pos_emb"),
+        "neg_emb": (model_cfg.get("neg_emb", ""), "neg_emb"),
+    }
+    out: dict[str, dict[str, object]] = {}
+    for purpose, (registered, suffix) in wanted.items():
+        hit = find_weight_file(pretrained_dir, registered) if registered else None
+        out[purpose] = {
+            "registered": registered,
+            "resolved": Path(hit) if hit else None,
+            "hit": Path(hit).name if hit else "",
+            "candidates": weight_hash_candidates(model_cfg, suffix) if registered else [],
+        }
+    return out
+
+
 def check_model_files(model_size: str, precision: str) -> bool:
     """检查模型文件是否存在。"""
     print_header(f"4. 模型文件检查 ({model_size}/{precision})")
@@ -163,62 +198,64 @@ def check_model_files(model_size: str, precision: str) -> bool:
 
     pretrained_dir = PROJECT_ROOT / config.get("model", {}).get("pretrained_dir", "model")
 
-    # 检查主要权重文件
-    checkpoint_key = f"checkpoint_{precision}"
-    checkpoint_name = model_cfg.get(checkpoint_key, "")
+    weights = resolve_registered_weights(pretrained_dir, model_cfg, precision)
+    dit_key = f"DiT-{precision}"
+    dit = weights[dit_key]
+
+    checkpoint_name = str(dit["registered"] or "")
     if not checkpoint_name:
-        print_fail(f"配置中未找到 {checkpoint_key}")
+        print_fail(f"配置中未找到 checkpoint_{precision}")
         return False
 
-    checkpoint_path = pretrained_dir / checkpoint_name
-    if not checkpoint_path.exists():
-        print_fail(f"权重文件不存在: {checkpoint_path}")
-        print_info("请从 ByteDance-Seed HuggingFace 下载模型权重")
+    checkpoint_path = dit["resolved"]
+    if checkpoint_path is None:
+        print_fail(f"权重文件不存在（已按等价命名一并查找）: {checkpoint_name}")
+        print_info(f"  查找目录: {pretrained_dir}")
+        print_info("  请从 ByteDance-Seed / numz/SeedVR2_comfyUI / Comfy-Org/SeedVR2 下载模型权重")
         return False
 
     file_size_mb = checkpoint_path.stat().st_size / (1024 * 1024)
-    print_ok(f"权重文件: {checkpoint_name} ({file_size_mb:.1f} MB)")
+    hit = str(dit["hit"])
+    alias_note = "" if hit == checkpoint_name else f"（别名命中: {hit}）"
+    print_ok(f"权重文件: {hit} ({file_size_mb:.1f} MB){alias_note}")
 
-    # SHA256 校验（如果配置了）
-    sha_key = f"sha256_{precision}"
-    expected_sha = model_cfg.get(sha_key, "")
-    if expected_sha:
+    # SHA256 校验（如果配置了）——候选含主哈希与 _alt，因为两套命名字节不同、哈希不可互用
+    candidates = [str(c) for c in (dit["candidates"] or [])]
+    if candidates:
         print_info("正在计算 SHA256...")
         sha256 = hashlib.sha256()
         with open(checkpoint_path, "rb") as f:
             for chunk in iter(lambda: f.read(8192), b""):
                 sha256.update(chunk)
         actual_sha = sha256.hexdigest()
-        if actual_sha == expected_sha:
+        if actual_sha in candidates:
             print_ok("SHA256 校验通过 ✓")
         else:
             print_fail("SHA256 校验失败！")
-            print_info(f"  期望: {expected_sha}")
+            print_info(f"  期望: {', '.join(candidates)}")
             print_info(f"  实际: {actual_sha}")
             return False
     else:
-        print_warn(f"未配置 {sha_key}，跳过 SHA256 校验")
+        print_warn(f"未配置 sha256_{precision}，跳过 SHA256 校验")
 
     # 检查 VAE 权重
-    vae_name = model_cfg.get("vae_checkpoint", "")
-    if vae_name:
-        vae_path = pretrained_dir / vae_name
-        if vae_path.exists():
-            vae_size_mb = vae_path.stat().st_size / (1024 * 1024)
-            print_ok(f"VAE 权重: {vae_name} ({vae_size_mb:.1f} MB)")
-        else:
-            print_fail(f"VAE 权重不存在: {vae_path}")
+    vae = weights["VAE"]
+    if vae["registered"]:
+        if vae["resolved"] is None:
+            print_fail(f"VAE 权重不存在（已按等价命名一并查找）: {vae['registered']}")
             return False
+        vae_size_mb = vae["resolved"].stat().st_size / (1024 * 1024)
+        vae_alias = "" if vae["hit"] == vae["registered"] else f"（别名命中: {vae['hit']}）"
+        print_ok(f"VAE 权重: {vae['hit']} ({vae_size_mb:.1f} MB){vae_alias}")
 
     # 检查 embedding 文件
     for emb_key in ("pos_emb", "neg_emb"):
-        emb_name = model_cfg.get(emb_key, "")
-        if emb_name:
-            emb_path = pretrained_dir / emb_name
-            if emb_path.exists():
-                print_ok(f"Embedding: {emb_name}")
+        emb = weights[emb_key]
+        if emb["registered"]:
+            if emb["resolved"] is not None:
+                print_ok(f"Embedding: {emb['hit']}")
             else:
-                print_warn(f"Embedding 文件不存在: {emb_path}")
+                print_warn(f"Embedding 文件不存在: {pretrained_dir / str(emb['registered'])}")
                 print_info("  （某些模型可能不需要 embedding 文件，可忽略此警告）")
 
     return True
@@ -229,6 +266,7 @@ def check_model_load(model_size: str, precision: str) -> bool:
     print_header(f"5. 模型加载测试 ({model_size}/{precision})")
 
     try:
+        from app.integrated_app.config import load_config
         from app.integrated_app.gpu_backend import gpu_manager
         from app.integrated_app.model_manager import ModelManager
 
@@ -236,13 +274,13 @@ def check_model_load(model_size: str, precision: str) -> bool:
             print_fail("GPU 不可用，无法加载模型")
             return False
 
-        manager = ModelManager()
+        # ModelManager 需要完整配置字典（含 model.models.* 与 inference 段）；
+        # 早期无参构造的写法在 config 注入改造后就一直抛 TypeError，使第 5/6 步从未真正跑过。
+        manager = ModelManager(load_config())
         print_info(f"正在加载模型 {model_size}/{precision}...")
         print_info("（这可能需要几分钟时间，请耐心等待）")
 
         start_time = time.time()
-        import asyncio
-
         result = asyncio.run(manager.load_model(model_size=model_size, precision=precision))
         elapsed = time.time() - start_time
 

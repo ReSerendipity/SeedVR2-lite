@@ -58,6 +58,9 @@ TEXT_ALLOWLIST = {
     "requirements.txt",
     "history.db",
     "model_lib",
+    # torch.compile 是 PyTorch 的 API 名，作为技术术语出现在编译开关的标签与提示里，
+    # 五种语言都不译（同 python.exe / model_lib 的先例），不是漏翻译。
+    "torch.compile",
 }
 
 

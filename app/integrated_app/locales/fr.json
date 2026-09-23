@@ -377,7 +377,14 @@
     "act_fit": "ajuster",
     "act_divider_pan": "curseur / déplacer",
     "act_fit_one_to_one": "ajuster / 1:1",
-    "act_play_pause": "lecture / pause"
+    "act_play_pause": "lecture / pause",
+    "compile_dit": "Compiler le DiT (torch.compile)",
+    "compile_vae": "Compiler le VAE (torch.compile)",
+    "tip_compile_dit": "Compile le noyau de débruitage avec torch.compile. Mesuré sur ce GPU portable 12 Go : pertes nettes (~47% plus lent en régime stable, VRAM crête doublée 3,2->6,8 Go, +44 s au premier appel). Le gain de 20-40 % annoncé par numz ne s'est pas reproduit ici ; ne l'activez pas comme option de performance. Appliqué au prochain chargement du modèle.",
+    "tip_compile_vae": "Compile l'encodeur/décodeur avec torch.compile. Mesuré ici : ~50% plus lent en régime stable, +7 s au premier appel, 0% de gain. Le VAE a des formes dynamiques et échoue plus souvent ; un échec revient au mode non compilé avec un avertissement, la sortie est produite quand même. Appliqué au prochain chargement du modèle.",
+    "compile_saved": "Enregistré ; pris en compte au prochain chargement du modèle",
+    "compile_save_failed": "Échec de l'enregistrement du paramètre de compilation",
+    "compile_unavailable": "torch.compile est indisponible dans cet environnement ; commutateurs désactivés"
   },
   "history": {
     "title": "Historique",

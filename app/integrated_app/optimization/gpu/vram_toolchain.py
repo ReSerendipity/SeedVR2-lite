@@ -19,6 +19,7 @@
     - 工具链提供两种预设：低显存模式（最大化节省）和高性能模式（优先速度）
 """
 
+import importlib.util
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -527,6 +528,69 @@ class CompileConfig:
     exclude_module_names: list[str] = field(default_factory=list)
 
 
+_COMPILE_SUPPORT: dict[str, object] | None = None
+
+
+def _triton_present() -> bool:
+    """本机是否装了 triton（单独成函数，便于测试替换这一环境前提）。"""
+    return importlib.util.find_spec("triton") is not None
+
+
+def compile_support(*, refresh: bool = False) -> dict[str, object]:
+    """探测本机 torch.compile **真的**能不能用，而不是只查 API 是否存在。
+
+    为什么必须实测、而且要实测到**前向**：``torch.compile()`` 是惰性的，只调它拿到
+    ``OptimizedModule`` 并不代表能编译 —— 图捕获与代码生成发生在首次前向。而
+    ``is_available()`` 只看 ``hasattr(torch, "compile")``，Windows 上恒为 True。
+
+    本机实测到**两道独立的墙**（第一道会把第二道遮住，只解一个不够）：
+      ① 进程未跑在 UTF-8 模式时，inductor 用 GBK 读文件直接抛 ``UnicodeDecodeError``，
+        于是 :meth:`CompileOptimizer.compile` 吞掉异常返回**原模型** —— 设置里的编译开关
+        变成静默 no-op（显示可用、保存成功、行为不变）；
+      ② 补上 ``-X utf8`` 之后小 Module 探测通过，但**真实 DiT 首帧**抛
+        ``Cannot find a working triton installation``：CUDA 上 inductor 编译真实模型需要 triton，
+        Windows 无官方轮子。所以探测必须显式查 triton，只信 nn.Linear 会误报可用。
+    （VAE 不依赖 triton，可编译成功；实测稳态与不编译几乎无差别。）
+    本函数就是让 UI / 自检接口有依据把开关置灰并说明原因。结果按进程缓存。
+
+    Returns:
+        {"available": bool, "reason": str}：reason 为空表示可用；非空为原始异常文本。
+    """
+    global _COMPILE_SUPPORT
+    if _COMPILE_SUPPORT is not None and not refresh:
+        return _COMPILE_SUPPORT
+
+    # 先查 triton：真实 DiT 需要它。用 nn.Linear 探不出来 —— 那么简单算子 inductor 能退到
+    # C++ 路径，所以"小模型探测通过"会在缺 triton 的机器上误报可用（本机实测：Linear 探测
+    # 显示 available=true，真 3B DiT 首帧却抛 "Cannot find a working triton installation"）。
+    if torch.cuda.is_available() and not _triton_present():
+        _COMPILE_SUPPORT = {
+            "available": False,
+            "reason": "缺 triton：CUDA 上 inductor 编译真实 DiT 需要它（Windows 无官方轮子）",
+        }
+        return _COMPILE_SUPPORT
+
+    probe = torch.nn.Linear(8, 8)
+    optimizer = CompileOptimizer(CompileConfig(enabled=True, backend="inductor"))
+    reason = ""
+    try:
+        result = optimizer.compile(probe)
+        if result is probe:
+            reason = optimizer.last_error() or "torch.compile 未包装模型"
+        else:
+            # 设备必须与真实推理一致：CPU 上的 Linear 会被 inductor 退到 C++ 后端、要求 MSVC
+            # cl.exe（多数机器没有），于是报"不可用"，而真实 DiT 走 CUDA+triton 其实是好的。
+            # 探测物连设备都选错，就会把可用环境误置灰。
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            result = result.to(device)
+            result(torch.randn(2, 8, device=device))  # 惰性编译：不跑这一次前向测不出真实可用性
+    except Exception as exc:  # 探测本身绝不能把启动或请求带崩
+        reason = optimizer.last_error() or f"{type(exc).__name__}: {exc}"
+        logger.warning(f"torch.compile 探测失败（按不可用处理）: {reason[:300]}")
+    _COMPILE_SUPPORT = {"available": not reason, "reason": reason[:400]}
+    return _COMPILE_SUPPORT
+
+
 class CompileOptimizer:
     """torch.compile 编译优化集成
 
@@ -558,12 +622,18 @@ class CompileOptimizer:
         """
         self.config = config or CompileConfig()
         self._compiled: bool = False
+        self._last_error: str = ""
 
     def is_available(self) -> bool:
-        """检测 torch.compile 是否可用（PyTorch 2.0+）
+        """检测 torch.compile 是否存在于这个 torch 版本（PyTorch 2.0+）。
+
+        ⚠ 这只回答"有没有这个 API"，**不回答"能不能真的编译"**。Windows 上缺 triton 时
+        ``hasattr(torch, "compile")`` 仍为 True，而实际 ``torch.compile`` 会抛错并被
+        :meth:`compile` 吞成一次静默回退 —— 用它当"可用"会让 UI 把 no-op 开关显示成可用。
+        需要"真的能用"请调 :func:`compile_support`。
 
         Returns:
-            bool: torch.compile 可用返回 True
+            bool: torch.compile 属性存在返回 True
         """
         return hasattr(torch, "compile")
 
@@ -574,6 +644,14 @@ class CompileOptimizer:
             str: PyTorch 版本字符串
         """
         return torch.__version__
+
+    def last_error(self) -> str:
+        """最近一次编译失败的原因（未失败过则为空串）。
+
+        存在的意义是把 :meth:`compile` 的静默回退变成可查询状态，供设置接口/UI 判断
+        "这个开关在本机其实不生效"。
+        """
+        return self._last_error
 
     def compile(self, model: torch.nn.Module) -> torch.nn.Module:
         """使用 torch.compile 编译模型
@@ -614,10 +692,13 @@ class CompileOptimizer:
                 dynamic=self.config.dynamic,
             )
             self._compiled = True
+            self._last_error = ""
             logger.info("torch.compile 已应用。首次推理将触发编译 (约30-120秒)，" "后续推理将加速。")
             return compiled_model
 
         except Exception as e:
+            # 记下来而不是只打一行日志：调用方与 UI 需要能查到"开关开了但其实没生效"
+            self._last_error = f"{type(e).__name__}: {e}"
             logger.error(f"torch.compile 失败: {e}，回退到未编译模式")
             return model
 

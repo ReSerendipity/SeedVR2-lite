@@ -30,7 +30,9 @@ model_lib/dit/
 └── nablocks/            # NaDiT transformer blocks
 ```
 
-**Modifications**: Implementation adapted for SeedVR2-specific configurations (window size, latent dimension). Original architecture preserved.
+**Modifications**: Implementation adapted for SeedVR2-specific configurations (latent dimension, `mmdit_sr` block interface). Regarding window attention: the two adaptive-window functions `make_720Pwindows_bysize` / `make_shifted_720Pwindows_bysize` are **verbatim upstream** — window *size* is derived from the actual `h×w` token grid there, while config's `window: [4, 3, 3]` is the reference **window count** (`num_windows`), not a size. Local additions to `dit_v2/window.py` are limited to two extra, currently unreferenced `get_window_op` branches (`win`, `win_by_size`) and five unused module-level helpers. See the verification report `docs/reports/upstream_verify_20260922.md` §2 (维护者本地报告，`docs/reports/` 被 .gitignore 忽略、不随仓库分发).
+> ⚠ 措辞勘误（2026-09-22）：本行旧版把 "window size" 列为本地适配项，读起来像"窗口尺寸被本地写死"，
+> 曾据此立了一项"adaptive window attention 可能在 vendoring 时漏掉"的最高优先级体检——该体检已证伪。
 
 ---
 

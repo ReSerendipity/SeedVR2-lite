@@ -303,6 +303,29 @@ class TestGetRecommendedPrecision:
         assert manager.get_recommended_precision("3b") == "fp16"
         assert manager.get_recommended_precision("7b") == "fp8"
 
+    @patch("app.integrated_app.model_manager.get_gpu_memory_info")
+    def test_marketed_12gb_card_recommends_fp8_for_7b(self, mock_mem, mock_registry, config):
+        """标称 12GB 的卡实报 12226 MiB = 11.94 GiB < min_vram_fp8_gb=12，仍须推荐 fp8。
+
+        既有用例全用整数 GB，恰好绕过「厂商标称值 > 二进制真实容量」这一必然发生的形态。
+        这条锁的是 README「12GB 卡推荐 7B FP8 + BlockSwap」的口径不被阈值边界本身否掉。
+        """
+        mock_mem.return_value = {"total_mb": 12226}
+        manager = ModelManager(config)
+        assert manager.get_recommended_precision("7b") == "fp8"
+
+    @patch("app.integrated_app.model_manager.get_gpu_memory_info")
+    def test_low_vram_gate_uses_blockswap_floor_not_min_vram_key(self, mock_mem, mock_registry, config):
+        """权重已在本地时，门槛走「全量 BlockSwap 下界」而非 config 的 min_vram_fp8_gb。
+
+        2026-09-10 修订（GOTCHAS #99/#100 的 fail-open 纪律）前，这里会被
+        ``min_vram_fp8_gb: 12`` 直接拒掉 12GB 卡；本用例防止那条硬挡被重新引入。
+        """
+        mock_mem.return_value = {"total_mb": 11 * 1024}  # 11.0 GiB < min_vram_fp8_gb=12
+        manager = ModelManager(config)
+        with patch.object(manager, "check_model_exists", side_effect=lambda size, prec: prec == "fp8"):
+            assert manager.get_recommended_precision("7b") == "fp8"
+
 
 # ---------------------------------------------------------------------------
 # load_model

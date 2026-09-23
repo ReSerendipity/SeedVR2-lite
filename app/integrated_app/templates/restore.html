@@ -361,6 +361,15 @@
                     </div>
                     <input type="hidden" name="dit_cache_model" value="true">
                 </div>
+                <div class="sv-param-group">
+                    {# 编译开关走 /api/system/settings（加载期生效），故意不带 name：
+                       混进修复表单会被 collectParams() 当推理参数提交，再被 extra="ignore" 静默丢掉 #}
+                    <label class="sv-param-check" data-tooltip="{{ t('restore.tip_compile_dit') }}">
+                        <input type="checkbox" id="compileDit">
+                        <span>{{ t('restore.compile_dit') }} <i class="bi bi-info-circle"></i></span>
+                    </label>
+                    <div id="compileHint" class="sv-text-xs sv-text-muted" hidden></div>
+                </div>
             </div>
 
             <div class="sv-adv-section">
@@ -405,6 +414,12 @@
                     <div class="sv-param-group">
                         <input type="hidden" name="vae_cache_model" value="true">
                     </div>
+                </div>
+                <div class="sv-param-group">
+                    <label class="sv-param-check" data-tooltip="{{ t('restore.tip_compile_vae') }}">
+                        <input type="checkbox" id="compileVae">
+                        <span>{{ t('restore.compile_vae') }} <i class="bi bi-info-circle"></i></span>
+                    </label>
                 </div>
             </div>
 
@@ -1441,6 +1456,82 @@ document.addEventListener('DOMContentLoaded', () => {
         await SeedVR2.api.post('/api/system/settings', { allowed_base_dirs: dirs });
     }
 
+    // ===== torch.compile 分阶段开关（DiT / VAE） =====
+    // 走 /api/system/settings 而非修复表单：编译在模型加载期套用到网络上，
+    // 每次请求单独改没有意义（重启 inductor 编译比省下的时间更贵），故按全局设置处理。
+    const COMPILE_TOGGLES = [
+        { id: 'compileDit', field: 'torch_compile_dit', labelKey: 'restore.compile_dit' },
+        { id: 'compileVae', field: 'torch_compile_vae', labelKey: 'restore.compile_vae' }
+    ];
+
+    async function refreshCompileToggles() {
+        try {
+            const data = await SeedVR2.api.get('/api/system/settings');
+            const perf = (data && data.performance) || {};
+            COMPILE_TOGGLES.forEach(({ id, field }) => {
+                const el = document.getElementById(id);
+                if (el) el.checked = !!perf[field];
+            });
+            applyCompileAvailability(perf);
+        } catch (err) {
+            // 读失败保持未勾选即可，绝不弹错打断页面初始化
+        }
+    }
+
+    /** 本机编译不可用时把开关置灰并写明原因。
+     *
+     * 后端只查 hasattr(torch,'compile') 会恒真，实际 torch.compile 可能因缺 triton /
+     * 未启用 UTF-8 模式而静默回退 —— 于是开关"能勾、能存、不生效"。这里按 compile_available
+     * 呈现真相；字段缺失（连到旧后端）时按可用处理，避免误伤。
+     */
+    function applyCompileAvailability(perf) {
+        const available = perf.compile_available !== false;
+        const hint = document.getElementById('compileHint');
+        COMPILE_TOGGLES.forEach(({ id }) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.disabled = !available;
+            const label = el.closest('label');
+            if (label) label.style.opacity = available ? '' : '0.5';
+        });
+        if (!hint) return;
+        if (available) {
+            hint.hidden = true;
+            hint.textContent = '';
+            return;
+        }
+        const reason = perf.compile_reason ? ': ' + String(perf.compile_reason).slice(0, 120) : '';
+        hint.textContent = (I['restore.compile_unavailable'] || 'torch.compile unavailable in this environment') + reason;
+        hint.hidden = false;
+    }
+
+    function bindCompileToggles() {
+        COMPILE_TOGGLES.forEach(({ id, field, labelKey }) => {
+            const el = document.getElementById(id);
+            if (!el || el.dataset.compileBound === '1') return;
+            el.dataset.compileBound = '1';
+            el.addEventListener('change', async () => {
+                const wanted = el.checked;
+                el.disabled = true;
+                try {
+                    const payload = {};
+                    payload[field] = wanted;
+                    await SeedVR2.api.post('/api/system/settings', payload);
+                    const name = I[labelKey] || id;
+                    SeedVR2.toast(
+                        (I['restore.compile_saved'] || '已保存，下次加载模型时生效') + ' · ' + name + ' → ' + (wanted ? 'ON' : 'OFF'),
+                        'success'
+                    );
+                } catch (err) {
+                    el.checked = !wanted; // 写失败必须回滚，否则 UI 显示与 config 不一致
+                    SeedVR2.toast((I['restore.compile_save_failed'] || '保存编译设置失败') + ': ' + err.message, 'error', 8000);
+                } finally {
+                    el.disabled = false;
+                }
+            });
+        });
+    }
+
     /** 渲染允许目录列表到管理面板（#allowDirsList） */
     async function refreshAllowedDirsList() {
         const listEl = document.getElementById('allowDirsList');
@@ -2445,6 +2536,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 启动加载（DOMContentLoaded 之后脚本位于 body 末尾，所以 DOM 已就绪，直接调用）
     applyRestorePreferences();
+    bindCompileToggles();
+    refreshCompileToggles();
 
     // ===== 恢复上次修复会话（跨页面持久化） =====
     if (typeof SeedVR2 !== 'undefined' && typeof SeedVR2.restoreRestoreSession === 'function') {

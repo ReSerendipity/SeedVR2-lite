@@ -151,13 +151,17 @@ if errorlevel 1 (
 if /i "%~1"=="--dev" (
     echo [DEV] Starting with auto-reload ^(uvicorn --reload^)...
     cd /d "%~dp0"
-    "%PYTHON_CMD%" -m uvicorn app.integrated_app.app_server:app --host 127.0.0.1 --port 7870 --workers 1 --reload
+    "%PYTHON_CMD%" -X utf8 -m uvicorn app.integrated_app.app_server:app --host 127.0.0.1 --port 7870 --workers 1 --reload
     goto :end
 )
 
 :: Start application
+:: -X utf8 is required for torch.compile: inductor reads files with the locale codec, and
+::   without UTF-8 mode it dies on "'gbk' codec can't decode" and silently falls back to
+::   eager. Must be a startup flag -- os.environ["PYTHONUTF8"] inside Python is too late.
+::   (portable_launcher/launcher.ps1 already sets PYTHONUTF8=1; this covers the bare entry.)
 cd /d "%~dp0"
-"%PYTHON_CMD%" app\clean_launch.py
+"%PYTHON_CMD%" -X utf8 app\clean_launch.py
 
 if errorlevel 1 (
     echo.

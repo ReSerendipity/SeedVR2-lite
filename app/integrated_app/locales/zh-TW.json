@@ -377,7 +377,14 @@
     "act_fit": "適配",
     "act_divider_pan": "分割線 / 平移",
     "act_fit_one_to_one": "適配 / 1:1",
-    "act_play_pause": "播放 / 暫停"
+    "act_play_pause": "播放 / 暫停",
+    "compile_dit": "編譯 DiT（torch.compile）",
+    "compile_vae": "編譯 VAE（torch.compile）",
+    "tip_compile_dit": "用 torch.compile 編譯去噪主幹。⚠ 本機（12GB 筆電卡）實測為負收益：穩定狀態慢 47%、峰值顯存翻倍（3.2→6.8GB）、首包多等 ~44s。numz 宣稱的 20-40% 提速未在本地重現，別當提速項開啟。改後需重新載入模型才生效。",
+    "tip_compile_vae": "用 torch.compile 編譯編解碼器。⚠ 本機實測穩定狀態慢 50%、首包多等 ~7s，收益 0%。VAE 含動態形狀，比 DiT 更易編譯失敗——失敗僅回退未編譯並告警，不影響出圖。改後需重新載入模型才生效。",
+    "compile_saved": "已儲存，下次載入模型時生效",
+    "compile_save_failed": "儲存編譯設定失敗",
+    "compile_unavailable": "本環境 torch.compile 不可用，開關已停用"
   },
   "history": {
     "title": "歷史記錄",

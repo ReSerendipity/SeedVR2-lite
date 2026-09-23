@@ -101,6 +101,101 @@ def _resolve_model_dtype(dtype_name: str, device: str) -> torch.dtype:
     return getattr(torch, dtype_name)
 
 
+def _stage_compile_args(torch_compile_args: dict | None, stage: str) -> dict:
+    """取出某一阶段（``"dit"`` / ``"vae"``）实际生效的编译参数。
+
+    两阶段各自有独立的 enabled/mode/backend/fullgraph/dynamic：代价与失败模式都不同
+    （本机 12GB 实测：DiT 编译后稳态慢 47% 且峰值显存 3.2→6.8GB，VAE 编译后稳态慢 50%；
+    含动态形状的 VAE 还更容易 graph break），单一全局开关无法表达"只编一个"——
+    numz 社区集成正是因此把编译做成独立节点。其宣称的 20-40%/15-25% 提速在本项目未复现。
+
+    兼容旧的顶层扁平写法（直接写 enabled/mode/…）：视为对两阶段同时生效。config.yaml 是用户
+    手工编辑的文件，升级后若直接忽略，原本开着编译的人会静默失去加速而没有任何提示。
+    """
+    if not torch_compile_args:
+        return {}
+    if any(k in torch_compile_args for k in ("dit", "vae")):
+        return dict(torch_compile_args.get(stage) or {})
+    return dict(torch_compile_args)
+
+
+def _apply_stage_compile(model: torch.nn.Module, torch_compile_args: dict | None, stage: str) -> torch.nn.Module:
+    """按阶段应用 torch.compile；未启用、不可用或**编译期**失败时返回未编译模型。
+
+    边界要说清：torch.compile 是惰性的 —— ``compile()`` 通常立即返回，真正的图捕获与
+    内核生成发生在**首次 forward**。所以这里的 try/except 只覆盖"拿不到编译器"这类
+    装配期故障，**覆盖不到 forward 期的 graph break 抛错**。典型例子：
+    ``fullgraph=True`` 撞上 blockswap.py 里被 ``torch.compiler.disable`` 标记的区域，
+    会在首次推理时抛 ``Skip calling ...``，表现为整次任务失败而不是静默降级。
+    因此 ``inference.torch_compile.*.fullgraph`` 默认 False；改这个值属行为变更，
+    需要一次真推理验证，而不是只依赖本函数的兜底。
+    """
+    label = {"dit": "DiT", "vae": "VAE"}.get(stage, stage)
+    args = _stage_compile_args(torch_compile_args, stage)
+    if not args.get("enabled", False):
+        return model
+    try:
+        from app.integrated_app.optimization.gpu.vram_toolchain import (
+            CompileConfig,
+            CompileOptimizer,
+        )
+
+        compile_cfg = CompileConfig(
+            enabled=True,
+            mode=args.get("mode", "default"),
+            backend=args.get("backend", "inductor"),
+            fullgraph=args.get("fullgraph", False),
+            dynamic=args.get("dynamic", False),
+        )
+        optimizer = CompileOptimizer(compile_cfg)
+        if not optimizer.is_available():
+            logger.warning(f"{label} torch.compile 不可用 (需要 PyTorch 2.0+)，跳过")
+            return model
+        compiled = optimizer.compile(model)
+        logger.info(f"{label} torch.compile 已应用: mode={compile_cfg.mode}, fullgraph={compile_cfg.fullgraph}")
+        return compiled
+    except Exception as e:
+        logger.warning(f"{label} torch.compile 应用失败，回退未编译: {e}")
+        return model
+
+
+_INTEGRITY_PURPOSE_TO_CFG_KEY = {"VAE": "vae_checkpoint", "pos_emb": "pos_emb", "neg_emb": "neg_emb"}
+
+
+def _describe_integrity_failure(pretrained_root: Path, model_cfg: dict, failed: list[str]) -> str:
+    """把"完整性校验失败"拆成**缺文件**与**哈希不符**两类，措辞分别给出。
+
+    两类都必须拒绝加载（fail-closed 不变），但用户该做的下一件事完全不同：
+    前者是"这个精度还没下载 / 文件名与 config 登记不一致"，后者才是 CWE-353 的篡改嫌疑。
+    此前一律写成"可能已被篡改或投毒"，于是只是没下 mxfp8 的用户被告知自己的权重被投毒。
+    无法判定归属时保守归入篡改嫌疑 —— 宁可措辞重，不可放过真投毒。
+    """
+    from app.integrated_app.utils.weight_names import find_weight_file
+
+    missing: list[str] = []
+    tampered: list[str] = []
+    for purpose in failed:
+        cfg_key = _INTEGRITY_PURPOSE_TO_CFG_KEY.get(purpose)
+        if cfg_key is None and purpose.startswith("DiT-"):
+            cfg_key = f"checkpoint_{purpose.split('-', 1)[1]}"
+        name = str(model_cfg.get(cfg_key or "", "") or "")
+        if name and find_weight_file(pretrained_root, name) is None:
+            missing.append(f"{purpose} → {name}")
+        else:
+            tampered.append(purpose)
+
+    parts: list[str] = []
+    if missing:
+        parts.append(
+            "权重文件不存在（尚未下载，或文件名与 config.yaml 登记的等价命名都不匹配）: "
+            + "; ".join(missing)
+            + "。请先运行 scripts/download_model.py 下载该精度，或改用已在盘的精度"
+        )
+    if tampered:
+        parts.append("SHA256 与 config.yaml 不符，文件可能已被篡改或投毒 (CWE-353): " + ", ".join(tampered))
+    return "模型权重完整性校验失败 —— " + "；".join(parts) + "。拒绝加载。"
+
+
 class SeedVR2Engine(
     _VAEPipelineMixin,
     _DitPipelineMixin,
@@ -338,9 +433,7 @@ class SeedVR2Engine(
             integrity_results = await asyncio.to_thread(verify_model_files, pretrained_root_path, model_cfg, precision)
             failed_checks = [k for k, v in integrity_results.items() if not v]
             if failed_checks:
-                raise RuntimeError(
-                    f"模型权重完整性校验失败 (CWE-353): {', '.join(failed_checks)}. 文件可能已被篡改或投毒，拒绝加载。"
-                )
+                raise RuntimeError(_describe_integrity_failure(pretrained_root_path, model_cfg, failed_checks))
 
             # 记录 DiT 路径 (延迟加载)
             # 双命名兼容：config.yaml 登记 numz 的 seedvr2_ema_*，用户可能放 Comfy-Org 的
@@ -838,7 +931,15 @@ class SeedVR2Engine(
                     attention_mode=attention_mode or "sdpa",
                 )
             elif model_size == "7b":
-                from model_lib.dit.nadit import NaDiT, NaDiTConfig
+                try:
+                    from model_lib.dit.nadit import NaDiT, NaDiTConfig
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "7B 路径当前不可用：vendored 的 model_lib/dit（v1 树）处于半迁移状态，导入即失败"
+                        f"（{type(exc).__name__}: {exc}）。这 3 处断裂已登记在 "
+                        "tests/test_model_lib_import_sentinel.py 的 KNOWN_BROKEN_INTRA_IMPORTS。"
+                        "3B（model_lib/dit_v2）不受影响。"
+                    ) from exc
 
                 # 将 dit_config 映射到 NaDiTConfig 参数
                 config = NaDiTConfig(
@@ -974,29 +1075,9 @@ class SeedVR2Engine(
         _log_memory("DiT BlockSwap后")
 
         # ==================== 步骤5: torch.compile (官方 Torch Compile Settings 节点) ====================
-        # 可选加速: DiT 20-40% 提速; 需要 PyTorch 2.0+; 默认关闭 (更耗显存)
-        if torch_compile_args and torch_compile_args.get("enabled", False):
-            try:
-                from app.integrated_app.optimization.gpu.vram_toolchain import (
-                    CompileConfig,
-                    CompileOptimizer,
-                )
-
-                compile_cfg = CompileConfig(
-                    enabled=True,
-                    mode=torch_compile_args.get("mode", "default"),
-                    backend=torch_compile_args.get("backend", "inductor"),
-                    fullgraph=torch_compile_args.get("fullgraph", False),
-                    dynamic=torch_compile_args.get("dynamic", False),
-                )
-                optimizer = CompileOptimizer(compile_cfg)
-                if optimizer.is_available():
-                    model = optimizer.compile(model)
-                    logger.info(f"DiT torch.compile 已应用: mode={compile_cfg.mode}")
-                else:
-                    logger.warning("torch.compile 不可用 (需要 PyTorch 2.0+)，跳过")
-            except Exception as e:
-                logger.warning(f"DiT torch.compile 应用失败，回退未编译: {e}")
+        # 默认关闭是对的：本机 12GB 实测 DiT 编译后稳态慢 47%、峰值显存 3.2→6.8GB、首包 +44s
+        # （numz 宣称的 20-40% 提速未在本地复现）。当"提速项"推销给用户是错的。
+        model = _apply_stage_compile(model, torch_compile_args, "dit")
 
         # DiT optimization reference (FlashVSR inspired)
         # LCSA sparse attention would be applied here when model supports it
@@ -1180,29 +1261,8 @@ class SeedVR2Engine(
         # 注意: 不做 model.to(dtype=vae_dtype)，权重已在 state_dict 中转换
         # ComfyUI 也不做这一步，model.to(dtype=...) 会创建 dtype 转换副本导致内存翻倍
 
-        # torch.compile (官方 VAE 节点: 15-25% 提速; 默认关闭)
-        if torch_compile_args and torch_compile_args.get("enabled", False):
-            try:
-                from app.integrated_app.optimization.gpu.vram_toolchain import (
-                    CompileConfig,
-                    CompileOptimizer,
-                )
-
-                compile_cfg = CompileConfig(
-                    enabled=True,
-                    mode=torch_compile_args.get("mode", "default"),
-                    backend=torch_compile_args.get("backend", "inductor"),
-                    fullgraph=torch_compile_args.get("fullgraph", False),
-                    dynamic=torch_compile_args.get("dynamic", False),
-                )
-                optimizer = CompileOptimizer(compile_cfg)
-                if optimizer.is_available():
-                    model = optimizer.compile(model)
-                    logger.info(f"VAE torch.compile 已应用: mode={compile_cfg.mode}")
-                else:
-                    logger.warning("torch.compile 不可用 (需要 PyTorch 2.0+)，跳过")
-            except Exception as e:
-                logger.warning(f"VAE torch.compile 应用失败，回退未编译: {e}")
+        # torch.compile（官方 VAE 节点）：本机实测稳态慢 50%、首包 +7s、收益 0%，故默认关闭
+        model = _apply_stage_compile(model, torch_compile_args, "vae")
 
         _check_memory()
         _log_memory("VAE权重加载后")

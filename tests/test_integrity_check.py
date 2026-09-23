@@ -301,3 +301,47 @@ class TestVerifyModelFilesDualNaming:
         results = verify_model_files(str(pretrained_dir), model_cfg, precision="fp8")
 
         assert results.get("DiT-fp8") is False
+
+
+# --------------------------------------------------------------------------
+# 完整性失败的措辞分流：缺文件 ≠ 被篡改（引擎侧 _describe_integrity_failure）
+# 全部走真实 tmp_path 文件，因为分类依据就是"文件在不在盘上（含等价命名）"。
+# --------------------------------------------------------------------------
+
+from app.integrated_app.engines.seedvr2_engine import _describe_integrity_failure  # noqa: E402
+
+
+def test_missing_weight_is_not_reported_as_tampering(tmp_path):
+    cfg = {"checkpoint_mxfp8": "seedvr2_3b_mxfp8.safetensors"}
+    msg = _describe_integrity_failure(tmp_path, cfg, ["DiT-mxfp8"])
+    assert "不存在" in msg and "download_model.py" in msg
+    assert "投毒" not in msg, "只是没下载权重就被说成被投毒，是本次修掉的误诊"
+
+
+def test_present_file_failure_keeps_the_tampering_wording(tmp_path):
+    (tmp_path / "seedvr2_3b_mxfp8.safetensors").write_bytes(b"x")
+    cfg = {"checkpoint_mxfp8": "seedvr2_3b_mxfp8.safetensors"}
+    msg = _describe_integrity_failure(tmp_path, cfg, ["DiT-mxfp8"])
+    assert "投毒" in msg and "CWE-353" in msg, "真·哈希不符的措辞不得被削弱"
+
+
+def test_mixed_failures_are_separated(tmp_path):
+    (tmp_path / "ema_vae_fp16.safetensors").write_bytes(b"x")
+    cfg = {"checkpoint_fp8": "missing_fp8.safetensors", "vae_checkpoint": "ema_vae_fp16.safetensors"}
+    msg = _describe_integrity_failure(tmp_path, cfg, ["DiT-fp8", "VAE"])
+    assert "尚未下载" in msg and "CWE-353" in msg
+    assert msg.index("尚未下载") < msg.index("CWE-353")
+
+
+def test_unresolvable_purpose_falls_back_to_conservative_wording(tmp_path):
+    """cfg 里查不到对应文件名时无从判定，保守归入篡改嫌疑：宁可措辞重，不可放过真投毒。"""
+    msg = _describe_integrity_failure(tmp_path, {}, ["DiT-nvfp4"])
+    assert "CWE-353" in msg and "尚未下载" not in msg
+
+
+def test_alias_named_weight_is_not_called_missing(tmp_path):
+    """盘上是等价命名的另一源文件 ⇒ 已存在，问题在哈希而不是下载。"""
+    (tmp_path / "seedvr2_3b_fp8_e4m3fn.safetensors").write_bytes(b"x")
+    cfg = {"checkpoint_fp8": "seedvr2_ema_3b_fp8_e4m3fn.safetensors"}
+    msg = _describe_integrity_failure(tmp_path, cfg, ["DiT-fp8"])
+    assert "投毒" in msg and "不存在" not in msg
