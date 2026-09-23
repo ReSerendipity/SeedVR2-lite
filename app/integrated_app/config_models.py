@@ -371,6 +371,43 @@ class CacheConfig(BaseModel):
     max_size_mb: int = 500
 
 
+class TorchCompileStage(BaseModel):
+    """单个阶段（DiT 或 VAE）的 torch.compile 设置。
+
+    两阶段独立建模是刻意的：torch.compile 对 DiT 与 VAE 的收益、代价与失败模式都不同
+    （本机 12GB 实测：DiT 编译后稳态慢 47%、峰值显存翻倍；VAE 编译后稳态慢 50%；
+    fullgraph 对含动态形状的 VAE 更易 graph break），全局单开关会让"只编一个"这种常见需求
+    无法表达 —— numz 社区集成正是因此把编译做成独立节点。
+
+    Attributes:
+        enabled: 是否对本阶段启用 torch.compile。
+        mode: 编译模式，"default" / "reduce-overhead" / "max-autotune"。
+        backend: 编译后端，默认 "inductor"。
+        fullgraph: 是否要求整图编译（True 时 graph break 会直接报错，便于发现问题）。
+        dynamic: 是否按动态 shape 编译。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool = False
+    mode: str = "default"
+    backend: str = "inductor"
+    fullgraph: bool = False
+    dynamic: bool = False
+
+
+class TorchCompileSettings(BaseModel):
+    """按阶段拆分的 torch.compile 总配置。
+
+    Attributes:
+        dit: DiT（去噪主干）阶段的编译设置。
+        vae: VAE（编解码器）阶段的编译设置。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    dit: TorchCompileStage = Field(default_factory=TorchCompileStage)
+    vae: TorchCompileStage = Field(default_factory=TorchCompileStage)
+
+
 class InferenceConfig(BaseModel):
     """推理优化配置模型。
 
@@ -405,6 +442,8 @@ class InferenceConfig(BaseModel):
         distilled_mode: 是否使用蒸馏模式（兼容字段）。
         memory_threshold: 内存使用率阈值 (0.5-0.99)，超过此值终止推理。
         memory_min_available_gb: 绝对可用内存下限 (GB)，低于此值同样终止推理。
+        torch_compile: 分阶段编译设置，见 ``TorchCompileSettings``（dit / vae 各自 enabled/mode/
+            backend/fullgraph/dynamic）。旧的顶层扁平写法仍被引擎接受并视为两阶段同时生效。
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -432,7 +471,8 @@ class InferenceConfig(BaseModel):
     distilled_mode: bool = False
     cache_model: bool = False
     force_reload_dit: bool = False
-    torch_compile: dict[str, Any] = Field(default_factory=dict)
+    torch_compile: TorchCompileSettings = Field(default_factory=TorchCompileSettings)
+    """torch.compile 分阶段设置（dit / vae 各自独立开关），默认全部关闭。"""
     memory_threshold: float = Field(0.95, ge=0.5, le=0.99)
     """内存使用率阈值 (0.5-0.99)，超过此值终止推理，防止系统卡死"""
     memory_min_available_gb: float = Field(2.0, ge=0.5, le=64.0)

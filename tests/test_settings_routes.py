@@ -1,5 +1,7 @@
 """系统设置路由测试 (routes/system/settings.py) — browse-dir / validate_path / open-explorer。"""
 
+import copy
+
 import pytest
 from fastapi import HTTPException
 
@@ -216,3 +218,104 @@ def test_open_explorer_file_path_rejected(test_app, tmp_path):
     f.write_text("x")
     resp = _csrf_post(test_app, "/api/system/open-explorer", json={"path": str(f)})
     assert resp.status_code == 400
+
+
+# ---------- torch.compile 分阶段开关（读写投影） ----------
+
+_NESTED = {
+    "inference": {
+        "torch_compile": {
+            "dit": {"enabled": True, "mode": "reduce-overhead", "fullgraph": True},
+            "vae": {"enabled": False, "mode": "default"},
+        }
+    }
+}
+_LEGACY = {"inference": {"torch_compile": {"enabled": True, "mode": "max-autotune", "backend": "eager"}}}
+
+
+def test_compile_stage_enabled_reads_its_own_stage():
+    from app.integrated_app.routes.system.settings import compile_stage_enabled
+
+    assert compile_stage_enabled(_NESTED, "dit") is True
+    assert compile_stage_enabled(_NESTED, "vae") is False
+
+
+def test_compile_stage_enabled_falls_back_for_missing_config():
+    from app.integrated_app.routes.system.settings import compile_stage_enabled
+
+    assert compile_stage_enabled({}, "dit") is False
+    assert compile_stage_enabled({"inference": {}}, "vae") is False
+
+
+def test_apply_compile_flags_touches_only_the_requested_stage():
+    from app.integrated_app.routes.system.settings import apply_compile_flags, compile_stage_enabled
+
+    config = copy.deepcopy(_NESTED)
+    changed = apply_compile_flags(config, {"dit": None, "vae": True})
+    assert changed == ["inference.torch_compile.vae.enabled"]
+    stage = config["inference"]["torch_compile"]
+    assert stage["vae"]["enabled"] is True
+    assert stage["vae"]["mode"] == "default", "只改开关不得连带重置该阶段的编译参数"
+    assert stage["dit"]["enabled"] is True and stage["dit"]["fullgraph"] is True, "另一阶段必须原样保留"
+    assert compile_stage_enabled(config, "dit") is True
+
+
+def test_apply_compile_flags_expands_legacy_without_losing_params():
+    """旧扁平 config 的关键回归：展开后两阶段都要留住原有的 mode/backend。
+
+    不展开的话，写入 dit.enabled 会让结构出现 "dit" 键，引擎随即改按嵌套取值，
+    用户原先配的 mode/backend 就被一次勾选静默挤掉了。
+    """
+    from app.integrated_app.routes.system.settings import apply_compile_flags
+
+    config = copy.deepcopy(_LEGACY)
+    changed = apply_compile_flags(config, {"dit": False, "vae": None})
+    stage = config["inference"]["torch_compile"]
+    assert changed == ["inference.torch_compile.dit.enabled"]
+    assert set(stage) == {"dit", "vae"}
+    assert "enabled" not in stage, "顶层残留 enabled 会让新旧两种形状并存"
+    for name in ("dit", "vae"):
+        assert stage[name]["mode"] == "max-autotune"
+        assert stage[name]["backend"] == "eager"
+    assert stage["dit"]["enabled"] is False
+
+
+def test_apply_compile_flags_is_noop_when_nothing_requested():
+    from app.integrated_app.routes.system.settings import apply_compile_flags
+
+    config = copy.deepcopy(_NESTED)
+    before = copy.deepcopy(config)
+    assert apply_compile_flags(config, {"dit": None, "vae": None}) == []
+    assert config == before
+
+
+def test_apply_compile_flags_repairs_non_dict_stage():
+    from app.integrated_app.routes.system.settings import apply_compile_flags
+
+    config = {"inference": {"torch_compile": {"dit": True, "vae": {"enabled": False}}}}
+    assert apply_compile_flags(config, {"dit": True}) == ["inference.torch_compile.dit.enabled"]
+    assert config["inference"]["torch_compile"]["dit"] == {"enabled": True}
+
+
+def test_settings_exposes_compile_availability(monkeypatch, test_app):
+    """UI 置灰依赖这个字段：缺它就只能把坏开关显示成可用（静默 no-op）。"""
+    from app.integrated_app.optimization.gpu import vram_toolchain as vt
+
+    monkeypatch.setattr(vt, "compile_support", lambda **kw: {"available": False, "reason": "模拟：inductor 编码失败"})
+    perf = test_app.get("/api/system/settings").json()["performance"]
+    assert perf["compile_available"] is False
+    assert "模拟" in perf["compile_reason"]
+    assert {"torch_compile_dit", "torch_compile_vae"} <= set(perf)
+
+
+def test_settings_tolerates_probe_failure(monkeypatch, test_app):
+    """探测本身抛错绝不能拖垮设置接口。"""
+    from app.integrated_app.optimization.gpu import vram_toolchain as vt
+
+    def boom(**kw):
+        raise RuntimeError("探测炸了")
+
+    monkeypatch.setattr(vt, "compile_support", boom)
+    resp = test_app.get("/api/system/settings")
+    assert resp.status_code == 200
+    assert resp.json()["performance"]["compile_available"] is False

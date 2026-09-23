@@ -54,11 +54,18 @@ inference:
   temporal_segment_overlap: 0
   temporal_segment_size: 5
   torch_compile:
-    backend: inductor
-    dynamic: false
-    enabled: false
-    fullgraph: false
-    mode: default
+    dit:
+      backend: inductor
+      dynamic: false
+      enabled: false
+      fullgraph: false
+      mode: default
+    vae:
+      backend: inductor
+      dynamic: false
+      enabled: false
+      fullgraph: false
+      mode: default
   uniform_batch_size: false
 logging:
   backup_count: 3

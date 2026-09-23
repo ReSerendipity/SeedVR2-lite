@@ -377,7 +377,14 @@
     "act_fit": "fit",
     "act_divider_pan": "divider / pan",
     "act_fit_one_to_one": "fit / 1:1",
-    "act_play_pause": "play / pause"
+    "act_play_pause": "play / pause",
+    "compile_dit": "Compile DiT (torch.compile)",
+    "compile_vae": "Compile VAE (torch.compile)",
+    "tip_compile_dit": "Compile the denoising backbone with torch.compile. Measured on this 12GB laptop GPU it is a net LOSS: ~47% slower steady-state, 2x peak VRAM (3.2->6.8GB), +44s first run. The 20-40% speedup claimed by numz did not reproduce here; don't enable it as a perf option. Applies at next model load.",
+    "tip_compile_vae": "Compile the encoder/decoder with torch.compile. Measured here: ~50% slower steady-state, +7s first run, 0% gain. VAE has dynamic shapes and fails compilation more often; a failure falls back to uncompiled with a warning and still produces output. Applies at next model load.",
+    "compile_saved": "Saved; applies at next model load",
+    "compile_save_failed": "Failed to save compile setting",
+    "compile_unavailable": "torch.compile is unavailable in this environment; the switches are disabled"
   },
   "history": {
     "title": "History",

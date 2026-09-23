@@ -377,7 +377,14 @@
     "act_fit": "フィット",
     "act_divider_pan": "分割線 / 移動",
     "act_fit_one_to_one": "フィット / 1:1",
-    "act_play_pause": "再生 / 一時停止"
+    "act_play_pause": "再生 / 一時停止",
+    "compile_dit": "DiT をコンパイル（torch.compile）",
+    "compile_vae": "VAE をコンパイル（torch.compile）",
+    "tip_compile_dit": "torch.compile でノイズ除去本体をコンパイルします。⚠ 本機（12GB ノート GPU）では実測マイナス効果：定常時 47% 遅化、ピーク VRAM 倍増（3.2→6.8GB）、初回 +44s。numz の 20-40% 高速化は再現せず、性能目的の有効化は非推奨。モデル再読み込み時に反映されます。",
+    "tip_compile_vae": "torch.compile でエンコード/デコードをコンパイルします。⚠ 本機実測：定常時 50% 遅化、初回 +7s、利益 0%。VAE は動的シェイプでコンパイル失敗が多いが、失敗時は未コンパイルに退避するだけで出力は出る。モデル再読み込み時に反映されます。",
+    "compile_saved": "保存しました。次のモデル読み込み時に有効になります",
+    "compile_save_failed": "コンパイル設定の保存に失敗しました",
+    "compile_unavailable": "この環境では torch.compile が使用できないため、スイッチは無効です"
   },
   "history": {
     "title": "履歴",

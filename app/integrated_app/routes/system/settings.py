@@ -156,6 +156,8 @@ class SettingsUpdateRequest(BaseModel):
         default_resolution_w: 默认输出宽度。
         seed: 默认随机种子。
         allowed_base_dirs: 允许访问的基础目录白名单，None 表示不修改。
+        torch_compile_dit: 是否对 DiT 启用 torch.compile，None 表示不修改。
+        torch_compile_vae: 是否对 VAE 启用 torch.compile，None 表示不修改。
     """
 
     default_model_size: str | None = None
@@ -166,6 +168,46 @@ class SettingsUpdateRequest(BaseModel):
     default_resolution_w: int | None = None
     seed: int | None = None
     allowed_base_dirs: list[str] | None = None
+    torch_compile_dit: bool | None = None
+    torch_compile_vae: bool | None = None
+
+
+_COMPILE_STAGES = ("dit", "vae")
+
+
+def compile_stage_enabled(config: dict, stage: str) -> bool:
+    """读取某阶段当前的编译开关。旧扁平 config（顶层直接 enabled）视为两阶段同值。"""
+    raw = ((config or {}).get("inference") or {}).get("torch_compile") or {}
+    nested = raw.get(stage)
+    if isinstance(nested, dict):
+        return bool(nested.get("enabled", False))
+    return bool(raw.get("enabled", False))
+
+
+def apply_compile_flags(config: dict, flags: dict[str, bool | None]) -> list[str]:
+    """把请求级开关写进 ``inference.torch_compile.<stage>.enabled``，返回改动的键。
+
+    写之前先把旧扁平结构展开成分阶段形状：引擎见到 ``dit``/``vae`` 任一存在就按嵌套取值，
+    若不展开，用户原先配的 ``mode/backend/fullgraph`` 会被一次勾选静默挤出取值路径。
+    """
+    changed: list[str] = []
+    wanted = [(stage, flag) for stage, flag in flags.items() if flag is not None]
+    if not wanted:
+        return changed
+    inference = config.setdefault("inference", {})
+    compile_cfg = inference.get("torch_compile") or {}
+    if not any(stage in compile_cfg for stage in _COMPILE_STAGES):
+        legacy = {k: v for k, v in compile_cfg.items() if k not in _COMPILE_STAGES}
+        compile_cfg = {stage: dict(legacy) for stage in _COMPILE_STAGES}
+        inference["torch_compile"] = compile_cfg
+    for stage, flag in wanted:
+        stage_cfg = compile_cfg.get(stage)
+        if not isinstance(stage_cfg, dict):
+            stage_cfg = {}
+            compile_cfg[stage] = stage_cfg
+        stage_cfg["enabled"] = bool(flag)
+        changed.append(f"inference.torch_compile.{stage}.enabled")
+    return changed
 
 
 @router.get("/settings")
@@ -183,7 +225,10 @@ async def get_settings(config: dict = Depends(get_config)):
         "i18n": { ... },         // 国际化配置
         "restore": { ... },      // 修复相关配置
         "security": { ... },     // 安全相关配置（含 allowed_base_dirs 白名单）
-        "user_preferences": { ... }  // 用户偏好设置
+        "user_preferences": { ... },  // 用户偏好设置
+        "performance": {         // 加载期性能开关的当前状态（只投影布尔值）
+            "torch_compile_dit": bool, "torch_compile_vae": bool
+        }
     }
 
     Args:
@@ -200,6 +245,18 @@ async def get_settings(config: dict = Depends(get_config)):
     except Exception:
         user_prefs = {}
 
+    # torch.compile 的真实可用性：只查 hasattr(torch,'compile') 会恒真，导致开关在
+    # 编译根本跑不起来的机器上仍显示"可用"、保存"成功"、行为不变（静默 no-op）。
+    # 探测含一次小前向，结果按进程缓存；探测失败也绝不阻断设置接口。
+    try:
+        from app.integrated_app.optimization.gpu.vram_toolchain import compile_support
+
+        support = compile_support()
+        compile_available = bool(support.get("available"))
+        compile_reason = str(support.get("reason") or "")
+    except Exception as exc:
+        compile_available, compile_reason = False, f"探测异常: {type(exc).__name__}"
+
     return JSONResponse(
         {
             "model": config.get("model", {}),
@@ -208,6 +265,13 @@ async def get_settings(config: dict = Depends(get_config)):
             "restore": config.get("restore", {}),
             "security": config.get("runtime", {}).get("security", {}),
             "user_preferences": user_prefs,
+            # 只投影这两个布尔值与编译可用性：inference 段其余键是引擎加载参数，不该整段外泄
+            "performance": {
+                "torch_compile_dit": compile_stage_enabled(config, "dit"),
+                "torch_compile_vae": compile_stage_enabled(config, "vae"),
+                "compile_available": compile_available,
+                "compile_reason": compile_reason[:200],
+            },
         }
     )
 
@@ -266,6 +330,13 @@ async def update_settings(
     if settings.allowed_base_dirs is not None:
         config.setdefault("runtime", {}).setdefault("security", {})["allowed_base_dirs"] = settings.allowed_base_dirs
         changed_keys.append("runtime.security.allowed_base_dirs")
+
+    changed_keys.extend(
+        apply_compile_flags(
+            config,
+            {"dit": settings.torch_compile_dit, "vae": settings.torch_compile_vae},
+        )
+    )
 
     await run_in_threadpool(save_config, config)
 
