@@ -9,6 +9,7 @@
 ### Fixed
 
 * **`SECURITY_MATRIX.md` 去掉 UTF-8 BOM**：BOM 是提交进 git blob 的（`ef bb bf 23 20 53 65 65 64...`），不是检出产物，所以任何以行首锚定的工具都读不到它的 H1——`grep -c '^# '` 去 BOM 前 0、去后 1。改动恰好 3 字节（1229 → 1226），其余字节逐字相同。仓内另有 20 个带 BOM 的文件本条刻意不碰：9 个 `.ps1` **全部含非 ASCII 字节**（51–10045 字节），PowerShell 5.1 对无 BOM 的 `.ps1` 按 ANSI 码页解码会直接把脚本读坏（实测 here-string 认不出、词法崩在含中文的行），BOM 对它们是必需项而非垃圾；其余为 `.nsi`（NSIS Unicode 同理）/ `.rs` / `.py`，Python 源码按 PEP 263 容忍 BOM，无故障可修。
+* **pre-commit 的 mypy 钩子不再写死 `.venv/Scripts/python.exe`**：那条路径只在"当前目录恰好是主 checkout、且是 Windows"时存在。linked worktree（`git worktree add`）没有自己的 `.venv`，POSIX 主机没有 `Scripts/` 这一层，两处都吃 `Executable `.venv/Scripts/python.exe` not found` → 提交被拦下，而类型检查一行都没跑（原注释还要求 "Linux 贡献者请把 entry 改为 .venv/bin/python"，等于把可移植性推给每台机器手改）。改由 `scripts/mypy_gate.py` 按 `.githooks/pre-commit` 的四级回退（`.venv/Scripts/python.exe` → `.venv/bin/python` → `python` → `python3`）挑**第一个真装了 mypy 的**解释器执行，退出码原样透传。三种结局分开：本机根本没有 Python 才放行；装了 Python 却缺 mypy 仍硬失败并给出安装命令（静默跳过等于拆掉本地门禁）。`tests/test_mypy_gate.py` 直接抓 `.githooks/pre-commit` 里的字面量对拍顺序，防两处漂移。残留口径：入口 token 仍是 `python`，只装 `python3` 的主机会在 which 阶段报 not found——此时报错是真诊断。
 
 ## [1.6.0] - 未发版（原计划 2026-09-22；本 PR 合并后打 tag `v1.6.0` 发布，含 v1.5.8 段落里那批从未发布的条目）
 
