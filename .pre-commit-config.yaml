@@ -26,14 +26,20 @@ repos:
       - id: debug-statements
       - id: detect-private-key
 
-  # mypy 走项目 .venv（pydantic 插件与第三方 stub 依赖项目环境，isolated env 会缺依赖报错）。
+  # mypy 必须在项目环境里跑（pydantic 插件与第三方 stub 缺依赖会误报，isolated env 不可用），
+  # 但"环境在哪台机器上、放在哪个路径"是宿主的事。写死 .venv/Scripts/python.exe 的后果：
+  # linked worktree 没有自己的 .venv、POSIX 主机没有 Scripts/ 这一层，两者都吃
+  # "Executable `.venv/Scripts/python.exe` not found" —— 提交被拦下，类型检查却一行没跑。
+  # 解释器改由 scripts/mypy_gate.py 按 .githooks/pre-commit 的四级回退探测
+  # （.venv/Scripts/python.exe → .venv/bin/python → python → python3）。
+  # 残留口径：入口 token 仍是 `python`，只装了 `python3` 的主机会在 which 阶段就找不到——
+  # 这条 by design 留给"本机根本没有 python"的语义，此时报错是真诊断。
   # 仅 app/integrated_app 下有 .py 改动时触发，口径与 ci.yml 一致（run_checks.bat 为维护者本地脚本，未随仓库分发）。
-  # Linux 贡献者请把 entry 改为 .venv/bin/python。
   - repo: local
     hooks:
       - id: mypy
         name: mypy app/integrated_app
-        entry: .venv/Scripts/python.exe -m mypy app/integrated_app
+        entry: python scripts/mypy_gate.py mypy app/integrated_app
         language: system
         pass_filenames: false
         files: ^app/integrated_app/.*\.py$
