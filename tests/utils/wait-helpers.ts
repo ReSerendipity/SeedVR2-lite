@@ -352,3 +352,56 @@ export async function closeSseBeforeNavigation(page: Page): Promise<void> {
     /* 文档正在拆载：没有连接可关 */
   }
 }
+
+/**
+ * 等一个元素的几何真正停下来，再对它操作。
+ *
+ * 为什么需要：`restore.html` 展开高级参数时会 `scrollIntoView({behavior:'smooth'})`
+ * （restore.html:1979），而被滚动的容器高度同时还在跑 `max-height 0.35s` 的 CSS 过渡
+ * （style.css:5090）——平滑滚动追的是一个仍在变长的目标，于是被点的入口控件会持续位移
+ * 约 600ms（实测 firefox：toggle 的 y 依次 723 → 402 → 198 → 148 → 132 → 131 → 130）。
+ * 空闲机器上 Playwright 的稳定性检查能扛过去；CI 高负载下主线程被 SSE 重连占住，动画
+ * 中途出现 ≥2 帧的停顿就会被判"已稳定"，随后的点击落在过期坐标上 → 折叠没发生，
+ * `expect(advParams).toBeHidden()` 在 15s 内一直读到 `class="sv-advanced-params open"`
+ * （CI run #162）。
+ *
+ * 这不是重试，也不是放宽断言：它把"我要操作的控件已经不动了"变成显式前置条件；
+ * 若元素在 timeout 内始终不停，这里会**直接失败并给出采样值**，而不是把问题推给
+ * 后面那条语义断言去偶发。
+ *
+ * @param locator - 目标元素
+ * @param opts.stableSamples - 连续多少次采样几何不变算稳定（默认 3）
+ * @param opts.timeout - 最长等待（默认 5000ms）
+ * @returns 稳定后的几何值
+ */
+export async function waitForGeometryStable(
+  locator: Locator,
+  opts: { stableSamples?: number; timeout?: number } = {},
+): Promise<string> {
+  const need = opts.stableSamples ?? 3;
+  const timeout = opts.timeout ?? 5000;
+  const deadline = Date.now() + timeout;
+  let last = '';
+  let streak = 0;
+  const samples: string[] = [];
+
+  while (Date.now() < deadline) {
+    const box = await locator.boundingBox();
+    const cur = box
+      ? `${Math.round(box.x)},${Math.round(box.y)},${Math.round(box.width)},${Math.round(box.height)}`
+      : 'null';
+    if (cur === last) {
+      streak += 1;
+    } else {
+      streak = 1;
+      last = cur;
+      samples.push(cur);
+    }
+    if (streak >= need) return cur;
+    await locator.page().waitForTimeout(50);
+  }
+  throw new Error(
+    `元素几何在 ${timeout}ms 内没有停下来（连续 ${need} 次同框未达成），` +
+      `说明有动画/抖动一直在跑，不适合对它发起操作。采样序列: ${samples.join(' → ')}`,
+  );
+}

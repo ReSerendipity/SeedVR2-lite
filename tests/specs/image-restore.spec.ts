@@ -21,7 +21,7 @@ import {
   mockBrowseDirSuccess,
 } from '../fixtures/api-mocks';
 import { IMAGE_FILES } from '../fixtures/test-data';
-import { waitForToast, waitForErrorToast } from '../utils/wait-helpers';
+import { waitForToast, waitForErrorToast, waitForGeometryStable } from '../utils/wait-helpers';
 
 test.describe('Image Restore Flow', () => {
   let imagePage: ImageRestorePage;
@@ -299,6 +299,11 @@ test.describe('Image Restore Flow', () => {
       await expect(imagePage.advParams).toBeHidden();
       await imagePage.advToggle.click();
       await expect(imagePage.advParams).toBeVisible();
+      // 展开会触发 restore.html:1979 的 smooth scrollIntoView，而容器高度同时在跑
+      // style.css:5090 的 max-height 0.35s 过渡 —— 入口控件会持续位移约 600ms。
+      // 不等它停下来就点收起，CI 高负载下点击会落在过期坐标上（CI run #162 即如此：
+      // 之后 15s 内 class 一直是 "sv-advanced-params open"）。这是前置条件，不是重试。
+      await waitForGeometryStable(imagePage.advToggle);
       await imagePage.advToggle.click();
       await expect(imagePage.advParams).toBeHidden();
     });
