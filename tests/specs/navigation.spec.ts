@@ -19,6 +19,7 @@ import { SystemStatusPage } from '../pages/system-status.page';
 import { SettingsPage } from '../pages/settings.page';
 import { setupAllMocks } from '../fixtures/api-mocks';
 import { assertUrlPath } from '../utils/assertion-helpers';
+import { closeSseBeforeNavigation } from '@utils/wait-helpers';
 
 // Map of nav item names to their expected URL paths
 // Note: only text nav links (.sv-nav-link) are tested here.
@@ -181,6 +182,7 @@ test.describe('Navigation and Routing', () => {
 
   test.describe('404 handling', () => {
     test('navigating to a non-existent path shows error or redirects', async ({ page }) => {
+      await closeSseBeforeNavigation(page);
       await page.goto('/non-existent-page-xyz');
 
       // The app should either show a 404/error message or redirect to home
@@ -201,6 +203,7 @@ test.describe('Navigation and Routing', () => {
     });
 
     test('navigating to an invalid API-like path does not crash the UI', async ({ page }) => {
+      await closeSseBeforeNavigation(page);
       await page.goto('/api/invalid-endpoint');
 
       // Should return JSON error, not crash

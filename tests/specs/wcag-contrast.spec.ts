@@ -12,6 +12,7 @@
  */
 import { test, expect, Page } from '@playwright/test';
 import { setupAllMocks } from '@fixtures/api-mocks';
+import { closeSseBeforeNavigation } from '@utils/wait-helpers';
 
 // ============================================================
 // Configuration
@@ -132,6 +133,7 @@ test.describe('WCAG 2.1 AA Contrast Compliance', () => {
     test.describe(`${theme.toUpperCase()} theme`, () => {
       for (const pageInfo of PAGES) {
         test(`${pageInfo.name} page meets WCAG 2.1 AA contrast requirements`, async ({ page }) => {
+          await closeSseBeforeNavigation(page);
           await page.goto(pageInfo.path);
           await page.waitForLoadState('domcontentloaded');
 

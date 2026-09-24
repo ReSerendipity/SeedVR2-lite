@@ -7,6 +7,7 @@
  * 本 spec 专门补这格，因此显式清空 storageState 回到真实首启状态。
  */
 import { test, expect } from '@playwright/test';
+import { closeSseBeforeNavigation } from '@utils/wait-helpers';
 
 const SEEN_KEY = 'sv_agreement_seen_v1';
 const AGREEMENT_VERSION = '2026-09-15';
@@ -28,6 +29,7 @@ test.describe('First-run agreement gate', () => {
   });
 
   test('未确认时协议遮罩可见，且挡住下方控件的命中测试', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore', { waitUntil: 'domcontentloaded' });
 
     const modal = page.locator('#agreementModal');
@@ -52,6 +54,7 @@ test.describe('First-run agreement gate', () => {
   });
 
   test('勾选并同意后遮罩关闭，seen 标记落库且跨页面保持', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore', { waitUntil: 'domcontentloaded' });
 
     const chk = page.locator('#agreementChk');
@@ -67,6 +70,7 @@ test.describe('First-run agreement gate', () => {
     // （base.page.ts 为 firefox 记过同一症状：旧文档拆载与新文档 domcontentloaded 之间死锁，
     // 60s 超时）。新标签页没有待拆载的文档，且共享同一 storageState，正好是要断言的语义。
     const second = await page.context().newPage();
+    await closeSseBeforeNavigation(second);
     await second.goto('/restore', { waitUntil: 'domcontentloaded' });
     await expect(second.locator('#agreementModal')).toBeHidden();
     await second.close();
