@@ -11,8 +11,11 @@
    （例如 numz 必含 `seedvr2_ema_7b_sharp_fp8_e4m3fn.safetensors`、cmeka 必不含 `IQ1_S`）。
    自检不过 ⇒ 抓取/解析链路坏了 ⇒ 退出码 2 且**不出报告**。探测链路坏了却输出得像结论，
    是这类批处理脚本最贵的失败模式。
-2. **网络不可用 ≠ 没有新档位**：本机境外访问为注入式阻断且带时段波动；失败一律走退出码 3，
-   文案写「无法判定」，绝不写「一致」。
+2. **网络不可用 ≠ 没有新档位**：本机境外访问有两种不同的坏法，都要走退出码 3、文案写「无法判定」，
+   绝不写「一致」——(a) 注入式阻断（RST/超时，带时段波动，重试可能就好）；(b) **中间盒伪造应答**
+   （2026-09-24 实测：`huggingface.co` 的 API 对本机一律回 `406` + 14 字节 `Unknown Client`，
+   换 User-Agent 无效，重试永远不好，只有换端点才行）。二者的判别是「有没有拿到一个结构完整的
+   HTTP 应答」，故 `--endpoint https://hf-mirror.com` 是同一条链路在 (b) 下的可用出口。
 3. **只读**：不下载权重、不改 config.yaml。发现缺口只报告，补登记是人的决定
    （新增档位必须同时补 `sha256_*`，否则该档会静默失去 CWE-353 完整性校验）。
 
@@ -209,7 +212,8 @@ def _fetch_via_curl(url: str, timeout: int) -> tuple[dict[str, int], str]:
     try:
         return _parse_siblings(json.loads(res.stdout)), ""
     except ValueError as exc:
-        return {}, f"curl 返回非 JSON: {exc}"
+        head = (res.stdout or "").strip()[:60]
+        return {}, f"curl 返回非 JSON（响应体开头 {head!r}）: {exc}"
 
 
 def run_self_checks(snapshots: dict[str, RepoSnapshot]) -> list[str]:
@@ -338,10 +342,17 @@ def main(argv: list[str] | None = None) -> int:
         # 一条都没抓到 ⇒ 是网络问题，不是探针问题；先判它，否则下面自检会把「无数据」误报成「链路坏了」
         for s in unfetched:
             print(f"[网络不可用] {s.repo}: {s.error}", file=sys.stderr)
-        print(
-            "[结论] **无法判定**（不是「无新增档位」）。本机境外阻断带时段波动，请稍后重试或加 --endpoint。",
-            file=sys.stderr,
-        )
+        joined = " ".join(s.error for s in unfetched)
+        if "非 JSON" in joined:
+            # 拿到了结构完整的 HTTP 应答但不是 JSON ⇒ 中间盒伪造应答，不是断链；重试无用，要换端点
+            hint = (
+                "响应体非 JSON ⇒ 疑似**中间盒拦截**而非链路故障（2026-09-24 实测 huggingface.co 对本机"
+                "一律回 406 'Unknown Client'，换 User-Agent 无效）。重试不会变好，改跑 "
+                "`--endpoint https://hf-mirror.com` 可得真清单。"
+            )
+        else:
+            hint = "本机境外阻断带时段波动，请稍后重试或换 `--endpoint`（镜像 https://hf-mirror.com）。"
+        print(f"[结论] **无法判定**（不是「无新增档位」）。{hint}", file=sys.stderr)
         return EXIT_NETWORK
     failures = run_self_checks({k: v for k, v in snapshots.items() if v.ok})
     if failures:
