@@ -318,3 +318,37 @@ export async function waitForNetworkIdle(
 ): Promise<void> {
   await page.waitForLoadState(state, { timeout });
 }
+
+/**
+ * 导航前掐断当前文档的 SSE 连接。
+ *
+ * 为什么需要：`app.js` 每次载入都会 `new EventSource('/api/sse/events')`，而 api-mocks
+ * 的 SSE 用 `route.fulfill` 返回**有限**响应体；服务端关闭连接后 EventSource 依规范自动
+ * 重连，形成重连风暴。此时发起导航，firefox 会在「旧文档拆载 + 新文档 domcontentloaded」
+ * 之间死锁，表现为 `page.goto: Timeout 60000ms`（CI 上 theme.spec.ts / performance.spec.ts
+ * 都是这一类）。
+ *
+ * 只掐连接、不改 `goto` 的 waitUntil 档位：死锁的因是重连风暴，不是等待哪一档
+ * （实测 load 与 domcontentloaded 都会超时），改档位反而会悄悄改变各用例的时序假设。
+ *
+ * `BasePage.navigate()` 与裸 `page.goto()` 的 spec 共用这一份实现，避免同一修复两处漂移。
+ *
+ * @param page - Playwright page 实例
+ */
+export async function closeSseBeforeNavigation(page: Page): Promise<void> {
+  // 首个文档（about:blank）没有连接可关；文档正在切换时 evaluate 会抛错，一并忽略。
+  if (page.url() === 'about:blank') return;
+  try {
+    await page.evaluate(() => {
+      try {
+        const conn = (window as unknown as { __sseConnection?: { close?: () => void } })
+          .__sseConnection;
+        conn?.close?.();
+      } catch (e) {
+        /* 页面没有初始化 SSE：无需关闭 */
+      }
+    });
+  } catch (e) {
+    /* 文档正在拆载：没有连接可关 */
+  }
+}

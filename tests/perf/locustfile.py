@@ -27,6 +27,7 @@
 所属项目：SeedVR2
 """
 
+import os
 from datetime import datetime
 
 from locust import HttpUser, between, events, task
@@ -115,10 +116,26 @@ class SeedVR2User(HttpUser):
 
 # ============================================================
 # 阈值检查：P95 < 500ms，错误率 < 1%
+#
+# 档位开关 PERF_GATE_MODE（由 .github/workflows/performance.yml 注入）：
+#   strict  延迟与错误率违规都判红（默认值：手动跑 locust 时保持原有语义）
+#   report  延迟违规只记录不判红 —— 托管 runner 没有 GPU，它的 P95 不是回归依据
+# 错误率阈值两档都仍然判红：它衡量的是"请求有没有正常返回"，属正确性信号，
+# 与机器快慢无关，跟着延迟一起放宽就会真的漏掉回归。
 # ============================================================
 
 P95_THRESHOLD_MS = 500
 ERROR_RATE_THRESHOLD = 0.01
+VALID_GATE_MODES = ("strict", "report")
+
+
+def resolve_gate_mode() -> str:
+    """读取 PERF_GATE_MODE；非法值一律退回 strict（宁严不松）。"""
+    raw = (os.environ.get("PERF_GATE_MODE") or "strict").strip().lower()
+    if raw not in VALID_GATE_MODES:
+        print(f"⚠ PERF_GATE_MODE={raw!r} 不是合法值（{'/'.join(VALID_GATE_MODES)}），按 strict 处理")
+        raw = "strict"
+    return raw
 
 
 @events.quitting.add_listener
@@ -141,9 +158,12 @@ def check_thresholds(environment, **kwargs):
 
     error_rate = stats.fail_ratio if stats.num_requests > 0 else 0
 
+    gate_mode = resolve_gate_mode()
+
     print("\n" + "=" * 60)
     print("性能测试结果摘要")
     print("=" * 60)
+    print(f"阈值判定档:  {gate_mode}" + ("（延迟违规不判红）" if gate_mode == "report" else ""))
     print(f"总请求数:    {stats.num_requests}")
     print(f"失败请求数:  {stats.num_failures}")
     print(f"错误率:      {error_rate:.4%} (阈值 < {ERROR_RATE_THRESHOLD:.0%})")
@@ -154,12 +174,20 @@ def check_thresholds(environment, **kwargs):
     print("=" * 60 + "\n")
 
     failures = []
+    notes = []
 
     if p95_response_time is not None and p95_response_time > P95_THRESHOLD_MS:
-        failures.append(f"P95 响应时间 {p95_response_time}ms 超过阈值 {P95_THRESHOLD_MS}ms")
+        msg = f"P95 响应时间 {p95_response_time}ms 超过阈值 {P95_THRESHOLD_MS}ms"
+        if gate_mode == "report":
+            notes.append(f"{msg} —— report 档：仅记录，不判红（托管 runner 数字不作回归依据）")
+        else:
+            failures.append(msg)
 
     if error_rate > ERROR_RATE_THRESHOLD:
         failures.append(f"错误率 {error_rate:.4%} 超过阈值 {ERROR_RATE_THRESHOLD:.0%}")
+
+    for n in notes:
+        print(f"ℹ {n}")
 
     if failures:
         print("❌ 性能测试未通过:")
@@ -167,7 +195,10 @@ def check_thresholds(environment, **kwargs):
             print(f"  - {f}")
         environment.process_exit_code = 1
     else:
-        print("✅ 性能测试通过！")
+        if notes:
+            print("✅ 性能测试通过（延迟违规已按 report 档记录，见上）")
+        else:
+            print("✅ 性能测试通过！")
         environment.process_exit_code = 0
 
 

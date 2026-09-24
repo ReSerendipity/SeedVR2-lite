@@ -5,6 +5,13 @@ on:
     branches: [main, develop]
   schedule:
     - cron: '0 2 * * *'  # 每天凌晨 2 点
+  workflow_dispatch:
+    inputs:
+      gate_mode:
+        description: "阈值判定档：auto=按本机有无可用 GPU 自动选；strict=强制判红；report=只记录不判红"
+        type: choice
+        default: auto
+        options: [auto, strict, report]
 
 permissions:
   contents: read
@@ -15,6 +22,52 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Resolve threshold gate mode
+        # 口径：性能硬阈值需要专用 runner，托管 runner 上的延迟数字不作回归依据。
+        # 判据取“本机是否真有可用 GPU”而非写死 runner 标签——将来把这个 job 迁到带
+        # gpu label 的 self-hosted runner 上时无需改 workflow，自动回到 strict 档。
+        # 上下文一律经 env 注入（GitHub run-shell-injection 规则）。
+        id: gate
+        env:
+          WANT_MODE: ${{ github.event.inputs.gate_mode || 'auto' }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+          RUNNER_LABEL_NAME: ${{ runner.name }}
+        run: |
+          set -euo pipefail
+          if { command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; } || \
+             { command -v rocm-smi   >/dev/null 2>&1 && rocm-smi --showproductname >/dev/null 2>&1; }; then
+            gpu=yes
+          else
+            gpu=no
+          fi
+          case "$WANT_MODE" in
+            strict) mode=strict; reason="手动指定 strict（发起人对数字负责）" ;;
+            report) mode=report; reason="手动指定 report" ;;
+            *) if [ "$gpu" = yes ]; then
+                 mode=strict; reason="检测到可用 GPU，按专用 runner 档判红"
+               else
+                 mode=report; reason="托管 runner 无 GPU：延迟仅记录归档，不作回归依据"
+               fi ;;
+          esac
+          echo "mode=$mode"  >> "$GITHUB_OUTPUT"
+          echo "gpu=$gpu"    >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          echo "::notice::perf gate=$mode gpu=$gpu ($reason)"
+          {
+            echo "### Performance gate"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| runner | $RUNNER_OS_NAME / $RUNNER_LABEL_NAME |"
+            echo "| 检测到可用 GPU | $gpu |"
+            echo "| 阈值判定档 | **$mode** |"
+            echo "| 依据 | $reason |"
+            echo ""
+            echo "> P95/延迟硬阈值只在专用 GPU runner 上判红；托管 runner 的延迟数字仅供"
+            echo "> 归档与趋势参考，**不作为回归依据**。错误率阈值两档都仍然判红——它不是"
+            echo "> 时延指标，是正确性信号。"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -39,10 +92,13 @@ jobs:
             http://127.0.0.1:7870/api/system/health
 
       - name: Run Locust performance tests
-        # 阈值断言（P95 < 500ms、错误率 < 1%）内置于 locustfile.py 的 quitting
-        # 监听器，违规时置 process_exit_code=1 → 本步骤直接红。
+        # 阈值检查内置于 locustfile.py 的 quitting 监听器。档位由上面的 gate 步决定：
+        #   strict（专用 GPU runner）→ 延迟与错误率违规都置 process_exit_code=1；
+        #   report（托管 runner）    → 延迟违规只记录不判红，**错误率违规仍然判红**。
         # --csv：落盘统计，供下方 artifact 上传（此前 upload 步骤引用的 *.csv
         # 从未生成，属死配置——DX 评估 P0-4 修正）。
+        env:
+          PERF_GATE_MODE: ${{ steps.gate.outputs.mode }}
         run: |
           locust -f tests/perf/locustfile.py --headless \
             -u 20 -r 2 -t 2m \
