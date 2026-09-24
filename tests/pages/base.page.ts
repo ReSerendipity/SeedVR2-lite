@@ -1,4 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { closeSseBeforeNavigation as sseClose } from '@utils/wait-helpers';
 
 export class BasePage {
   readonly page: Page;
@@ -48,21 +49,7 @@ export class BasePage {
    * `page.goto: Timeout 60000ms`（本类 navigate 内部即是 goto）。
    */
   private async closeSseBeforeNavigation(): Promise<void> {
-    // 首个文档（about:blank）没有连接可关；evaluate 在文档拆载中会抛错，一并忽略。
-    if (this.page.url() === 'about:blank') return;
-    try {
-      await this.page.evaluate(() => {
-        try {
-          const conn = (window as unknown as { __sseConnection?: { close?: () => void } })
-            .__sseConnection;
-          conn?.close?.();
-        } catch (e) {
-          /* ignore */
-        }
-      });
-    } catch (e) {
-      /* 文档正在切换：没有连接可关 */
-    }
+    await sseClose(this.page);
   }
 
   async navigate(path: string): Promise<void> {

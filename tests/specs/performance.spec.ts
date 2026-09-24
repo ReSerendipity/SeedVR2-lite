@@ -21,6 +21,7 @@
  *   npx playwright test specs/performance.spec.ts
  */
 import { test, expect, Page } from '@playwright/test';
+import { closeSseBeforeNavigation } from '@utils/wait-helpers';
 import { setupAllMocks } from '@fixtures/api-mocks';
 
 // ============================================================
@@ -186,6 +187,7 @@ test.describe('Performance - Core Web Vitals', () => {
     ];
 
     for (const { path, name } of pages) {
+      await closeSseBeforeNavigation(page);
       await page.goto(path);
       await page.waitForLoadState('domcontentloaded');
 
@@ -199,6 +201,7 @@ test.describe('Performance - Core Web Vitals', () => {
   });
 
   test('Largest Contentful Paint (LCP) is under 2.5s on homepage', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -218,6 +221,7 @@ test.describe('Performance - Core Web Vitals', () => {
     ];
 
     for (const { path, name } of pages) {
+      await closeSseBeforeNavigation(page);
       await page.goto(path);
       await page.waitForLoadState('domcontentloaded');
 
@@ -253,6 +257,7 @@ test.describe('Performance - Page Load Time', () => {
 
     for (const { path, name } of pages) {
       const startTime = Date.now();
+      await closeSseBeforeNavigation(page);
       await page.goto(path);
       await page.waitForLoadState('domcontentloaded');
       const loadTime = Date.now() - startTime;
@@ -265,6 +270,7 @@ test.describe('Performance - Page Load Time', () => {
   });
 
   test('Navigation timing API reports reasonable load metrics', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -298,6 +304,7 @@ test.describe('Performance - API Response Time', () => {
       });
     });
 
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -356,6 +363,7 @@ test.describe('Performance - Progress Bar Animation', () => {
     // (Frame-rate assertions are unreliable in headless software rendering,
     // so we assert functional behavior instead: the burst completes and the
     // UI remains error-free.)
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.evaluate(() => {
       try { localStorage.setItem('sv_onboarding_seen_v2', '1'); } catch (e) { /* ignore */ }
@@ -401,11 +409,13 @@ test.describe('Performance - Memory Usage', () => {
     // Navigate through several pages to build up potential memory usage
     const pages = ['/', '/restore', '/restore', '/settings', '/history', '/'];
     for (const path of pages) {
+      await closeSseBeforeNavigation(page);
       await page.goto(path);
       await page.waitForLoadState('domcontentloaded');
     }
 
     // Go back to home and check metrics
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -453,6 +463,7 @@ test.describe('Performance - Bundle Size', () => {
   test('Static CSS assets are not excessively large', async ({ page }) => {
     await setupAllMocks(page);
 
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
