@@ -15,6 +15,10 @@
 * **firefox 的 `page.goto: Timeout 60000ms` 修在根因上，不动 `retries: 0`**：`tests/specs/performance.spec.ts` 有 10 处裸 `page.goto`，绕过了 `BasePage.navigate()` 里的 `closeSseBeforeNavigation()`——而 SSE 重连风暴正是当初为 firefox 死锁修的根因（api-mocks 用 `route.fulfill` 返回有限响应体，EventSource 依规范自动重连）。修法是把该关闭逻辑抽成 `tests/utils/wait-helpers.ts` 的导出函数（`BasePage` 改为调用同一份，消除两处漂移），spec 在每处 goto 前调用它；**不改任何 goto 的 `waitUntil` 档位**（死锁的因不是等待档位，改档位会悄悄改变各用例的时序假设）。仓库既有的 `retries: 0` 政策（flaky 必须在源头修掉，不用重试掩盖）保持不变。已知残留：另有 7 个 spec 共 58 处裸 goto 走同一路径，本次未动。
 * **gpu-smoke 的 skip-record 增加写后回读自证**：`Record skipped smoke as an issue` 步在建好/追加完 issue 之后立刻 `gh issue view` 回读，取不到就 `::error` 并 exit 1。此前"以为开出来了"和"真开出来了"在日志里长得一样——修复前该步每次红且从未真的落库过任何一条停摆记录。
 
+### Changed
+
+* **12 个缺失并发组的 workflow 补上 `concurrency`，不再重复计算已被取代的运行**：此前 20 个 workflow 里只有 8 个有并发组，最重的 `ci.yml`/`e2e.yml`/`docker-publish.yml` 都没有。实测同一批 PR 里 ci.yml 的 51 次 `pull_request` 运行只对应 8 个不同 PR（约每 PR 推 6 次），也就是多数运行在算已被新推送取代的旧结论。策略分两类：**纯检查类**（ci / dco / e2e / security / gitleaks / docs-consistency / structure-guard / performance / dependency-audit / docker-publish）用 `cancel-in-progress: ${{ github.event_name != 'push' }}`——同 PR 新推送取消旧运行，但 **push（含 main 上的权威验证与镜像发布）永不取消**；**有写副作用类**（automerge 负责开启自动合并、stale 负责评论与关闭 issue）用 `cancel-in-progress: false`，只串行不取消——取消掉"正在开启自动合并"的那个作业会让 PR 静默卡住。`portable-release.yml` / `gpu-smoke.yml` 原有的有意 `cancel: false` 未动。
+
 
 ## [1.6.0] - 未发版（原计划 2026-09-22；本 PR 合并后打 tag `v1.6.0` 发布，含 v1.5.8 段落里那批从未发布的条目）
 

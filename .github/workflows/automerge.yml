@@ -8,6 +8,12 @@ permissions:
   contents: write
   pull-requests: write
 
+# 本 workflow 有写副作用（开 auto-merge / 评论与关闭 issue）：同 ref 串行执行但**不取消**，
+# 取消掉正在开启自动合并的那个作业会让 PR 静默卡住。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
