@@ -6,6 +6,12 @@ on:
     branches: [main]
 permissions:
   contents: read
+# 同 PR 的新推送会取代旧运行的结论：取消旧运行，只留最新一次。
+# push（含 main 上的正式验证）不取消——那条是权威记录，不能被后来的推送半路掐掉。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
 jobs:
   spec-refs:
     runs-on: ubuntu-latest

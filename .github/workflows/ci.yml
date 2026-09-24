@@ -19,6 +19,12 @@ on:
 permissions:
   contents: read
 
+# 同 PR 的新推送会取代旧运行的结论：取消旧运行，只留最新一次。
+# push（含 main 上的正式验证）不取消——那条是权威记录，不能被后来的推送半路掐掉。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
 jobs:
   # 判定本批改动是否与后端门禁相关，目前只喂给 security-assertions（非必需检查）。
   # **不要把它接到 quality-gate / typecheck 的 job 级 `if` 上**：必需检查的 context 名带矩阵
