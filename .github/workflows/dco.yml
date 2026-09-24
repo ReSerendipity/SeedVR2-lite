@@ -10,8 +10,9 @@ permissions:
 jobs:
   dco:
     name: DCO Check
-    # DCO 的 Signed-off-by 是对人类贡献者的来源认证，Dependabot 生成的 commit 无法携带签名。
-    if: github.actor != 'dependabot[bot]'
+    # 不在 job 级按 github.actor 整体跳过：actor 是 PR 开启者，用它当豁免键会让
+    # “bot 开的 PR 里混进人类无签名提交”这种情况静默放行。豁免改按**每个提交自己的作者邮箱**，
+    # 判定粒度与被检查对象一致。
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -21,19 +22,45 @@ jobs:
 
       - name: Verify Signed-off-by
         shell: bash
+        # SHA 经 env 注入而非直接插值进脚本体（GitHub run-shell-injection 规则）
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          base_sha="${{ github.event.pull_request.base.sha }}"
-          head_sha="${{ github.event.pull_request.head.sha }}"
-          if [[ -z "$base_sha" || -z "$head_sha" ]]; then
+          if [[ -z "${BASE_SHA:-}" || -z "${HEAD_SHA:-}" ]]; then
             echo "::error::Could not determine PR base/head SHA"
             exit 1
           fi
+          # bot 生成的 commit 无法携带签名：按作者邮箱逐个豁免（不是按 PR 开启者豁免整个检查）
+          is_bot() {
+            case "$1" in
+              *"dependabot[bot]@users.noreply.github.com"|*@dependabot.com|*@bots.dependabot.github.com|\
+              *"github-actions[bot]@users.noreply.github.com"|*@github-actions[bot].users.noreply.github.com|\
+              *"github-actions@github.com") return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          checked=0
+          exempt=0
           fails=0
           while IFS= read -r commit; do
-            if ! git log -1 --format='%B' "$commit" | grep -q 'Signed-off-by:'; then
-              echo "::error::Commit $commit is missing 'Signed-off-by:' trailer (run: git commit -s)"
+            # 合并提交不要求签名（DCO 惯例；本仓走 squash，保留该口径以防将来出现 merge commit）
+            if [[ "$(git rev-list --no-walk --count --merges "$commit")" == "1" ]]; then
+              continue
+            fi
+            email=$(git log -1 --format='%ae' "$commit")
+            if is_bot "$email"; then
+              exempt=$((exempt + 1))
+              echo "exempt (bot author): ${commit:0:10} <$email>"
+              continue
+            fi
+            checked=$((checked + 1))
+            if ! git log -1 --format='%B' "$commit" | grep -q '^Signed-off-by:'; then
+              author=$(git log -1 --format='%an' "$commit")
+              echo "::error::Commit ${commit:0:10} by $author <$email> is missing 'Signed-off-by:' trailer (run: git commit -s)"
               fails=1
             fi
-          done < <(git rev-list "$base_sha..$head_sha")
+          done < <(git rev-list "$BASE_SHA..$HEAD_SHA")
+          echo "DCO: 检查 $checked 个人类提交、豁免 $exempt 个 bot 提交、失败标志=$fails"
           exit $fails
