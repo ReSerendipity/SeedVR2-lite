@@ -23,6 +23,7 @@
 import { test, expect, Page, Route } from '@playwright/test';
 import { setupAllMocks } from '@fixtures/api-mocks';
 import { mockBrowseDirResponse } from '@fixtures/test-data';
+import { closeSseBeforeNavigation } from '@utils/wait-helpers';
 
 // Dismiss the first-run onboarding modal: a fresh Playwright context has empty
 // localStorage (sv_onboarding_seen_v2), so the modal would show and intercept
@@ -65,6 +66,7 @@ test.describe('Security - XSS Prevention', () => {
       }
     });
 
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -129,6 +131,7 @@ test.describe('Security - XSS Prevention', () => {
       });
     });
 
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -175,6 +178,7 @@ test.describe('Security - XSS Prevention', () => {
   });
 
   test('XSS in file info display: HTML in uploaded filename is displayed as text', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -250,6 +254,7 @@ test.describe('Security - CSRF Protection', () => {
       });
     });
 
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -321,6 +326,7 @@ test.describe('Security - Path Traversal Prevention', () => {
       }
     });
 
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -375,6 +381,7 @@ test.describe('Security - Path Traversal Prevention', () => {
       }
     });
 
+    await closeSseBeforeNavigation(page);
     await page.goto('/settings');
     await page.waitForLoadState('domcontentloaded');
 
@@ -406,6 +413,7 @@ test.describe('Security - Path Traversal Prevention', () => {
 test.describe('Security - Sensitive Data', () => {
   test('localStorage does not contain passwords, tokens, or API keys', async ({ page }) => {
     await setupAllMocks(page);
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -463,6 +471,7 @@ test.describe('Security - Content Security Policy', () => {
       await route.fulfill({ response });
     });
 
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -512,6 +521,7 @@ test.describe('Security - Inline Event Handlers', () => {
     ];
 
     for (const { path, name } of pages) {
+      await closeSseBeforeNavigation(page);
       await page.goto(path);
       await page.waitForLoadState('domcontentloaded');
 
@@ -549,6 +559,7 @@ test.describe('Security - Secure Cookies', () => {
   test('Cookies have Secure and HttpOnly flags where applicable', async ({ page }) => {
     await setupAllMocks(page);
 
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -603,6 +614,7 @@ test.describe('Security - Input Sanitization', () => {
   test('Form inputs sanitize special characters', async ({ page }) => {
     await setupAllMocks(page);
 
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 

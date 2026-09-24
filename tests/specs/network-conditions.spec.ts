@@ -11,6 +11,7 @@
  */
 import { test, expect, Page, Route } from '@playwright/test';
 import { setupAllMocks, abortRemoteFonts } from '@fixtures/api-mocks';
+import { closeSseBeforeNavigation } from '@utils/wait-helpers';
 
 // ============================================================
 // Test suite: Slow network conditions
@@ -51,6 +52,7 @@ test.describe('Network Conditions - Slow 3G', () => {
   });
 
   test('Page loads and renders despite slow network', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/', { timeout: 30000, waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('domcontentloaded');
 
@@ -60,6 +62,7 @@ test.describe('Network Conditions - Slow 3G', () => {
   });
 
   test('Application shows loading state during slow API calls', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/', { timeout: 30000, waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('domcontentloaded');
 
@@ -84,6 +87,7 @@ test.describe('Network Conditions - Offline', () => {
   });
 
   test('Page shows error or fallback when API is unreachable', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
 
     // The page should not crash — it should show some content or error
@@ -124,6 +128,7 @@ test.describe('Network Conditions - Intermittent', () => {
       }
     });
 
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
     // Use waitForSelector to wait for body content instead of hardcoded timeout

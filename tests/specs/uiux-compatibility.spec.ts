@@ -33,6 +33,7 @@ import { SettingsPage } from '../pages/settings.page';
 import { HistoryPage } from '../pages/history.page';
 import { SystemStatusPage } from '../pages/system-status.page';
 import { setupAllMocks } from '../fixtures/api-mocks';
+import { closeSseBeforeNavigation } from '@utils/wait-helpers';
 
 // ============================================================
 // Shared constants and helpers
@@ -196,6 +197,7 @@ test.describe('Responsive layout - Desktop (1920x1080)', () => {
 
   test('sidebar is visible on all pages', async ({ page }) => {
     for (const { name, path } of ALL_PAGES) {
+      await closeSseBeforeNavigation(page);
       await page.goto(path);
       await page.waitForLoadState('domcontentloaded');
 
@@ -210,6 +212,7 @@ test.describe('Responsive layout - Desktop (1920x1080)', () => {
 
   test('content area fills remaining space beside the sidebar', async ({ page }) => {
     for (const { name, path } of ALL_PAGES) {
+      await closeSseBeforeNavigation(page);
       await page.goto(path);
       await page.waitForLoadState('domcontentloaded');
 
@@ -236,6 +239,7 @@ test.describe('Responsive layout - Desktop (1920x1080)', () => {
 
   test('no horizontal scrollbar on any page', async ({ page }) => {
     for (const { name, path } of ALL_PAGES) {
+      await closeSseBeforeNavigation(page);
       await page.goto(path);
       await page.waitForLoadState('domcontentloaded');
 
@@ -346,6 +350,7 @@ test.describe('Responsive layout - Laptop (1366x768)', () => {
 
   test('layout still works and no content overflow on any page', async ({ page }) => {
     for (const { name, path } of ALL_PAGES) {
+      await closeSseBeforeNavigation(page);
       await page.goto(path);
       await page.waitForLoadState('domcontentloaded');
 
@@ -369,6 +374,7 @@ test.describe('Responsive layout - Laptop (1366x768)', () => {
 
   test('cards and tables fit within the viewport', async ({ page }) => {
     // Check the home page cards
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -385,6 +391,7 @@ test.describe('Responsive layout - Laptop (1366x768)', () => {
     }
 
     // Check the history page table
+    await closeSseBeforeNavigation(page);
     await page.goto('/history');
     await page.waitForLoadState('domcontentloaded');
 
@@ -402,6 +409,7 @@ test.describe('Responsive layout - Laptop (1366x768)', () => {
   });
 
   test('navbar remains accessible at laptop width', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -431,6 +439,7 @@ test.describe('Responsive layout - Tablet (768x1024)', () => {
   });
 
   test('sidebar may collapse or adapt at tablet width', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -475,6 +484,7 @@ test.describe('Responsive layout - Tablet (768x1024)', () => {
   });
 
   test('touch targets are at least 44x44px on tablet', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -521,6 +531,7 @@ test.describe('Responsive layout - Mobile (375x812)', () => {
   });
 
   test('sidebar collapses to hamburger menu or bottom nav', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -562,6 +573,7 @@ test.describe('Responsive layout - Mobile (375x812)', () => {
 
   test('content fills full width on mobile', async ({ page }) => {
     for (const { name, path } of ALL_PAGES) {
+      await closeSseBeforeNavigation(page);
       await page.goto(path);
       await page.waitForLoadState('domcontentloaded');
 
@@ -582,6 +594,7 @@ test.describe('Responsive layout - Mobile (375x812)', () => {
 
   test('all interactive elements are at least 44x44px touch targets', async ({ page }) => {
     // Test on the video restore page which has many interactive elements
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -620,6 +633,7 @@ test.describe('Responsive layout - Mobile (375x812)', () => {
 
   test('no horizontal overflow on mobile', async ({ page }) => {
     for (const { name, path } of ALL_PAGES) {
+      await closeSseBeforeNavigation(page);
       await page.goto(path);
       await page.waitForLoadState('domcontentloaded');
 
@@ -636,6 +650,7 @@ test.describe('Responsive layout - Mobile (375x812)', () => {
 
   test('tables are scrollable or adapted for small screens', async ({ page }) => {
     // Check the history page which has a data table
+    await closeSseBeforeNavigation(page);
     await page.goto('/history');
     await page.waitForLoadState('domcontentloaded');
 
@@ -687,6 +702,7 @@ test.describe('Cross-browser rendering', () => {
       // Clear errors before each page
       consoleErrors.length = 0;
 
+      await closeSseBeforeNavigation(page);
       await page.goto(path);
       await page.waitForLoadState('domcontentloaded');
 
@@ -715,6 +731,7 @@ test.describe('Cross-browser rendering', () => {
   });
 
   test('CSS custom properties work correctly across browsers', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -987,6 +1004,7 @@ test.describe('Touch target compliance', () => {
    * which accounts for CSS padding, borders, and box-sizing.
    */
   test('all buttons have minimum 44x44px clickable area on mobile', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -1036,6 +1054,7 @@ test.describe('Touch target compliance', () => {
   });
 
   test('all links have minimum 44x44px clickable area on mobile', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -1083,6 +1102,7 @@ test.describe('Touch target compliance', () => {
 
   test('all switches and toggle controls have minimum 44x44px clickable area', async ({ page }) => {
     // Navigate to settings page which has toggle switches
+    await closeSseBeforeNavigation(page);
     await page.goto('/settings');
     await page.waitForLoadState('domcontentloaded');
 
@@ -1133,6 +1153,7 @@ test.describe('Touch target compliance', () => {
   });
 
   test('touch target compliance on video restore page', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -1169,6 +1190,7 @@ test.describe('Touch target compliance', () => {
   });
 
   test('touch target compliance on settings page', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/settings');
     await page.waitForLoadState('domcontentloaded');
 
@@ -1232,6 +1254,7 @@ test.describe('Content overflow check', () => {
 
       test('no element exceeds viewport width on any page', async ({ page }) => {
         for (const { name, path } of ALL_PAGES) {
+          await closeSseBeforeNavigation(page);
           await page.goto(path);
           await page.waitForLoadState('domcontentloaded');
 
@@ -1282,6 +1305,7 @@ test.describe('Content overflow check', () => {
 
       test('no fixed-position elements extend beyond viewport', async ({ page }) => {
         for (const { name, path } of ALL_PAGES) {
+          await closeSseBeforeNavigation(page);
           await page.goto(path);
           await page.waitForLoadState('domcontentloaded');
 

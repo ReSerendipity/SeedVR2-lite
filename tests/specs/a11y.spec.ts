@@ -16,6 +16,7 @@
 import { test, expect, Page } from '@playwright/test';
 import axe from 'axe-core';
 import { setupAllMocks } from '@fixtures/api-mocks';
+import { closeSseBeforeNavigation } from '@utils/wait-helpers';
 
 // axe-core 经 addScriptTag 以内联 <script> 注入；页面 CSP 启用 nonce 白名单后
 // （CSP3 下出现 nonce 即忽略 unsafe-inline），内联注入会被浏览器拦截。
@@ -109,6 +110,7 @@ test.describe('Accessibility - Page Scans', () => {
   });
 
   test('Home page has no critical accessibility violations', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -124,6 +126,7 @@ test.describe('Accessibility - Page Scans', () => {
   });
 
   test('Video restore page has no critical accessibility violations', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -139,6 +142,7 @@ test.describe('Accessibility - Page Scans', () => {
   });
 
   test('Image restore page has no critical accessibility violations', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -154,6 +158,7 @@ test.describe('Accessibility - Page Scans', () => {
   });
 
   test('Settings page has no critical accessibility violations', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/settings');
     await page.waitForLoadState('domcontentloaded');
 
@@ -169,6 +174,7 @@ test.describe('Accessibility - Page Scans', () => {
   });
 
   test('History page has no critical accessibility violations', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/history');
     await page.waitForLoadState('domcontentloaded');
 
@@ -184,6 +190,7 @@ test.describe('Accessibility - Page Scans', () => {
   });
 
   test('System status page has no critical accessibility violations', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -218,6 +225,7 @@ test.describe('Accessibility - Keyboard Navigation', () => {
     await page.addInitScript(() => {
       localStorage.setItem('sv_onboarding_seen_v2', '1');
     });
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -271,6 +279,7 @@ test.describe('Accessibility - Keyboard Navigation', () => {
   });
 
   test('Focus indicators are visible on all interactive elements', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -309,6 +318,7 @@ test.describe('Accessibility - ARIA Roles', () => {
   });
 
   test('Settings page menus have correct ARIA menu/menuitem roles and active state', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/settings');
     await page.waitForLoadState('domcontentloaded');
 
@@ -353,6 +363,7 @@ test.describe('Accessibility - ARIA Roles', () => {
 
   test('Progress bars have correct ARIA progressbar role and value attributes', async ({ page }) => {
     // Navigate to video restore and trigger a task to show progress
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -403,6 +414,7 @@ test.describe('Accessibility - Image Alt Text', () => {
   });
 
   test('All images have meaningful alt attributes', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -451,6 +463,7 @@ test.describe('Accessibility - Form Labels', () => {
   });
 
   test('All form controls have associated labels (for/id or aria-labelledby)', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -509,6 +522,7 @@ test.describe('Accessibility - Color Contrast', () => {
   });
 
   test('Pages pass WCAG 2.1 AA color contrast requirements', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -568,6 +582,7 @@ test.describe('Accessibility - Color Contrast', () => {
   });
 
   test('Video restore page passes WCAG 2.1 AA color contrast', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/restore');
     await page.waitForLoadState('domcontentloaded');
 
@@ -625,6 +640,7 @@ test.describe('Accessibility - Color Contrast', () => {
   });
 
   test('Settings page passes WCAG 2.1 AA color contrast', async ({ page }) => {
+    await closeSseBeforeNavigation(page);
     await page.goto('/settings');
     await page.waitForLoadState('domcontentloaded');
 
