@@ -155,10 +155,22 @@ jobs:
           if [ -n "$existing" ]; then
             gh issue comment "$existing" -R "$GITHUB_REPOSITORY" --body "$body"
             echo "::notice::appended skip record to existing issue #$existing"
+            created_or_existing="$existing"
           else
-            gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body "$body"
-            echo "::notice::created skip-record issue"
+            issue_url=$(gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body "$body")
+            created_or_existing=$(basename "$issue_url")
+            echo "::notice::created skip-record issue #$created_or_existing"
           fi
+
+          # R4 自证：写完之后回读一次。没这一步，"以为开出来了"与"真开出来了"在日志里
+          # 长得一样——本次修复前的症状正是如此：该步每次都红、且从未真的开出过 issue。
+          # 用 --json number 判定存在性，不依赖标题搜索的分词行为。
+          seen=$(gh issue view "$created_or_existing" -R "$GITHUB_REPOSITORY" --json number --jq '.number' || true)
+          if [ -z "$seen" ]; then
+            echo "::error::skip-record 未能落库：期望 #$created_or_existing 不存在。R4 观测链路失效，真机停摆不会有人看见。"
+            exit 1
+          fi
+          echo "verified: skip-record issue #$seen 已在 $GITHUB_REPOSITORY 落库"
 
   gpu-smoke:
     needs: runner-precheck
