@@ -276,3 +276,28 @@ def test_both_transports_failing_is_reported_as_error_not_empty_ok(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fail_run)
     files, err = mon.fetch_repo_files("numz/SeedVR2_comfyUI", None, 5)
     assert files == {} and err, "两级都失败必须返回错误串，否则上层会把「没抓到」当成「抓到了且为空」"
+
+
+def test_non_json_body_is_echoed_so_middlebox_is_identifiable(monkeypatch):
+    """2026-09-24 实测：huggingface.co 对本机回 406 + `Unknown Client`。
+
+    若错误串只剩「非 JSON」，人只会继续重试；带上响应体才能一眼看出是中间盒伪造应答。
+    """
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, "Unknown Client", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    _files, err = mon._fetch_via_curl("https://huggingface.co/api/models/x/y", 5)
+    assert "非 JSON" in err and "Unknown Client" in err
+
+
+def test_all_middlebox_failures_hint_the_working_endpoint(monkeypatch, capsys):
+    def fake_fetch(repo, endpoint, timeout):
+        return {}, "requests: SSLError ｜ curl: curl 返回非 JSON（响应体开头 'Unknown Client'）: Expecting value"
+
+    monkeypatch.setattr(mon, "fetch_repo_files", fake_fetch)
+    assert mon.main([]) == mon.EXIT_NETWORK
+    err = capsys.readouterr().err
+    assert "[结论] **无法判定**" in err and "无缺口" not in err, "不得把没测到写成测过了"
+    assert "中间盒" in err and "hf-mirror.com" in err, "重试无用的坏法必须给出可执行出口"
