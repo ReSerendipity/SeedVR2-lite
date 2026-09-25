@@ -729,7 +729,34 @@ export async function abortRemoteFonts(page: Page): Promise<void> {
   await page.route('**fonts.gstatic.com/**', (route) => route.abort());
 }
 
-export async function setupAllMocks(page: Page): Promise<void> {
+/**
+ * setupAllMocks 的可选行为。
+ *
+ * `sse`：全局 EventSource 的处理方式。
+ *  - `'off'`（默认）：注入 `window.__svDisableSSE = true`，让 `app.js` 的
+ *    `initGlobalSSE()` 直接返回，页面**根本不建立 SSE 连接**。
+ *  - `'mock'`：保留 `mockSseEvents()` 的有限响应体行为，EventSource 会连上、
+ *    收到事件、然后因响应结束触发 `onerror` → app.js 自己按指数退避重连。
+ *
+ * 为什么默认是 `'off'`：`mockSseEvents` 用 `route.fulfill` 返回有限响应体，浏览器
+ * 按规范判定连接结束，`app.js:999` 的 `onerror` 于是每 1s/2s/4s/8s… 重建一次连接，
+ * 每次重连弹一条「已重新连接」toast 并占主线程。这是 #133 那批 `page.goto` 超时与
+ * #134 那个"点击时控件还在位移"的同源因；而把流改成"挂住不返回"会让
+ * `waitForLoadState('networkidle')` 永不达成（`history.page.ts` 8 处 +
+ * `system-status.page.ts` 1 处依赖它），所以选择"压根不连"——networkidle 语义与今天一致。
+ */
+export interface MockOptions {
+  sse?: 'off' | 'mock';
+}
+
+export async function setupAllMocks(page: Page, opts: MockOptions = {}): Promise<void> {
+  const sseMode = opts.sse ?? 'off';
+  if (sseMode === 'off') {
+    // addInitScript 必须在导航前登记；本函数所有调用点都在 beforeEach 里、goto 之前。
+    await page.addInitScript(() => {
+      (window as unknown as { __svDisableSSE?: boolean }).__svDisableSSE = true;
+    });
+  }
   await abortRemoteFonts(page);
   // System API mocks
   await mockHealthSuccess(page);
@@ -770,6 +797,8 @@ export async function setupAllMocks(page: Page): Promise<void> {
   await mockBatchImageProgressSuccess(page);
   await mockBatchImageRetrySuccess(page);
 
-  // SSE event stream
-  await mockSseEvents(page);
+  // SSE event stream —— 只有显式要 'mock' 的 spec 才连（默认不连，见 MockOptions 注释）
+  if (sseMode === 'mock') {
+    await mockSseEvents(page);
+  }
 }
