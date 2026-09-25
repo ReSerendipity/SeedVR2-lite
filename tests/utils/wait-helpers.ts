@@ -307,8 +307,10 @@ export async function waitForLoadingComplete(
  * 为什么需要：`app.js` 每次载入都会 `new EventSource('/api/sse/events')`，而 api-mocks
  * 的 SSE 用 `route.fulfill` 返回**有限**响应体；服务端关闭连接后 EventSource 依规范自动
  * 重连，形成重连风暴。此时发起导航，firefox 会在「旧文档拆载 + 新文档 domcontentloaded」
- * 之间死锁，表现为 `page.goto: Timeout 60000ms`（CI 上 theme.spec.ts / performance.spec.ts
- * 都是这一类）。
+ * 之间死锁，表现为 `page.reload` / `page.goto` 的 60000ms 超时。取样里的分布：reload 族是
+ * main push run #64/#65/#68/#69/#70/#71 的 history.spec.ts 与 theme.spec.ts；goto 族只有
+ * PR run #163 的 network-conditions.spec.ts:104（该 spec 不调 setupAllMocks，SSE 仍活着）。
+ * 编号取证口径见 `tests/test_e2e_navigation_guard.py` 的模块 docstring。
  *
  * 只掐连接、不改 `goto` 的 waitUntil 档位：死锁的因是重连风暴，不是等待哪一档
  * （实测 load 与 domcontentloaded 都会超时），改档位反而会悄悄改变各用例的时序假设。

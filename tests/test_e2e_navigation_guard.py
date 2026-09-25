@@ -5,15 +5,24 @@
 `app.js` 每次页面载入都会 `new EventSource('/api/sse/events')`，而 api-mocks 的 SSE 用
 `route.fulfill` 返回**有限**响应体：服务端关闭连接后 EventSource 依规范自动重连，形成重连
 风暴。此时发起导航，firefox 会在「旧文档拆载 + 新文档 domcontentloaded」之间死锁，表现为
-`page.goto: Timeout 60000ms`。对策是导航前先 `closeSseBeforeNavigation(page)`。
+`page.reload` 或 `page.goto` 的 60000ms 超时（`navigationTimeout`）。对策是导航前先
+`closeSseBeforeNavigation(page)`。
 
 这个坑历史上修了三次、每次只覆盖当时看到的文件：
-  - CI run #64–#70：`page.reload` 超时 → 只给 `reloadApplyingClientState()` 加了关闭；
-  - CI run #103：`theme.spec.ts` 经 `navigate()` 卡 goto → 把关闭提进 `BasePage.navigate()`；
+  - main push run #64/#65/#68/#69/#70/#71：`page.reload` 超时 → 只给
+    `reloadApplyingClientState()` 加了关闭；
+  - 其后把关闭提进 `BasePage.navigate()`（同一族的 goto 侧）。当时把触发实例记成
+    「run#103 的 theme.spec.ts」——2026-09-25 逐份日志核对：run#103 的红是
+    image-restore.spec.ts 的 `locator.click: Timeout 30000ms`，整份日志里 goto/reload
+    超时 0 次，theme.spec.ts 也从未以 goto 那一族报红；
   - PR #131：`performance.spec.ts` 的 10 处裸 goto → 只修了那一个文件；
   - CI run **#163**（#131 合并之后）：`network-conditions.spec.ts:104` 又卡
-    `page.goto: Timeout 60000ms`。
+    `page.goto: Timeout 60000ms`——取样里唯一有日志实证的 goto 超时。
 也就是说"下一次别再漏"完全靠人记，而它已经连续漏了三次。本守卫把它变成机械约束。
+
+（上述编号取自 2026-09-25 的取样：25 份 firefox job 日志——2026-09-02→09-25 之间全部
+12 个 firefox 红的 main push run、若干绿 run 作对照、PR run #103/#104/#105/#161/#163/
+#164/#166；8 月及更早的红 run 未扫。改写这段前先按同样方法重取证据。）
 
 判据是结构性的（不靠变量名猜）：Playwright 的 `Page.goto(url)` 必须带参数，而 6 个页面对象
 把自己的入口声明为零参数 `async goto()`（内部 `await this.navigate(this.path)`，已受保护）——
