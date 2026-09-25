@@ -45,8 +45,19 @@ export class BasePage {
    * `route.fulfill` 返回**有限**响应体，连接关闭后 EventSource 依规范自动重连，
    * 形成重连风暴；此时发起导航，firefox 会在“旧文档拆载 + 新文档 domcontentloaded”
    * 之间死锁。原本只有 `reloadApplyingClientState()` 做这一步，`navigate()` 没做，
-   * 于是同一个坑从 reload 挪到了 goto：CI #103 的 `theme.spec.ts` 就是
-   * `page.goto: Timeout 60000ms`（本类 navigate 内部即是 goto）。
+   * 于是同一个坑从 reload 挪到了 goto。
+   *
+   * 取证口径（2026-09-25 逐份 firefox job 日志核对，取样范围见对应 PR 描述）：
+   * - reload 族：main push run #64/#65/#68/#69/#70/#71，报错文案一律是
+   *   `page.reload: Timeout 60000ms`（history.spec.ts 与 theme.spec.ts）。
+   * - goto 族：取样里只有一例，PR run #163 的 `network-conditions.spec.ts:104`——
+   *   裸 goto、默认 `waitUntil: 'load'`，且该 spec 不调 `setupAllMocks`，SSE 仍活着。
+   * - 此处早先写的「CI #103 的 theme.spec.ts 就是 `page.goto: Timeout`」不成立。run#103
+   *   的 firefox 有 31 条红，其中 `theme.spec.ts:187` 那两条报的是
+   *   `locator.click: Timeout 30000ms`——`#agreementModal` 的 overlay 拦住了
+   *   `#btnThemeToggle` 的点击，与导航无关；整份日志里 goto/reload 超时 0 次。
+   *   theme.spec.ts 在取样里报过的导航类超时只有 reload 族（#65/#68/#69/#70/#71）与
+   *   #79 的 `Test timeout … while running "beforeEach" hook`，从未是 goto 那一族。
    */
   private async closeSseBeforeNavigation(): Promise<void> {
     await sseClose(this.page);
@@ -65,7 +76,7 @@ export class BasePage {
   /**
    * 重新进入当前页面以应用已被改动的客户端状态（如清空后的 localStorage）。
    *
-   * 不用 page.reload()：CI E2E run #64-#70 的 firefox 反复红在
+   * 不用 page.reload()：main push run #64/#65/#68/#69/#70/#71 的 firefox 反复红在
    * `page.reload: Timeout 60000ms`。根因不是 waitUntil 档位——app.js 在每次
    * 载入都会 `new EventSource('/api/sse/events')`，而 api-mocks 的 SSE 用
    * `route.fulfill` 返回**有限**响应体，服务端关闭连接后 EventSource 依规范
@@ -78,9 +89,10 @@ export class BasePage {
    *    `closeSseBeforeNavigation()`，`navigate()` 同样会走一遍；
    * 2) 用 `page.goto(当前 URL)` 而非 `reload()`。
    *
-   * 更正：原文此处写过"8 次失败签名里从无一次卡 goto"——不成立。#103 上 firefox 就是
-   * `page.goto: Timeout 60000ms`（theme.spec.ts 经 `navigate()`）。goto 只是比 reload
-   * 更少触发，真正的因是第 1 点没做。
+   * 更正：原文此处写过"8 次失败签名里从无一次卡 goto"——不成立，卡 goto 确有其例
+   * （PR run #163 的 `network-conditions.spec.ts:104`；这里一度把它记成了 run#103 的
+   * theme.spec.ts，那是错的编号，取证口径见 `closeSseBeforeNavigation()` 的注释）。
+   * goto 只是比 reload 更少触发，真正的因是第 1 点没做。
    */
   async reloadApplyingClientState(): Promise<void> {
     await this.closeSseBeforeNavigation();
