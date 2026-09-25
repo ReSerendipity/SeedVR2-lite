@@ -52,10 +52,12 @@ export class BasePage {
    *   `page.reload: Timeout 60000ms`（history.spec.ts 与 theme.spec.ts）。
    * - goto 族：取样里只有一例，PR run #163 的 `network-conditions.spec.ts:104`——
    *   裸 goto、默认 `waitUntil: 'load'`，且该 spec 不调 `setupAllMocks`，SSE 仍活着。
-   * - 此处早先写的「CI #103 的 theme.spec.ts 就是 `page.goto: Timeout`」不成立：run#103
-   *   的 firefox 红是 image-restore.spec.ts 的 `locator.click: Timeout 30000ms`，整份日志
-   *   里 goto/reload 超时 0 次；theme.spec.ts 也从未以 goto 那一族报红（它只有 reload 与
-   *   run#79 的 `Test timeout … while running "beforeEach" hook`）。
+   * - 此处早先写的「CI #103 的 theme.spec.ts 就是 `page.goto: Timeout`」不成立。run#103
+   *   的 firefox 有 31 条红，其中 `theme.spec.ts:187` 那两条报的是
+   *   `locator.click: Timeout 30000ms`——`#agreementModal` 的 overlay 拦住了
+   *   `#btnThemeToggle` 的点击，与导航无关；整份日志里 goto/reload 超时 0 次。
+   *   theme.spec.ts 在取样里报过的导航类超时只有 reload 族（#65/#68/#69/#70/#71）与
+   *   #79 的 `Test timeout … while running "beforeEach" hook`，从未是 goto 那一族。
    */
   private async closeSseBeforeNavigation(): Promise<void> {
     await sseClose(this.page);

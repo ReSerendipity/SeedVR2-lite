@@ -12,9 +12,10 @@
   - main push run #64/#65/#68/#69/#70/#71：`page.reload` 超时 → 只给
     `reloadApplyingClientState()` 加了关闭；
   - 其后把关闭提进 `BasePage.navigate()`（同一族的 goto 侧）。当时把触发实例记成
-    「run#103 的 theme.spec.ts」——2026-09-25 逐份日志核对：run#103 的红是
-    image-restore.spec.ts 的 `locator.click: Timeout 30000ms`，整份日志里 goto/reload
-    超时 0 次，theme.spec.ts 也从未以 goto 那一族报红；
+    「run#103 的 theme.spec.ts」——2026-09-25 逐份日志核对：run#103 的 firefox 有 31 条红，
+    `theme.spec.ts:187` 那两条报的是 `locator.click: Timeout 30000ms`（`#agreementModal`
+    的 overlay 拦住了 `#btnThemeToggle` 的点击，与导航无关），整份日志里 goto/reload 超时
+    0 次；theme.spec.ts 报过的导航类超时只有 reload 族与 #79 的 beforeEach 测试超时；
   - PR #131：`performance.spec.ts` 的 10 处裸 goto → 只修了那一个文件；
   - CI run **#163**（#131 合并之后）：`network-conditions.spec.ts:104` 又卡
     `page.goto: Timeout 60000ms`——取样里唯一有日志实证的 goto 超时。
