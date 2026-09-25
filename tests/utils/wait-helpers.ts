@@ -302,24 +302,6 @@ export async function waitForLoadingComplete(
 }
 
 /**
- * Wait for a specific network idle state after triggering an action.
- *
- * Uses Playwright's waitForLoadState to ensure the page has finished
- * loading network resources.
- *
- * @param page - Playwright page instance
- * @param state - Load state to wait for: 'load', 'domcontentloaded', or 'networkidle'
- * @param timeout - Maximum wait time in milliseconds (default: 30000)
- */
-export async function waitForNetworkIdle(
-  page: Page,
-  state: 'load' | 'domcontentloaded' | 'networkidle' = 'networkidle',
-  timeout = 30000,
-): Promise<void> {
-  await page.waitForLoadState(state, { timeout });
-}
-
-/**
  * 导航前掐断当前文档的 SSE 连接。
  *
  * 为什么需要：`app.js` 每次载入都会 `new EventSource('/api/sse/events')`，而 api-mocks

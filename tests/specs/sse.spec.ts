@@ -69,7 +69,9 @@ test.describe('Server-Sent Events', () => {
   let basePage: BasePage;
 
   test.beforeEach(async ({ page }) => {
-    await setupAllMocks(page);
+    // 本 spec 的 8 条用例全部以「SSE 真的连着」为前提（readyState、心跳、进度、重连提示），
+    // 所以显式要 'mock'；其余 spec 用默认的 'off'，避免 EventSource 退避重连风暴。
+    await setupAllMocks(page, { sse: 'mock' });
     // Do NOT navigate yet — individual tests need to set up SSE route mocks
     // before navigating to the video restore page, otherwise the SSE connection
     // may be established before the mock is ready.

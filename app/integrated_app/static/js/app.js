@@ -922,6 +922,14 @@ const SeedVR2 = (() => {
      * @returns {void}
      */
     function initGlobalSSE() {
+        // 测试可注入开关：仅当显式置为 true 时跳过连接。生产路径从不设置这个全局量，
+        // 因此默认行为与加这一段之前逐字一致（含首次连接与 onerror 里的退避重连——
+        // 重连也是走本函数，所以一处 guard 就够）。
+        // E2E 用它断开 EventSource 与 waitForLoadState('networkidle') 的耦合，
+        // 见 tests/fixtures/api-mocks.ts 的 setupAllMocks(page, { sse })。
+        if (window.__svDisableSSE === true) {
+            return;
+        }
         // 关闭现有连接
         if (globalEventSource) {
             globalEventSource.close();
