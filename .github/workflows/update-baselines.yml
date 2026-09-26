@@ -93,6 +93,8 @@ jobs:
           # artifact + 维护者提交：12 张 linux 基线即经此入库，commit 178d9c3
           # （"落地 CI linux 视觉回归基线 12 张（E1 bootstrap，经 artifact 通道）"）。
           # 删除后本步只保留产出量校验，success 才诚实表示"基线产物已生成并随 artifact 上传"。
+          # 若将来确实要自动落地，正确做法是让本 workflow 开一个 PR（或给分支保护配置该
+          # workflow 的豁免），而不是把直推 main 恢复回来。
 
       - name: Upload baselines artifact
         if: always()
