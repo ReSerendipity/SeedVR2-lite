@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: '确认在 CI (Linux) 环境重新生成视觉回归 baseline 并自动提交'
+        description: '确认在 CI (Linux) 环境重新生成视觉回归 baseline（产出 visual-regression-baselines artifact，由维护者落地）'
         required: true
         default: 'yes'
 
@@ -17,8 +17,10 @@ jobs:
     name: Regenerate visual regression baselines
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # 本 workflow 不写仓库：基线只经 artifact 交付（见下方 Verify 步的说明），
+    # 所以按最小权限显式降到 read，而不是留 contents: write 给一条推不动的步骤。
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -67,15 +69,12 @@ jobs:
           npx playwright test specs/uiux-compatibility.spec.ts \
             --project=chromium-desktop --update-snapshots --reporter=line
 
-      - name: Commit and push baselines
+      - name: Verify baselines produced (artifact is the only delivery channel)
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           SNAP=tests/specs/uiux-compatibility.spec.ts-snapshots
-          # 基线必须真实产出（12 个视觉项 × chromium/linux 平台后缀）；
-          # 若目录缺失或不足则显式失败——否则问题会被 else 分支静默吞掉
-          # （2026-09-07：旧实现在全部视觉项被 skip 时 git diff 直接
-          #  "did not match any files" exit 128，无任何有效信号）
+          # 基线必须真实产出（12 个视觉项 × chromium/linux 平台后缀）；若目录缺失或
+          # 不足则显式失败——否则问题会被静默吞掉（2026-09-07：旧实现在全部视觉项被
+          # skip 时 git diff 直接 "did not match any files" exit 128，无任何有效信号）。
           if [ ! -d "$SNAP" ]; then
             echo "::error::snapshots dir not created by --update-snapshots run"
             exit 1
@@ -83,23 +82,19 @@ jobs:
           count=$(find "$SNAP" -name "*-linux.png" | wc -l)
           echo "linux baselines: $count (expect 12)"
           [ "$count" -ge 12 ] || { echo "::error::fewer than 12 linux baselines generated"; exit 1; }
-          # 先 -f 暂存（snapshot png 受 .gitignore 管控，必须 add -f 才能入
-          # staged diff；2026-09-07 教训：用 ls-files --exclude-standard 判
-          # 未跟踪会因 ignore 规则把新基线判成 "no changes" 静默跳过）
-          git add -f "$SNAP"
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(e2e): update visual regression baselines (linux, update-baselines workflow)"
-            if git push origin HEAD:main; then
-              echo "baselines pushed to main"
-            else
-              # 分支保护（PR 必须 + required checks）拒绝 workflow 直推属**设计使然**
-              # 而非故障（GH006，run 34078396828 实证）——基线已入下方 artifact，
-              # 由维护者下载提交（凭据含 bypass）或给本 workflow 配置保护豁免
-              echo "::warning::protected branch declined direct push - baselines available as 'visual-regression-baselines' artifact"
-            fi
-          else
-            echo "no baseline changes"
-          fi
+          # 这里原先有一段 `git add -f` + `git commit` + `git push origin HEAD:main`，
+          # 已整条删除。直推 main 从未成功过一次：run 34078396828（Update Baselines #4）
+          # 里是 `remote: error: GH006: Protected branch update failed for refs/heads/main`
+          # → `! [remote rejected] HEAD -> main (protected branch hook declined)`；main 历史
+          # 里 `git log --grep="chore(e2e)"` 为空。更糟的是随后一版（run 34078718912 / #5）
+          # 把拒推降级成一条 ::warning 就 exit 0，于是"什么都没落地"的 run 与"基线已更新"
+          # 的 run 在结论上长得一样（该步 conclusion=success，日志里同时有
+          # `##[warning]protected branch declined direct push`）。基线的真实落地通道一直是
+          # artifact + 维护者提交：12 张 linux 基线即经此入库，commit 178d9c3
+          # （"落地 CI linux 视觉回归基线 12 张（E1 bootstrap，经 artifact 通道）"）。
+          # 删除后本步只保留产出量校验，success 才诚实表示"基线产物已生成并随 artifact 上传"。
+          # 若将来确实要自动落地，正确做法是让本 workflow 开一个 PR（或给分支保护配置该
+          # workflow 的豁免），而不是把直推 main 恢复回来。
 
       - name: Upload baselines artifact
         if: always()
